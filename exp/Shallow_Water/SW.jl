@@ -49,6 +49,7 @@ config = Model_Config(
     
     # IO
     output_filename = "exp/Shallow_Water/output.nc",
+    logger = "exp/Shallow_Water/logger.log",
     vars_to_output = [:u, :v, :h, :vor, :div, :pv], # :pv = Potential Vorticity
     output_interval = 1200,
     
