@@ -5,7 +5,7 @@ config = Model_Config(
     model_type = :Barotropic,
 
     num_fourier = 85, nθ = 128, nd = 1,
-    radius = 6371.0e3, omega = 7.292e-5,
+    radius = 6371.0e3, omega = 7.292e-5, grav = 9.80,
     
     vert_coord_option = nothing, vert_difference_option = nothing, vert_ref_level_option = nothing,
     
