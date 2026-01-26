@@ -1,16 +1,21 @@
-function HS_Forcing!(atmo_data::Atmo_Data, Δt::Int64, sinθ::Array{Float64, 1}, grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_t::Array{Float64, 3}, 
-    grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_t_eq::Array{Float64, 3}, grid_δt::Array{Float64, 3}, physcis_params::Dict{String, Float64})
+using Base.Threads
+using ...Atmo_Data_Module
+
+function HS_Forcing!(
+    atmo_data::Atmo_Data, Δt::Int64, sinθ::Array{Float64, 1}, grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_t::Array{Float64, 3}, 
+    grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_t_eq::Array{Float64, 3}, grid_δt::Array{Float64, 3}, physics_params::Dict{String, Any}
+)
     # reset grid_δu, grid_δv, grid_t_eq, grid_δt
     
     #todo delete
     #@info "HS_Forcing", sum(abs.(grid_u)), sum(abs.(grid_v)), sum(abs.(grid_t)) , sum(abs.(grid_p_half)), sum(abs.(grid_p_full))
 
-    σ_b = physcis_params["σ_b"]  
-    k_f = physcis_params["k_f"]  #day^{-1}
-    k_a = physcis_params["k_a"]  #day^{-1}
-    k_s = physcis_params["k_s"]  #day^{-1}
-    ΔT_y = physcis_params["ΔT_y"] #K
-    Δθ_z = physcis_params["Δθ_z"] #K
+    σ_b = physics_params["σ_b"]  
+    k_f = physics_params["k_f"]  #day^{-1}
+    k_a = physics_params["k_a"]  #day^{-1}
+    k_s = physics_params["k_s"]  #day^{-1}
+    ΔT_y = physics_params["ΔT_y"] #K
+    Δθ_z = physics_params["Δθ_z"] #K
 
     # rayleigh damping of wind components near the surface
 
