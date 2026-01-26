@@ -1,7 +1,5 @@
 using JGCM
 
-using JGCM
-
 # 1. Physics Configuration
 # These boolean flags control the complexity of the physics package.
 # For a "Dry" Held-Suarez run, set do_moist_phys = false.
