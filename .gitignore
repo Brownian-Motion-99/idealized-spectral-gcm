@@ -1,0 +1,7 @@
+*.nc
+*.dat
+*.log
+*.ipynb
+
+*.ipynb_checkpoint
+.vscode/
