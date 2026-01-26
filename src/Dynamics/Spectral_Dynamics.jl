@@ -1,8 +1,21 @@
+module Spectral_Dynamics_Module
+
+using Base.Threads
+using LinearAlgebra
+using Printf
+using ..Spectral_Spherical_Mesh_Module
+using ..Atmo_Data_Module
+using ..Vert_Coordinate_Module
+using ..Dyn_Data_Module
+using ..Semi_Implicit_Module
+using ..Time_Integrator_Module
+using ..Press_And_Geopot_Module
+using ..Atmos_Param_Module
+using ..Experiment_Configuration
+
 using Statistics
 using Interpolations
 export Compute_Corrections_Init, Compute_Corrections!, Four_In_One!, Spectral_Dynamics!, Get_Topography!, Spectral_Initialize_Fields!, Spectral_Dynamics_Physics!, Atmosphere_Update!
-
-
 
 function Compute_Corrections_Init(vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3}, grid_ps_p::Array{Float64, 3}, grid_t_p::Array{Float64, 3}, 
@@ -381,11 +394,11 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
 
 
     # print for checking
-    day_to_sec = 86400
-    if (integrator.time%(day_to_sec/4) == 0)
-        @info "Day: ", (integrator.time/ day_to_sec), " Max |U|,|V|,|P|,|T|,|qv|: ", maximum(abs.(dyn_data.grid_u_c)), maximum(abs.(dyn_data.grid_v_c)), maximum(dyn_data.grid_p_full), maximum(dyn_data.grid_t_c), maximum(dyn_data.grid_tracers_c), maximum(dyn_data.grid_tracers_diff)
-        @info "Day: ", (integrator.time/ day_to_sec), " Min |U|,|V|,|P|,|T|,|qv|: ", minimum(abs.(dyn_data.grid_u_c)), minimum(abs.(dyn_data.grid_v_c)), minimum(dyn_data.grid_p_full), minimum(dyn_data.grid_t_c), minimum(dyn_data.grid_tracers_c)
-    end
+    # day_to_sec = 86400
+    # if (integrator.time%(day_to_sec/4) == 0)
+    #     @info "Day: ", (integrator.time/ day_to_sec), " Max |U|,|V|,|P|,|T|,|qv|: ", maximum(abs.(dyn_data.grid_u_c)), maximum(abs.(dyn_data.grid_v_c)), maximum(dyn_data.grid_p_full), maximum(dyn_data.grid_t_c), maximum(dyn_data.grid_tracers_c), maximum(dyn_data.grid_tracers_diff)
+    #     @info "Day: ", (integrator.time/ day_to_sec), " Min |U|,|V|,|P|,|T|,|qv|: ", minimum(abs.(dyn_data.grid_u_c)), minimum(abs.(dyn_data.grid_v_c)), minimum(dyn_data.grid_p_full), minimum(dyn_data.grid_t_c), minimum(dyn_data.grid_tracers_c)
+    # end
 
     Time_Advance!(dyn_data)
 
@@ -409,7 +422,11 @@ function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::
     return
 end 
 
-function Spectral_Initialize_Fields!(mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, sea_level_ps_ref::Float64, init_t::Float64, grid_geopots::Array{Float64,3}, T_ref::Array{Float64, 3}, dyn_data::Dyn_Data, Δt::Int64, warm_start_file_name::String = "None", initial_day::Int64 = 5)
+function Spectral_Initialize_Fields!(
+    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, 
+    sea_level_ps_ref::Float64, init_t::Float64, grid_geopots::Array{Float64,3},
+    dyn_data::Dyn_Data, warm_start_file_name::String = "None"
+)
 
     if warm_start_file_name != "None" # load warm start file
         spe_vor_c, spe_div_c, spe_lnps_c, spe_t_c = dyn_data.spe_vor_c, dyn_data.spe_div_c, dyn_data.spe_lnps_c, dyn_data.spe_t_c
@@ -593,7 +610,7 @@ function Spectral_Initialize_Fields!(mesh::Spectral_Spherical_Mesh, atmo_data::A
     
     ######################################
     # Tiffany project
-    Tiffany_project = true
+    Tiffany_project = false
     
     if Tiffany_project == true
         T_ref_file_name = "PR0_last_10000step_time_mean_t.h5"
@@ -609,7 +626,11 @@ function Spectral_Initialize_Fields!(mesh::Spectral_Spherical_Mesh, atmo_data::A
 end 
 
 
-function Spectral_Dynamics_Physics!(semi_implicit::Semi_Implicit_Solver, atmo_data::Atmo_Data, mesh::Spectral_Spherical_Mesh, dyn_data::Dyn_Data, Δt::Int64, physics_params::Dict{String, Float64}, L::Float64, T_ref::Array{Float64, 3})
+function Spectral_Dynamics_Physics!(
+    semi_implicit::Semi_Implicit_Solver, atmo_data::Atmo_Data, mesh::Spectral_Spherical_Mesh, dyn_data::Dyn_Data, 
+    Δt::Int64, physics_params::Dict{String, Any}, L::Float64, T_ref::Array{Float64, 3}
+)
+    
     grid_δu, grid_δv, grid_δps, grid_δt = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δps, dyn_data.grid_δt
     grid_u_p, grid_v_p,  grid_t_p       = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_t_p
     grid_p_half, grid_p_full            = dyn_data.grid_p_half, dyn_data.grid_p_full
@@ -770,10 +791,14 @@ function Spectral_Dynamics_Physics!(semi_implicit::Semi_Implicit_Solver, atmo_da
 end
 
 
-function Atmosphere_Update!(mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, semi_implicit::Semi_Implicit_Solver, dyn_data::Dyn_Data, physcis_params::Dict{String, Float64}, L::Float64, T_ref::Array{Float64, 3})
+function Atmosphere_Update!(
+    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, 
+    semi_implicit::Semi_Implicit_Solver, dyn_data::Dyn_Data, 
+    physics_params::Dict{String, Any}, L::Float64, T_ref::Array{Float64, 3}
+)
 
     Δt = Get_Δt(semi_implicit.integrator)
-    Spectral_Dynamics_Physics!(semi_implicit, atmo_data, mesh,  dyn_data, Δt, physcis_params, L, T_ref) # HS forcing
+    Spectral_Dynamics_Physics!(semi_implicit, atmo_data, mesh,  dyn_data, Δt, physics_params, L, T_ref) # HS forcing
     Spectral_Dynamics!(mesh,  vert_coord , atmo_data, dyn_data, semi_implicit, L) # dynamics 
 
     grid_ps , grid_Δp, grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_ps_c,  dyn_data.grid_Δp, dyn_data.grid_p_half, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full 
@@ -1001,97 +1026,4 @@ function Implicit_PBL_Scheme!(atmo_data::Atmo_Data,grid_t::Array{Float64, 3}, gr
 
 end
 
-# function Latent_heat_flux!
-#    grid_tracers_c_ps_max           = zeros(((128,64,1)))
-#    # grid_tracers_c_ps_max          .= (0.622 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t[:,:,20])) )) ./ (grid_ps[:,:,1] .- 0.378 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t[:,:,20])))) 
-#    grid_tracers_c_ps_max          .= (0.622 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ Tsurf[:,:])) )) ./ (grid_ps[:,:,1] .- 0.378 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ Tsurf[:,:])))) 
-
-#    grid_δtracers[:,:,20] .+= (((C_E .* V_c[:,:,20] .* (grid_tracers_c_ps_max[:,:,1] .- min.(grid_tracers_c[:,:,20], grid_tracers_c_ps_max[:,:,1])) .* (2. * Δt) ./ za[:,:,1])
-#                          ./ (1. .+ C_E .* V_c[:,:,20] .* (2. * Δt) ./ za[:,:,1])) ./ (2. * Δt))
-#    # @info "max: ", maximum(grid_δtracers[:,:,20])
-#    # @info "min: ", minimum(grid_δtracers[:,:,20])
-
-#    grid_tracers_c[:,:,20]  .= ((grid_tracers_c[:,:,20] .+ C_E .* V_c[:,:,20] .* max.(grid_tracers_c[:,:,20],grid_tracers_c_ps_max[:,:,1]) .* (2. * Δt) ./ za[:,:,1]) 
-#                          ./ (1. .+ C_E .* V_c[:,:,20] .* (2. * Δt) ./ za[:,:,1]))
-# end
-
-# function Spectral_Dynamics_Main()
-#   # the decay of a sinusoidal disturbance to a zonally symmetric flow 
-#   # that resembles that found in the upper troposphere in Northern winter.
-#   name = "Spectral_Dynamics"
-#   #num_fourier, nθ, nd = 63, 96, 20
-#   num_fourier, nθ, nd = 42, 64, 20
-#   #num_fourier, nθ, nd = 21, 32, 20
-#   num_spherical = num_fourier + 1
-#   nλ = 2nθ
-  
-#   radius = 6371000.0
-#   omega = 7.292e-5
-#   sea_level_ps_ref = 1.0e5
-#   init_t = 264.0
-  
-#   # Initialize mesh
-#   mesh = Spectral_Spherical_Mesh(num_fourier, num_spherical, nθ, nλ, nd, radius)
-#   θc, λc = mesh.θc,  mesh.λc
-#   cosθ, sinθ = mesh.cosθ, mesh.sinθ
-  
-#   vert_coord = Vert_Coordinate(nλ, nθ, nd, "even_sigma", "simmons_and_burridge", "second_centered_wts", sea_level_ps_ref)
-#   # Initialize atmo_data
-#   do_mass_correction = true
-#   do_energy_correction = true
-#   do_water_correction = false
-  
-#   use_virtual_temperature = false
-#   atmo_data = Atmo_Data(name, nλ, nθ, nd, do_mass_correction, do_energy_correction, do_water_correction, use_virtual_temperature, sinθ, radius,  omega)
-  
-#   # Initialize integrator
-#   damping_order = 4
-#   damping_coef = 1.15741e-4
-#   robert_coef  = 0.04 
-  
-#   implicit_coef = 0.5
-#   day_to_sec = 86400
-#   start_time = 0
-#   end_time = 2*day_to_sec  #
-#   Δt = 1200
-#   init_step = true
-  
-#   integrator = Filtered_Leapfrog(robert_coef, 
-#   damping_order, damping_coef, mesh.laplacian_eig,
-#   implicit_coef, Δt, init_step, start_time, end_time)
-  
-#   ps_ref = sea_level_ps_ref
-#   t_ref = fill(300.0, nd)
-#   wave_numbers = mesh.wave_numbers
-#   semi_implicit = Semi_Implicit_Solver(vert_coord, atmo_data,
-#   integrator, ps_ref, t_ref, wave_numbers)
-  
-#   # Initialize data
-#   dyn_data = Dyn_Data(name, num_fourier, num_spherical, nλ, nθ, nd)
-  
-  
-#   NT = Int64(end_time / Δt)
-  
-#   Get_Topography!(dyn_data.grid_geopots)
-  
-#   Spectral_Initialize_Fields!(mesh, atmo_data, vert_coord, sea_level_ps_ref, init_t,
-#   dyn_data.grid_geopots, dyn_data)
-  
-
-#   Atmosphere_Update!(mesh, atmo_data, vert_coord, semi_implicit, dyn_data)
-
-#   Update_Init_Step!(semi_implicit)
-#   integrator.time += Δt 
-#   for i = 2:NT
-
-#     Atmosphere_Update!(mesh, atmo_data, vert_coord, semi_implicit, dyn_data)
-
-#     integrator.time += Δt
-#     @info integrator.time
-
-#   end
-  
-# end
-
-
-# #Spectral_Dynamics_Main()
+end

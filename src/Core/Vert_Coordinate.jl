@@ -1,3 +1,9 @@
+module Vert_Coordinate_Module
+
+import Base
+using ..Spectral_Spherical_Mesh_Module
+using ..Atmo_Data_Module
+
 export Vert_Coordinate, Compute_Vert_Coord, Vert_Advection!, Mass_Weighted_Global_Integral, qv_Global_Integral_to_e
 
 """
@@ -268,3 +274,5 @@ function qv_Global_Integral_to_e(vert_coord::Vert_Coordinate, mesh::Spectral_Sph
     total_water = Area_Weighted_Global_Mean(mesh, Pv) * 4. * pi * atmo_data.radius^2
     return total_water
 end 
+
+end

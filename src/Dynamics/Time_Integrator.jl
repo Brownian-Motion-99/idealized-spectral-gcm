@@ -1,4 +1,8 @@
+module Time_Integrator_Module
+
 export Filtered_Leapfrog, Update_Init_Step!, Get_Δt, Get_ξ, Compute_Spectral_Damping!, Filtered_Leapfrog!
+
+
 mutable struct Filtered_Leapfrog
     robert_coef::Float64
 
@@ -100,3 +104,4 @@ function Filtered_Leapfrog!(integrator::Filtered_Leapfrog,
     end
 end
 
+end

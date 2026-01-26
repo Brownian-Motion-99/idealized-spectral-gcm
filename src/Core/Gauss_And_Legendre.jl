@@ -1,5 +1,8 @@
-export Compute_Legendre!, Compute_Gaussian!
+module Gauss_And_Legendre_Module
 
+using LinearAlgebra
+
+export Compute_Legendre!, Compute_Gaussian!
 
 function Compute_Legendre!(num_fourier, num_spherical, sinθ, nθ)
     # Spectral Numerical Weather Prediction Models Appendix B
@@ -166,4 +169,6 @@ function test()
             end
         end
     end
+end
+
 end
