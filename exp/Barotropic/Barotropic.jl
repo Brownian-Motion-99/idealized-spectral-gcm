@@ -19,6 +19,7 @@ config = Model_Config(
     initial_condition = :Barotropic_Jet,
     
     output_filename = "exp/Barotropic/output_test.nc",
+    logger = "exp/Barotropic/logger.log",
     vars_to_output = [:u, :v, :vor],
     output_interval = 1800,
 
