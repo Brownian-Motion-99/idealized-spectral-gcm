@@ -1,8 +1,20 @@
+module Barotropic_Dynamics_Module
+
+using LinearAlgebra
+using ..Spectral_Spherical_Mesh_Module
+using ..Atmo_Data_Module
+using ..Dyn_Data_Module
+using ..Time_Integrator_Module
+
 export Barotropic_Dynamics!
-function Barotropic_Dynamics!(mesh::Spectral_Spherical_Mesh, 
-                              atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
-                              integrator::Filtered_Leapfrog)
-  # n: next, c: current, p: previous
+
+function Barotropic_Dynamics!(
+    mesh::Spectral_Spherical_Mesh, 
+    atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
+    integrator::Filtered_Leapfrog
+)
+
+    # n: next, c: current, p: previous
   
     nλ, nθ = mesh.nλ, mesh.nθ
   
@@ -38,14 +50,9 @@ function Barotropic_Dynamics!(mesh::Spectral_Spherical_Mesh,
     Trans_Spherical_To_Grid!(mesh, spe_vor_n, grid_vor)
   
     UV_Grid_From_Vor_Div!(mesh, spe_vor_n,  spe_zeros, grid_u_n, grid_v_n)
-
-    @show norm(grid_u_n), norm(grid_v_n), norm(grid_vor)
   
     Time_Advance!(dyn_data)
   
 end
 
-
-
-
-
+end
