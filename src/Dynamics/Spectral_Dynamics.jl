@@ -17,10 +17,12 @@ using Statistics
 using Interpolations
 export Compute_Corrections_Init, Compute_Corrections!, Four_In_One!, Spectral_Dynamics!, Get_Topography!, Spectral_Initialize_Fields!, Spectral_Dynamics_Physics!, Atmosphere_Update!
 
-function Compute_Corrections_Init(vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
+function Compute_Corrections_Init(
+    vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3}, grid_ps_p::Array{Float64, 3}, grid_t_p::Array{Float64, 3}, 
     grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_δt::Array{Float64, 3},  
-    Δt::Int64, grid_energy_temp::Array{Float64, 3}, grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_δtracers::Array{Float64,3})
+    Δt::Int64, grid_energy_temp::Array{Float64, 3}, grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_δtracers::Array{Float64,3}
+)
     
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
     
@@ -32,19 +34,21 @@ function Compute_Corrections_Init(vert_coord::Vert_Coordinate, mesh::Spectral_Sp
     
     if (do_energy_correction) 
         cp_air, grav       = atmo_data.cp_air, atmo_data.grav 
-        grid_energy_temp  .= 0.5*((grid_u_p + Δt*grid_δu).^2 + (grid_v_p + Δt*grid_δv).^2) + cp_air*(grid_t_p + Δt*grid_δt)
+        grid_energy_temp  .= 0.5 * ((grid_u_p + Δt*grid_δu).^2 + (grid_v_p + Δt*grid_δv).^2) + cp_air * (grid_t_p + Δt*grid_δt)
         mean_energy_p      = Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_energy_temp, grid_ps_p)
     end
 
     if (do_water_correction)
         mean_moisture_p    =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_tracers_p .+ grid_δtracers * Δt, grid_ps_p)
-
     end
     
     return mean_ps_p, mean_energy_p, mean_moisture_p 
 end 
 
-function Compute_Corrections!(semi_implicit::Semi_Implicit_Solver, vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
+
+
+function Compute_Corrections!(
+    semi_implicit::Semi_Implicit_Solver, vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     mean_ps_p::Float64, mean_energy_p::Float64, mean_moisture_p::Float64,
     grid_u_n::Array{Float64, 3}, grid_v_n::Array{Float64, 3},
     grid_energy_temp::Array{Float64, 3}, grid_ps_p::Array{Float64, 3},grid_ps_c::Array{Float64, 3},
@@ -52,11 +56,10 @@ function Compute_Corrections!(semi_implicit::Semi_Implicit_Solver, vert_coord::V
     grid_t_n::Array{Float64, 3}, spe_t_n::Array{ComplexF64, 3},
     grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_tracers_n::Array{Float64, 3}, 
     grid_t::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_z_full::Array{Float64, 3}, grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3},
-    grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}, factor1::Array{Float64,3}, factor2::Array{Float64,3})#,  grid_tracers_diff::Array{Float64, 3})
-
+    grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}, factor1::Array{Float64,3}, factor2::Array{Float64,3}
+)
 
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
-    
     
     if (do_mass_correction) 
         mean_ps_n              = Area_Weighted_Global_Mean(mesh, grid_ps_n)
@@ -95,6 +98,7 @@ function Compute_Corrections!(semi_implicit::Semi_Implicit_Solver, vert_coord::V
 end 
 
 
+
 """
 compute vertical mass flux and velocity 
 grid_M_half[:,:,k+1] = downward mass flux/per unit area across the K+1/2
@@ -108,98 +112,102 @@ grid_δt[:,:,k]  += κTw/p
 !  cell boundary. This is the "vertical velocity" in the hybrid coordinate system.
 !  When vertical coordinate is pure sigma: grid_M_half = grid_ps*d(sigma)/dt
 """
-
-function Four_In_One!(vert_coord::Vert_Coordinate, atmo_data::Atmo_Data, 
+function Four_In_One!(
+    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data, 
     grid_div::Array{Float64,3}, grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
     grid_ps::Array{Float64,3},  grid_Δp::Array{Float64,3}, grid_lnp_half::Array{Float64,3}, grid_lnp_full::Array{Float64,3}, grid_p_full::Array{Float64,3},
     grid_dλ_ps::Array{Float64,3}, grid_dθ_ps::Array{Float64,3}, 
     grid_t::Array{Float64,3}, 
     grid_M_half::Array{Float64,3}, grid_w_full::Array{Float64,3}, 
-    grid_δu::Array{Float64,3}, grid_δv::Array{Float64,3}, grid_δps::Array{Float64,3}, grid_δt::Array{Float64,3}, grid_δtracers::Array{Float64,3})
+    grid_δu::Array{Float64,3}, grid_δv::Array{Float64,3}, grid_δps::Array{Float64,3}, grid_δt::Array{Float64,3}, grid_δtracers::Array{Float64,3}
+)
     
+    # Unpack parameters
     rdgas, cp_air          = atmo_data.rdgas, atmo_data.cp_air
     nd, bk                 = vert_coord.nd, vert_coord.bk
     Δak, Δbk               = vert_coord.Δak, vert_coord.Δbk
     vert_difference_option = vert_coord.vert_difference_option
-    
     kappa                  = rdgas / cp_air
+    nλ, nθ                 = atmo_data.nλ, atmo_data.nθ
     
-    # dmean_tot = ∇ ∑_{k=1}^{nd} vk Δp_k = ∑_{k=1}^{nd} Dk
-    nλ, nθ, _              = size(grid_ps)
-    dmean_tot              = zeros(Float64, nλ, nθ)
-    Δlnp_p                 = zeros(Float64, nλ, nθ)
-    Δlnp_m                 = zeros(Float64, nλ, nθ)
-    Δlnp                   = zeros(Float64, nλ, nθ)
-    x1                     = zeros(Float64, nλ, nθ)
-    dlnp_dλ                = zeros(Float64, nλ, nθ)
-    dlnp_dθ                = zeros(Float64, nλ, nθ)
-    dmean                  = zeros(Float64, nλ, nθ)
-    x5                     = zeros(Float64, nλ, nθ)
-        
-    if (vert_difference_option == "simmons_and_burridge") 
-        for k = 1:nd
-        Δp       = grid_Δp[:,:,k]
-        
-        Δlnp_p  .= grid_lnp_half[:,:,k + 1] - grid_lnp_full[:,:,k]
-        Δlnp_m  .= grid_lnp_full[:,:,k]     - grid_lnp_half[:,:,k]
-        Δlnp    .= grid_lnp_half[:,:,k + 1] - grid_lnp_half[:,:,k]
-        
-        # angular momentum conservation 
-        #    ∇p_k/p =  [(lnp_k - lnp_{k-1/2})∇p_{k-1/2} + (lnp_{k+1/2} - lnp_k)∇p_{k+1/2}]/Δpk
-        #         =  [(lnp_k - lnp_{k-1/2})B_{k-1/2} + (lnp_{k+1/2} - lnp_k)B_{k+1/2}]/Δpk * ∇ps
-        #         =  x1 * ∇ps
-        x1      .= (bk[k] * Δlnp_m + bk[k + 1] * Δlnp_p ) ./ Δp
-        
-        dlnp_dλ .= x1 .* grid_dλ_ps[:,:,1]
-        dlnp_dθ .= x1 .* grid_dθ_ps[:,:,1]
-        
-        
-        # (grid_δu, grid_δv) -= RT ∇p/p 
-        grid_δu[:,:,k] .-=  rdgas * grid_t[:,:,k] .* dlnp_dλ
-        grid_δv[:,:,k] .-=  rdgas * grid_t[:,:,k] .* dlnp_dθ
-        
-        # dmean = ∇ (vk Δp_k) =  divk Δp_k + vk  Δbk[k] ∇ p_s
-        dmean           .= grid_div[:,:,k] .* Δp + Δbk[k] * (grid_u[:,:,k] .* grid_dλ_ps[:,:,1] + grid_v[:,:,k] .* grid_dθ_ps[:,:,1])
-        
-    
-        # energy conservation for temperature
-        # w/p = dlnp/dt = ∂lnp/∂t + dσ ∂lnp/∂σ + v∇lnp
-        # dσ ∂ξ_k/∂σ = [M_{k+1/2}(ξ_k+1/2 - ξ_k) + M_{k-1/2}(ξ_k - ξ_k-1/2)]/Δp_k
-        # weight the same way (TODO)
-        # vertical advection operator (M is the downward speed)
-        # dσ ∂lnp_k/∂σ = [M_{k+1/2}(lnp_k+1/2 - lnp_k) + M_{k-1/2}(lnp_k - lnp_k-1/2)]/Δp_k
-        # ∂lnp/∂t = 1/p ∂p/∂t = [∂p/∂t_{k+1/2}(lnp_k+1/2 - lnp_k) + ∂p/∂t_{k-1/2}(lnp_k - lnp_k-1/2)]/Δp_k
-        # As we know
-        # ∂p/∂t_{k+1/2} = -∑_{r=1}^k Dr - M_{k+1/2}
-        
-        # ∂lnp/∂t + dσ ∂lnp/∂σ =  [(-∑_{r=1}^k Dr)(lnp_k+1/2 - lnp_k) + (-∑_{r=1}^{k-1} Dr)(lnp_k - lnp_k-1/2)]/Δp_k
-        #                      = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k
-        
-        x5                     .= -(dmean_tot .* Δlnp + dmean .* Δlnp_p) ./ Δp .+ grid_u[:,:,k] .* dlnp_dλ + grid_v[:,:,k] .* dlnp_dθ
-        # grid_δt += κT w/p
-        grid_δt[:,:,k]        .+=  kappa * grid_t[:,:,k] .* x5
-        # grid_w_full = w
-        grid_w_full[:,:,k]     .= x5 .* grid_p_full[:,:,k]
-        # update dmean_tot to ∑_{r=1}^k ∇(vrΔp_r)
-        dmean_tot             .+= dmean
-        # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
-        grid_M_half[:,:,k + 1] .= -dmean_tot
+    @threads for j = 1:nθ
+        for i = 1:nλ
+
+            if (vert_difference_option == "simmons_and_burridge")
+                
+                # dmean_tot = ∇ ∑_{k=1}^{nd} v_k * Δp_k = ∑_{k=1}^{nd} D_k
+                dmean_tot = 0.0
+
+                for k = 1:nd
+
+                    Δp     = grid_Δp[i, j, k]
+                    Δlnp_p = grid_lnp_half[i, j, k+1] - grid_lnp_full[i, j, k]
+                    Δlnp_m = grid_lnp_full[i, j, k]   - grid_lnp_half[i, j, k]
+                    Δlnp   = grid_lnp_half[i, j, k+1] - grid_lnp_half[i, j, k]
+
+                    # Solenoidal
+                    # ∇p_k/p = [(lnp_k - lnp_{k-1/2}) * ∇p_{k-1/2} + (lnp_{k+1/2} - lnp_k) * ∇p_{k+1/2}] / Δpk
+                    #        = [(lnp_k - lnp_{k-1/2}) * b_{k-1/2} + (lnp_{k+1/2} - lnp_k) * b_{k+1/2}] / Δpk * ∇ps
+                    #        = x1 * ∇ps
+                    x1      = (bk[k] * Δlnp_m + bk[k+1] * Δlnp_p) / Δp
+                    dlnp_dλ = x1 * grid_dλ_ps[i, j, 1]
+                    dlnp_dθ = x1 * grid_dθ_ps[i, j, 1]
+
+                    # (grid_δu, grid_δv) -= RT/p * ∇p
+                    t_k               = grid_t[i, j, k]
+                    grid_δu[i, j, k] -= rdgas * t_k * dlnp_dλ
+                    grid_δv[i, j, k] -= rdgas * t_k * dlnp_dθ
+
+                    # dmean = ∇⋅(v_k * Δp_k) = div_k * Δp_k + v_k * (Δbk_k * ∇p_s)
+                    dmean = grid_div[i, j, k] * Δp + Δbk[k] * (grid_u[i, j, k] * grid_dλ_ps[i, j, 1] + grid_v[i, j, k] * grid_dθ_ps[i, j, 1])
+
+                    # energy conservation for temperature
+                    # w/p = dlnp/dt = ∂lnp/∂t + ∂lnp/∂σ dσ + v⋅∇lnp
+                    # ∂ξ_k/∂σ dσ = [M_{k+1/2}(ξ_k+1/2 - ξ_k) + M_{k-1/2}(ξ_k - ξ_k-1/2)]/Δp_k
+                    # weight the same way
+                    # vertical advection operator (M is the downward speed)
+                    # ∂lnp_k/∂σ dσ = [M_{k+1/2} (lnp_k+1/2 - lnp_k) + M_{k-1/2} (lnp_k - lnp_k-1/2)] / Δp_k
+                    # ∂lnp/∂t = 1/p ∂p/∂t = [∂p/∂t_{k+1/2} (lnp_k+1/2 - lnp_k) + ∂p/∂t_{k-1/2} (lnp_k - lnp_k-1/2)] / Δp_k
+                    # As we know
+                    # ∂p/∂t_{k+1/2} = -∑_{r=1}^k Dr - M_{k+1/2}
+                    
+                    # ∂lnp/∂t + dσ ∂lnp/∂σ =  [(-∑_{r=1}^k Dr)(lnp_k+1/2 - lnp_k) + (-∑_{r=1}^{k-1} Dr)(lnp_k - lnp_k-1/2)]/Δp_k
+                    #                      = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k
+                    
+                    x5 = -(dmean_tot * Δlnp + dmean * Δlnp_p) / Δp + grid_u[i, j, k] * dlnp_dλ + grid_v[i, j, k] * dlnp_dθ
+                    
+                    # grid_δt += κT w/p
+                    grid_δt[i, j, k] += kappa * grid_t[i, j, k] * x5
+                    
+                    # grid_w_full = w
+                    grid_w_full[i, j, k] = x5 * grid_p_full[i, j, k]
+                    
+                    # update dmean_tot to ∑_{r=1}^k ∇⋅(v_r * Δp_r)
+                    dmean_tot += dmean
+                    
+                    # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
+                    grid_M_half[i, j, k+1] = -dmean_tot
+
+                end
+
+            else
+                error("vert_difference_option ", vert_difference_option, " is not a valid value for option")
+            end
+
+            # ∂ps/∂t = -∑_{r=1}^nd ∇(vrΔp_r) = -dmean_tot
+            grid_δps[i, j, 1] -= dmean_tot
+            
+            for k = 1:nd-1
+                # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
+                grid_M_half[i, j, k+1] += dmean_tot * bk[k+1]
+            end
+            
+            grid_M_half[i, j, 1]    = 0.0
+            grid_M_half[i, j, nd+1] = 0.0
+
         end
-        
-    else
-        error("vert_difference_option ", vert_difference_option, " is not a valid value for option")
-        
     end
-    # ∂ps/∂t = -∑_{r=1}^nd ∇(vrΔp_r) = -dmean_tot
-    grid_δps[:,:,1]        .-= dmean_tot
-    
-    for k = 1:nd-1
-        # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
-        grid_M_half[:,:,k+1] .+= dmean_tot * bk[k+1]
-    end
-    
-    grid_M_half[:,:,1]      .= 0.0
-    grid_M_half[:,:,nd + 1] .= 0.0
+
 end 
 
 
@@ -222,7 +230,6 @@ We have
 δT = f^t - I^t + I^t
 
 """
-
 function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coordinate, 
     atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
     semi_implicit::Semi_Implicit_Solver, L::Float64 = 0.1)
@@ -409,6 +416,8 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     return 
 end 
 
+
+
 function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::String = "None", initial_day::Int64 = 5)
     if warm_start_file_name == "None" # load warm start file
         grid_geopots .= 0.0
@@ -421,6 +430,8 @@ function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::
     
     return
 end 
+
+
 
 function Spectral_Initialize_Fields!(
     mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, 
@@ -624,6 +635,7 @@ function Spectral_Initialize_Fields!(
 
      
 end 
+
 
 
 function Spectral_Dynamics_Physics!(
