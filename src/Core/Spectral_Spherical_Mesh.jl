@@ -69,9 +69,24 @@ mutable struct Spectral_Spherical_Mesh
     spherical_d2::Array{ComplexF64,3}
     spherical_ds1::Array{ComplexF64,3}
     spherical_ds2::Array{ComplexF64,3}
+
+    # Plans & Thread Local Memory
+    fft_plan::FFTW.cFFTWPlan
+    ifft_plan::AbstractFFTs.ScaledPlan
     
+    fft_scratch::Vector{Vector{ComplexF64}}
+    
+    # 1. Sr (Sum Real / Input Real)
+    # 2. Si (Sum Imag / Input Imag)
+    # 3. Dr (Diff Real / Output Real)
+    # 4. Di (Diff Imag / Output Imag)
+    # 5. Qr (Contiguous Legendre Polynomials)
+    # 6. Tmp (Extra Workspace)
+    leg_scratch::Vector{NTuple{6, Matrix{Float64}}}
     
 end
+
+
 
 function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, radius::Float64)
     
@@ -131,17 +146,37 @@ function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nλ::
     spherical_d2 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd) 
     spherical_ds1 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1) 
     spherical_ds2 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1)
+
+    # Pre-computed fft & ifft
+    dummy_vec   = zeros(ComplexF64, nλ)
+    fft_plan    = plan_fft(dummy_vec; flags = FFTW.PATIENT)
+    ifft_plan   = plan_ifft(dummy_vec; flags = FFTW.PATIENT)
+    fft_scratch = [zeros(ComplexF64, nλ) for _ in 1:nthreads()]
+
+    # Scratch Allocation
+    rows = max(num_spherical+1, div(nθ, 2))
+    cols = max(nd, div(nθ, 2))
     
-    Spectral_Spherical_Mesh(num_fourier, num_spherical, nλ, nθ, nd, radius, sinθ, cosθ, wts,
-    λc, θc, qnm, dqnm, qwg, λe, θe,
-    epsilon, 
-    coef_alp_a, coef_alp_b, 
-    coef_uvm, coef_uvc, coef_uvp,
-    coef_dλ, coef_dθm, coef_dθp,
-    laplacian_eig, wave_numbers,
-    fourier_d1, fourier_d2, fourier_ds1, fourier_ds2, 
-    grid_d1, grid_d2, grid_ds1, grid_ds2, 
-    spherical_d1, spherical_d2, spherical_ds1, spherical_ds2)
+    leg_scratch = [
+        (zeros(Float64, rows, cols), zeros(Float64, rows, cols), 
+         zeros(Float64, rows, cols), zeros(Float64, rows, cols),
+         zeros(Float64, rows, cols), zeros(Float64, rows, cols)) 
+        for _ in 1:nthreads()
+    ]
+    
+    Spectral_Spherical_Mesh(
+        num_fourier, num_spherical, nλ, nθ, nd, radius, sinθ, cosθ, wts,
+        λc, θc, qnm, dqnm, qwg, λe, θe,
+        epsilon, 
+        coef_alp_a, coef_alp_b, 
+        coef_uvm, coef_uvc, coef_uvp,
+        coef_dλ, coef_dθm, coef_dθp,
+        laplacian_eig, wave_numbers,
+        fourier_d1, fourier_d2, fourier_ds1, fourier_ds2, 
+        grid_d1, grid_d2, grid_ds1, grid_ds2, 
+        spherical_d1, spherical_d2, spherical_ds1, spherical_ds2,
+        fft_plan, ifft_plan, fft_scratch, leg_scratch
+    )
 end
 
 
@@ -175,49 +210,117 @@ function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::Array{Comp
     """
     
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
+    nλ, nθ, nd                 = mesh.nλ, mesh.nθ, mesh.nd
+    qnm                        = mesh.qnm
+    fft_scratch                = mesh.fft_scratch
+    leg_scratch                = mesh.leg_scratch
     
-    qnm = mesh.qnm
-    @assert(size(snm)[3] == nd || size(snm)[3] == 1 )
-    
-    
-    # fourier_g =  (size(snm)[3] == nd ? mesh.fourier_d1 : mesh.fourier_ds1)
-    # fourier_g .= 0.0
-    # for m = 1:num_fourier + 1
-    #     for n = m:num_spherical + 1# #!only sum to N
-    #         fourier_g[m, :, :] .+=  qnm[m,n,:] * transpose(snm[m,n, :])   #snm[m,n, :] is complex number
-    #     end
-    # end
-    
-    fourier_g =  (size(snm)[3] == nd ? mesh.fourier_d1 : mesh.fourier_ds1)
+    use_3d = (size(snm)[3] == nd)
+    fourier_g  = (use_3d ? mesh.fourier_d1 : mesh.fourier_ds1)
+    fourier_s  = (use_3d ? mesh.fourier_d2 : mesh.fourier_ds2)
     fourier_g .= 0.0
-    fourier_s =  (size(snm)[3] == nd ? mesh.fourier_d2 : mesh.fourier_ds2)
     fourier_s .= 0.0
     
-    # use qwg[m, n,:] is an even function              if (n-m)%2 ==0
-    #     qwg[m, n,:] is an odd function               if (n-m)%2 == 1
-    @assert(nθ%2 == 0)
-    nθ_half = div(nθ, 2) 
-    for m = 1:num_fourier + 1
-        for n = m:num_spherical + 1# !only sum to N todo wrong
-            snm_t = transpose(snm[m,n, :]) #snm[m,n, :] is complex number
-            if (n-m)%2 == 0
-                fourier_s[m, 1:nθ_half, :] .+=  qnm[m,n,1:nθ_half] * snm_t   #even function part
-            else 
-                fourier_s[m, nθ_half+1:nθ, :] .+=  qnm[m,n,1:nθ_half] * snm_t   #odd function part
-            end  
+    nθ_half = div(nθ, 2)
+
+    # --- Inverse Legendre Transform --- #
+    @threads for m = 1:num_fourier+1
+        # Local buffer for this thread
+        tid = threadid()
+        Sr, Si, Dr, Di, Qr, Tmp = leg_scratch[tid] 
+        
+        n_even = m:2:num_spherical+1
+        n_odd  = m+1:2:num_spherical+1
+
+        if !isempty(n_even)
+            Q_even   = @view qnm[m, n_even, 1:nθ_half]
+            S_source = @view snm[m, n_even, :]
+            
+            k_len = size(S_source, 2)
+            n_len = length(n_even)
+            
+            # 1. Pack S (Strided Complex -> Contiguous Real/Imag)
+            Sr_view = @view Sr[1:n_len, 1:k_len]
+            Si_view = @view Si[1:n_len, 1:k_len]
+            @. Sr_view = real(S_source)
+            @. Si_view = imag(S_source)
+            
+            # 2. Pack Q (Strided Real -> Contiguous Real)
+            Qr_view = @view Qr[1:n_len, 1:nθ_half]
+            copyto!(Qr_view, Q_even)
+            
+            # 3. Pure Real Matrix Multiplication
+            Dr_view = @view Dr[1:nθ_half, 1:k_len]
+            Di_view = @view Di[1:nθ_half, 1:k_len]
+            
+            mul!(Dr_view, transpose(Qr_view), Sr_view)
+            mul!(Di_view, transpose(Qr_view), Si_view)
+            
+            Dest_even = @view fourier_s[m, 1:nθ_half, :]
+            @. Dest_even += complex(Dr_view, Di_view)
         end
-        fourier_g[m, 1:nθ_half, :]       .= fourier_s[m, 1:nθ_half, :] + fourier_s[m, nθ_half+1:nθ, :]
-        fourier_g[m, nθ:-1:nθ_half+1, :] .= fourier_s[m, 1:nθ_half, :] - fourier_s[m, nθ_half+1:nθ, :]
+
+        if !isempty(n_odd)
+            Q_odd    = @view qnm[m, n_odd, 1:nθ_half]
+            S_source = @view snm[m, n_odd, :]
+
+            k_len = size(S_source, 2)
+            n_len = length(n_odd)
+            
+            Sr_view = @view Sr[1:n_len, 1:k_len]
+            Si_view = @view Si[1:n_len, 1:k_len]
+            @. Sr_view = real(S_source)
+            @. Si_view = imag(S_source)
+            
+            Qr_view = @view Qr[1:n_len, 1:nθ_half]
+            copyto!(Qr_view, Q_odd)
+            
+            Dr_view = @view Dr[1:nθ_half, 1:k_len]
+            Di_view = @view Di[1:nθ_half, 1:k_len]
+            
+            mul!(Dr_view, transpose(Qr_view), Sr_view)
+            mul!(Di_view, transpose(Qr_view), Si_view)
+            
+            Dest_odd = @view fourier_s[m, nθ_half+1:nθ, :] 
+            @. Dest_odd += complex(Dr_view, Di_view)
+        end
+
+        # North = Even + Odd
+        # South = Even - Odd
+        even_part = @view fourier_s[m, 1:nθ_half, :]
+        odd_part  = @view fourier_s[m, nθ_half+1:nθ, :]
+        north     = @view fourier_g[m, 1:nθ_half, :]
+        south     = @view fourier_g[m, nθ:-1:nθ_half+1, :]
+        
+        @. north = even_part + odd_part
+        @. south = even_part - odd_part
         
     end
+    # --- Inverse Legendre Transform --- #
     
+    # Normalize m = 1
+    view(fourier_g, 1, :, :) ./= 2.0
     
-    fourier_g[1, :, :] ./= 2.0
+    # --- Inverse FFT --- #
+    ifft_p = mesh.ifft_plan
+
+    @threads for j = 1:nθ
+        # Local buffer for this thread
+        tid     = threadid()
+        scratch = fft_scratch[tid]
+
+        num_k = size(fourier_g, 3)
+        for k = 1:num_k
+            in_view  = @view fourier_g[:, j, k]
+            out_view = @view pfield[:, j, k]
+
+            # iFFT
+            mul!(scratch, ifft_p, in_view)
+            @. out_view = 2.0 * nλ * real(scratch)
+        end
     
-    for j = 1:nθ   
-        pfield[:,j,:] .= 2.0 * nλ * real.(ifft(fourier_g[:,j,:], 1)) #fourier for the first dimension
     end
+    # --- Inverse FFT --- #
     
 end
 
@@ -254,48 +357,111 @@ function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::Array{F
     """
     
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
+    nλ, nθ, nd                 = mesh.nλ, mesh.nθ, mesh.nd
+    qwg                        = mesh.qwg
+    fft_scratch                = mesh.fft_scratch
+    leg_scratch                = mesh.leg_scratch
+
+    use_3d = (size(pfield)[3] == nd)
+    fourier_g = use_3d ? mesh.fourier_d1 : mesh.fourier_ds1
     
-    qwg = mesh.qwg
-    @assert(size(pfield)[3] == nd || size(pfield)[3] == 1)
-    fourier_g =  (size(pfield)[3] == nd ? mesh.fourier_d1 : mesh.fourier_ds1)
-    
-    for j = 1:nθ
-        fourier_g[:, j, :] .= fft(pfield[:, j, :], 1) / nλ
+    snm .= 0.0
+
+    # --- Forward FFT --- #
+    fft_p = mesh.fft_plan
+
+    @threads for j = 1:nθ
+        # Local buffer for the thread
+        tid     = threadid()
+        scratch = fft_scratch[tid]
+
+        num_k = size(pfield, 3)
+        for k = 1:num_k
+            in_view  = @view pfield[:, j, k]
+            out_view = @view fourier_g[:, j, k]
+
+            # FFT
+            @. scratch = ComplexF64(in_view)
+            mul!(out_view, fft_p, scratch)
+            @. out_view[1:num_fourier+1] = out_view[1:num_fourier+1] / nλ
+        end
+
     end
-    
-    nλ_half = div(nλ, 2)
-    
-    # for m = 1:num_fourier + 1
-    #     for n = m:num_spherical + 1
-    #         #todo
-    #         #snm[m, n, :] = (qwg[m,n,:]' * fourier_g[m, :, :]) / 2.0
-    
-    #         snm[m, n, :] .= (transpose(fourier_g[m, :, :]) * qwg[m,n,:]) / 2.0
-    #     end
-    # end
-    
-    # use qwg[m, n,:] is an even function              if (n-m)%2 ==0
-    #     qwg[m, n,:] is an odd function               if (n-m)%2 == 1
+    # --- Forward FFT --- #
+
     @assert(nθ%2 == 0)
     nθ_half = div(nθ, 2)
-    for m = 1:num_fourier + 1
-        for n = m:num_spherical #+ 1 #todo wrong
+    
+    @threads for m = 1:num_fourier + 1
+        tid = threadid()
+        Sr, Si, Dr, Di, Qr, Tmp = leg_scratch[tid]
+        
+        north_view = @view fourier_g[m, 1:nθ_half, :]
+        south_view = @view fourier_g[m, nθ:-1:nθ_half+1, :]
+        
+        k_len = size(north_view, 2)
+        n_lat = nθ_half
+        
+        # Prepare Inputs in Sr/Si (Sum) and Dr/Di (Diff)
+        Sum_r = @view Sr[1:n_lat, 1:k_len]
+        Sum_i = @view Si[1:n_lat, 1:k_len]
+        Dif_r = @view Dr[1:n_lat, 1:k_len]
+        Dif_i = @view Di[1:n_lat, 1:k_len]
+        
+        @. Sum_r = 0.5 * (real(north_view) + real(south_view))
+        @. Sum_i = 0.5 * (imag(north_view) + imag(south_view))
+        @. Dif_r = 0.5 * (real(north_view) - real(south_view))
+        @. Dif_i = 0.5 * (imag(north_view) - imag(south_view))
+        
+        # --- Even Modes (Uses Sum) ---
+        n_even = m:2:num_spherical
+        if !isempty(n_even)
+            Q_even = @view qwg[m, n_even, 1:nθ_half] 
+            S_dest = @view snm[m, n_even, :]
+            n_len  = length(n_even)
             
-            fourier_g_t = transpose(fourier_g[m, :, :])
+            # Pack Q
+            Qr_view = @view Qr[1:n_len, 1:nθ_half]
+            copyto!(Qr_view, Q_even)
             
-            if (n-m)%2 == 0
-                snm[m, n, :] .= (fourier_g_t[:, 1:nθ_half] + fourier_g_t[:, nθ:-1:nθ_half+1]) * qwg[m,n,1:nθ_half] / 2.0
-            else
-                snm[m, n, :] .= (fourier_g_t[:, 1:nθ_half] - fourier_g_t[:, nθ:-1:nθ_half+1]) * qwg[m,n,1:nθ_half] / 2.0
-            end
+            # Multiply (Result goes to Tmp)
+            # Use Tmp as Real output buffer
+            Dest_r = @view Tmp[1:n_len, 1:k_len]
+            mul!(Dest_r, Qr_view, Sum_r)
+            
+            # Update Real part of S_dest
+            @. S_dest += Dest_r
+            
+            # Multiply Imag
+            mul!(Dest_r, Qr_view, Sum_i) # Reuse Tmp
+            @. S_dest += Dest_r * im
+        end
+        
+        # --- Odd Modes (Uses Diff) ---
+        n_odd = m+1:2:num_spherical
+        if !isempty(n_odd)
+            Q_odd  = @view qwg[m, n_odd, 1:nθ_half]
+            S_dest = @view snm[m, n_odd, :]
+            n_len  = length(n_odd)
+            
+            Qr_view = @view Qr[1:n_len, 1:nθ_half]
+            copyto!(Qr_view, Q_odd)
+            
+            Dest_r = @view Tmp[1:n_len, 1:k_len]
+            mul!(Dest_r, Qr_view, Dif_r)
+            @. S_dest += Dest_r
+            
+            mul!(Dest_r, Qr_view, Dif_i)
+            @. S_dest += Dest_r * im
         end
     end
+    # --- Forward Legendre Transform --- #
     
     snm[:, num_spherical+1, :] .= 0.0
     
-    
 end
+
+
 
 function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::Array{Float64,3}, fourier_g::Array{ComplexF64,3})
     
@@ -324,35 +490,54 @@ function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::Array{Flo
     fourier_g = g_{m, nθ} # Complex{Float64} nλ×nθ 
     pfiled = F(λ, η)      # Float64[nλ, nθ]
     """
+    nλ, nθ      = mesh.nλ, mesh.nθ
+    fft_p       = mesh.fft_plan
+    fft_scratch = mesh.fft_scratch
     
-    
-    nλ, nθ = mesh.nλ, mesh.nθ
-    
-    for j = 1:nθ
-        fourier_g[:, j, :] .= fft(pfield[:, j, :], 1) / nλ
+    @threads for j = 1:nθ
+        # Private buffer for the thread
+        tid     = threadid()
+        scratch = fft_scratch[tid]
+
+        num_k = size(pfield, 3)
+        for k = 1:num_k
+            in_view    = @view pfield[:, j, k]
+            @. scratch = ComplexF64(in_view)
+            mul!(@view(fourier_g[:, j, k]), fft_p, scratch)
+            @view(fourier_g[:, j, k]) ./= nλ
+        end
+        
     end
     
 end
+
 
 
 function Divide_By_Cos!(cosθ::Array{Float64,1}, grid_d::Array{Float64,3})
     nd = size(grid_d)[3]
     for k = 1:nd
-        grid_d[:,:,k] ./= cosθ'
+        v = @view grid_d[:, :, k]
+        @. v /= cosθ'
     end
 end
+
 
 
 function Multiply_By_Cos!(cosθ::Array{Float64,1}, grid_d::Array{Float64,3}, grid_d_cos::Array{Float64,3})
     nd = size(grid_d)[3]
     for k = 1:nd
-        grid_d_cos[:,:,k] .= grid_d[:,:,k] .* cosθ'
+        v_in  = @view grid_d[:, :, k]
+        v_out = @view grid_d_cos[:, :, k]
+        @. v_out = v_in * cosθ'
     end
 end
 
 
-function Vor_Div_From_Grid_UV!(mesh::Spectral_Spherical_Mesh, grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
-    vor::Array{ComplexF64,3}, div::Array{ComplexF64,3})
+
+function Vor_Div_From_Grid_UV!(
+    mesh::Spectral_Spherical_Mesh, grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
+    vor::Array{ComplexF64,3}, div::Array{ComplexF64,3}
+)
     """
     Step 1. compute the spherical coordinates of U = ucosθ, V = vcosθ
     
@@ -398,10 +583,13 @@ function Vor_Div_From_Grid_UV!(mesh::Spectral_Spherical_Mesh, grid_u::Array{Floa
 end
 
 
-function Compute_Alpha_Operator_Init(num_fourier::Int64, num_spherical::Int64, 
+
+function Compute_Alpha_Operator_Init(
+    num_fourier::Int64, num_spherical::Int64, 
     cosθ::Array{Float64,1},
     qnm::Array{Float64,3}, dqnm::Array{Float64,3}, 
-    wts::Array{Float64,1}) 
+    wts::Array{Float64,1}
+) 
     """
     See Compute_Alpha_Operator!
     
@@ -415,9 +603,8 @@ function Compute_Alpha_Operator_Init(num_fourier::Int64, num_spherical::Int64,
     coef_alp_a = zeros(Float64, num_fourier + 1, num_spherical + 1, nθ) 
     coef_alp_b = zeros(Float64, num_fourier + 1, num_spherical + 1, nθ) 
     
-    for m = 0:num_fourier
+    @threads for m = 0:num_fourier
         for n = m:num_spherical #todo wrong should not have +1
-            
             coef_alp_a[m + 1,n + 1,:] .=  wts .* qnm[m + 1,n + 1,:] ./ cosθ.^2 * m
             coef_alp_b[m + 1,n + 1,:] .= -wts .* dqnm[m + 1,n + 1,:]
         end
@@ -426,8 +613,12 @@ function Compute_Alpha_Operator_Init(num_fourier::Int64, num_spherical::Int64,
     return coef_alp_a, coef_alp_b
 end
 
-function Compute_Alpha_Operator!(mesh::Spectral_Spherical_Mesh, fourier_a::Array{ComplexF64,3}, fourier_b::Array{ComplexF64,3}, 
-    isign::Float64, alpha::Array{ComplexF64,3}) 
+
+
+function Compute_Alpha_Operator!(
+    mesh::Spectral_Spherical_Mesh, fourier_a::Array{ComplexF64,3}, fourier_b::Array{ComplexF64,3}, 
+    isign::Float64, alpha::Array{ComplexF64,3}
+) 
     """
     given the fourier coordinates of A and B, 
     A(λ,θ) = ∑_{m=-N}^{N} A_m(θ) e^{imλ}      B(λ,θ) = ∑_{m=-N}^{N} B_m(θ) e^{imλ}  (we save A_0, A_1 .... A_{nλ-1})
@@ -449,19 +640,52 @@ function Compute_Alpha_Operator!(mesh::Spectral_Spherical_Mesh, fourier_a::Array
     coef_alp_b = -∂(P_n^m)/∂μ(μ) w(μ) 
     
     """
-    
-    
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    radius = mesh.radius
-    coef_alp_a, coef_alp_b = mesh.coef_alp_a, mesh.coef_alp_b
+    nθ, nd                     = mesh.nθ, mesh.nd
+    radius                     = mesh.radius
+    coef_alp_a, coef_alp_b     = mesh.coef_alp_a, mesh.coef_alp_b
+
+    inv_2radius = 1.0 / (2.0 * radius)
     
-    for m = 0:num_fourier 
+    @threads for m = 0:num_fourier 
+        
         for n = m:num_spherical
-            alpha[m + 1,n + 1, :] .= 1 / (2 * radius) * ( (imag.(fourier_a[m + 1, :, :]') + real.(fourier_a[m + 1, :, :]') * im) * coef_alp_a[m + 1,n + 1,:]
-            + isign * (transpose(fourier_b[m + 1,:, :]) * coef_alp_b[m + 1,n + 1,:]))
+            
+            for k = 1:nd
+                res_real = 0.0
+                res_imag = 0.0
+                
+                @simd for j = 1:nθ
+                    # Load Fourier Coeffs
+                    fa_val = fourier_a[m+1, j, k]
+                    fa_re  = real(fa_val)
+                    fa_im  = imag(fa_val)
+                    
+                    fb_val = fourier_b[m+1, j, k]
+                    fb_re  = real(fb_val)
+                    fb_im  = imag(fb_val)
+                    
+                    Ca = coef_alp_a[m+1, n+1, j]
+                    Cb = coef_alp_b[m+1, n+1, j]
+                    
+                    # Term A: i * fa * Ca -> i(Re + i*Im) -> -Im + i*Re
+                    termA_re = -fa_im * Ca
+                    termA_im =  fa_re * Ca
+                    
+                    # Term B: fb * Cb * isign
+                    termB_re = fb_re * Cb * isign
+                    termB_im = fb_im * Cb * isign
+                    
+                    res_real += termA_re + termB_re
+                    res_imag += termA_im + termB_im
+                end
+                
+                alpha[m+1, n+1, k] = Complex(res_real, res_imag) * inv_2radius
+            end
         end
     end
 end
+
 
 
 function UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3},  div::Array{ComplexF64,3}, 
@@ -482,9 +706,9 @@ function UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{Complex
     cosθ = mesh.cosθ
     Divide_By_Cos!(cosθ, grid_u)
     Divide_By_Cos!(cosθ, grid_v)
-    
-    
+        
 end
+
 
 
 function Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64, epsilon::Array{Float64, 2}) 
@@ -518,6 +742,8 @@ function Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier::Int64, num_spherical::
     
     return coef_uvm, coef_uvc, coef_uvp
 end
+
+
 
 function Compute_Ucos_Vcos_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3}, div::Array{ComplexF64,3}, 
     spherical_ucos::Array{ComplexF64,3}, spherical_vcos::Array{ComplexF64,3})
@@ -565,24 +791,30 @@ function Compute_Ucos_Vcos_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Arr
     
     ! have all modes, including the extra spherical mode
     """
-    num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    coef_uvc = mesh.coef_uvc  
-    coef_uvm = mesh.coef_uvm 
-    coef_uvp = mesh.coef_uvp 
-    
-    spherical_ucos .= coef_uvc .* (-imag.(div) .+ real.(div) * im)
-    spherical_ucos[:,2:num_spherical + 1, :] .-= coef_uvm[:,2:num_spherical + 1] .* vor[:,1:num_spherical,:]
-    spherical_ucos[:,1:num_spherical, :]   .-= coef_uvp[:,1:num_spherical] .* vor[:,2:num_spherical + 1, :]
-    #todo wrong
-    #spherical_ucos[:,num_spherical + 1, :] .= 0.0
-    
-    spherical_vcos .= coef_uvc .* (-imag.(vor) .+ real.(vor) * im)
-    spherical_vcos[:,2:num_spherical + 1,:] .+= coef_uvm[:,2:num_spherical + 1] .* div[:,1:num_spherical,:]
-    spherical_vcos[:,1:num_spherical,:] .+= coef_uvp[:,1:num_spherical] .* div[:,2:num_spherical + 1,:]  
-    #todo wrong
-    #spherical_vcos[:,num_spherical + 1,:] .= 0.0 
+    nd                           = mesh.nd
+    num_fourier, num_spherical   = mesh.num_fourier, mesh.num_spherical
+    coef_uvc, coef_uvm, coef_uvp = mesh.coef_uvc, mesh.coef_uvm, mesh.coef_uvp 
+
+    @threads for k = 1:nd
+        for m = 1:num_fourier+1
+
+            for n = 1:num_spherical+1
+                spherical_ucos[m, n, k] = coef_uvc[m, n] * (-imag(div[m, n, k]) + real(div[m, n, k]) * im) 
+                spherical_vcos[m, n, k] = coef_uvc[m, n] * (-imag(vor[m, n, k]) + real(vor[m, n, k]) * im)
+            end
+
+            for n = 1:num_spherical
+                spherical_ucos[m, n+1, k] -= coef_uvm[m, n+1] * vor[m, n, k]
+                spherical_ucos[m, n, k]   -= coef_uvp[m, n]   * vor[m, n+1, k]
+                spherical_vcos[m, n+1, k] += coef_uvm[m, n+1] * div[m, n, k]
+                spherical_vcos[m, n, k]   += coef_uvp[m, n]   * div[m, n+1, k]
+            end
+
+        end
+    end 
     
 end
+
 
 
 function Compute_Wave_Numbers(num_fourier::Int64, num_spherical::Int64, radius::Float64) 
@@ -601,6 +833,8 @@ function Compute_Wave_Numbers(num_fourier::Int64, num_spherical::Int64, radius::
     
 end
 
+
+
 function Apply_Laplacian_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64) 
     """
     See Compute_Laplacian!
@@ -616,6 +850,9 @@ function Apply_Laplacian_Init(num_fourier::Int64, num_spherical::Int64, radius::
     return laplacian_eig
     
 end
+
+
+
 function Apply_Laplacian!(mesh::Spectral_Spherical_Mesh, spherical_u::Array{ComplexF64,3}) 
     """
     [∇^2 u]_{n}^m  = -n(n+1)/r^2 [u]_{n}^m
@@ -657,6 +894,7 @@ function Compute_Gradient_Cos_Init(num_fourier::Int64, num_spherical::Int64,
 end
 
 
+
 function Compute_Gradient_Cos!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64,3}, 
     spe_cos_dλ_hs::Array{ComplexF64,3}, spe_cos_dθ_hs::Array{ComplexF64,3})
     """
@@ -673,28 +911,32 @@ function Compute_Gradient_Cos!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{Comp
     
     all modes are computed, including the extra spherical mode
     """
-    
-    num_spherical = mesh.num_spherical
-    
-    
+    num_fourier, num_spherical  = mesh.num_fourier, mesh.num_spherical
     coef_dλ, coef_dθm, coef_dθp = mesh.coef_dλ, mesh.coef_dθm, mesh.coef_dθp
+
+    # 1. Zonal Derivative (d/dλ)
+    # Formula: im * m * S_nm
+    @threads for m = 1:num_fourier+1
+        for n = m:num_spherical+1
+            c_val = coef_dλ[m, n] 
+            
+            for k = 1:axes(spe_hs, 3)[end]
+                val = spe_hs[m, n, k]
+                # Multiply by i -> (-imag, real)
+                # Multiply by c_val
+                spe_cos_dλ_hs[m, n, k] = Complex(-imag(val) * c_val, real(val) * c_val)
+            end
+        end
+    end
     
-    
-    #todo wrong
-    #spe_hs[:,num_spherical+1,:] .= 0.0
-    
-    
-    spe_cos_dλ_hs .= coef_dλ .* (-imag.(spe_hs) + real.(spe_hs)*im)
-    
-    
-    spe_cos_dθ_hs[:,num_spherical+1,:] .= 0.0
-    spe_cos_dθ_hs[:,1:num_spherical,:] .= coef_dθp[:,1:num_spherical] .* spe_hs[:,2:num_spherical+1,:]
-    spe_cos_dθ_hs[:,2:num_spherical+1,:] .+= coef_dθm[:,2:num_spherical+1] .* spe_hs[:,1:num_spherical,:]
-    
-    #todo wrong
-    #spe_cos_dθ_hs[:,num_spherical+1,:] .= 0.0
+    # Meridional Derivative (d/dθ)
+    spe_cos_dθ_hs[:, num_spherical+1, :]             .= 0.0
+    @views @. spe_cos_dθ_hs[:, 1:num_spherical, :]    = coef_dθp[:, 1:num_spherical]   * spe_hs[:, 2:num_spherical+1, :]
+    @views @. spe_cos_dθ_hs[:, 2:num_spherical+1, :] += coef_dθm[:, 2:num_spherical+1] * spe_hs[:, 1:num_spherical, :]
     
 end
+
+
 
 function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64,3},
     grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_δhs::Array{Float64, 3})
@@ -721,6 +963,7 @@ function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{
     grid_δhs .-= (grid_u.*grid_dλ_hs + grid_v.*grid_dθ_hs)
     
 end
+
 
 
 function Compute_Gradients!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64, 3}, 
@@ -765,265 +1008,5 @@ function Area_Weighted_Global_Mean(mesh::Spectral_Spherical_Mesh, grid_datas::Ar
 end 
 
 
-function test_fourier()
-    num_fourier, nθ, nd = 31, 48, 2
-    num_spherical = num_fourier + 1
-    nλ = 2nθ
-    
-    mesh = Spectral_Spherical_Mesh(num_fourier, num_spherical, nθ, nλ, nd, 1.0)
-    
-    
-    # test 1 use num_fourier = num_spherical
-    pfield0 = rand(Float64, nλ, nθ, nd)
-    pfield1 = zeros(Float64, nλ, nθ, nd)
-    pfield2 = zeros(Float64, nλ, nθ, nd)
-    snm0 = zeros(Complex{Float64}, num_fourier + 1, num_fourier + 1, nd)
-    snm1 = zeros(Complex{Float64}, num_fourier + 1, num_fourier + 1, nd)
-    
-    Trans_Grid_To_Spherical!(mesh, pfield0,  snm0)
-    Trans_Spherical_To_Grid!(mesh, snm0,  pfield1)
-    Trans_Grid_To_Spherical!(mesh, pfield1,  snm1)
-    Trans_Spherical_To_Grid!(mesh, snm1,  pfield2)
-    
-    @info norm(snm0 - snm1), norm(snm0[:, 1:num_spherical,:] - snm1[:, 1:num_spherical,:])
-    @info norm(pfield1 - pfield2)
-    
-    
-end
-
-function test_proj_error(mesh::Spectral_Spherical_Mesh, grid_data::Array{Float64,3})
-    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
-    num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    grid_data0 = rand(Float64, nλ, nθ, nd)
-    
-    spe_data = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    
-    
-    Trans_Grid_To_Spherical!(mesh, grid_data,  spe_data)
-    Trans_Spherical_To_Grid!(mesh, spe_data,  grid_data0)
-    
-    @show "proj error is ", norm(grid_data0 - grid_data)
-    
-end
-
-function velocity_profile(IC::String = "rigid_rotation")
-    # derivative will lose accuracy, which depends on the last two spherical modes)
-    
-    num_fourier, nθ, nd = 85, 128, 3 # 21, 32
-    #num_fourier, nθ = 127, 128 # 21, 32
-    
-    num_spherical = num_fourier + 1
-    nλ = 2nθ
-    radius = 5.0
-    mesh = Spectral_Spherical_Mesh(num_fourier, num_spherical, nθ, nλ, nd, radius)
-    
-    grid_u0, grid_v0 = zeros(Float64, nλ, nθ, nd), zeros(Float64, nλ, nθ, nd)
-    grid_vor0, grid_div0 = rand(Float64, nλ, nθ, nd), rand(Float64, nλ, nθ, nd)
-    cosθ = mesh.cosθ
-    sinθ = mesh.sinθ
-    
-    
-    if IC == "rigid_rotation"
-        @info "Initialize the rigid_rotation initial condition"
-        U, β = 2 * pi / 256.0, pi / 2.0
-        λc = mesh.λc
-        sinλc = sin.(λc)
-        
-        for k = 1:nd
-            for i = 1:nλ
-                grid_u0[i, :, k] .= U .* (cos(β) .* cosθ .+ sin(β) * cos(λc[i]) .* sinθ)
-            end
-            for j = 1:nθ
-                grid_v0[:, j, k] .= -U * sin(β) .* sinλc
-            end
-            grid_div0 .= 0.0
-            for i = 1:nλ
-                grid_vor0[i, :, k] = 2 * U / radius * (cos(β) * sinθ - sin(β) * cos(λc[i]) * cosθ)
-            end
-        end
-        
-        
-        
-    elseif IC == "random_1"
-        @info "Initialize the random initial condition"
-        
-        λc = mesh.λc
-        sinλc = sin.(λc)
-        for k = 1:nd
-            for i = 1:nλ
-                for j = 1:nθ
-                    grid_u0[i, j, k] = cosθ[j]^2
-                    grid_v0[i, j, k] = 0.0
-                    
-                    grid_div0[i,j, k] = 0.0
-                    grid_vor0[i,j, k] = 3*sinθ[j]*cosθ[j]/radius
-                end
-            end
-        end
-        
-    elseif IC == "random_2"
-        @info "Initialize the random initial condition"
-        
-        λc = mesh.λc
-        sinλc = sin.(λc)
-        for k = 1:nd
-            for i = 1:nλ
-                for j = 1:nθ
-                    grid_u0[i, j, k] = 25 * cosθ[j] - 30 * cosθ[j]^3 + 300 * sinθ[j]^2 * cosθ[j]^6   # cosθ[j]^2
-                    grid_v0[i, j, k] = 0.0
-                    
-                    grid_div0[i,j, k] = 0.0
-                    grid_vor0[i,j, k] = -(-50 * sinθ[j] + 120 * cosθ[j]^2 * sinθ[j] + 300 * (2cosθ[j]^7 * sinθ[j] - 7cosθ[j]^5 * sinθ[j]^3)) / radius # 3*sinθ[j]*cosθ[j]/radius
-                end
-            end
-        end            
-    elseif IC == "mix"
-        @info "Initialize the mix initial condition"
-        U, β = 2 * pi / 256.0, pi / 2.0
-        λc = mesh.λc
-        sinλc = sin.(λc)
-        
-        for k = 1:nd
-            for i = 1:nλ
-                for j = 1:nθ
-                    
-                    
-                    grid_u0[i, j, 1] = U * (cos(β) * cosθ[j] + sin(β) * cos(λc[i]) * sinθ[j])
-                    grid_v0[i, j, 1] = -U * sin(β) * sinλc[i]
-                    grid_u0[i, j, 2] = cosθ[j]^2
-                    grid_v0[i, j, 2] = 0.0
-                    grid_u0[i, j, 3] = 25 * cosθ[j] - 30 * cosθ[j]^3 + 300 * sinθ[j]^2 * cosθ[j]^6   # cosθ[j]^2
-                    grid_v0[i, j, 3] = 0.0
-                    
-                    grid_div0[i, j, 1] = 0.0
-                    grid_vor0[i, j, 1] = 2 * U / radius * (cos(β) * sinθ[j] - sin(β) * cos(λc[i]) * cosθ[j])
-                    
-                    grid_div0[i,j, 2] = 0.0
-                    grid_vor0[i,j, 2] = 3*sinθ[j]*cosθ[j]/radius
-                    
-                    grid_div0[i,j, 3] = 0.0
-                    grid_vor0[i,j, 3] = -(-50 * sinθ[j] + 120 * cosθ[j]^2 * sinθ[j] + 300 * (2cosθ[j]^7 * sinθ[j] - 7cosθ[j]^5 * sinθ[j]^3)) / radius # 3*sinθ[j]*cosθ[j]/radius
-                end
-            end    
-        end       
-    else
-        error("Initial condition ", IC, " has not implemented yet")
-    end
-    
-    return mesh, grid_u0, grid_v0, grid_vor0, grid_div0 
-    
-end
-
-
-
-
-
-function test_derivative(IC::String = "rigid_rotation")
-    
-    mesh, grid_u0, grid_v0, grid_vor0, grid_div0  = velocity_profile(IC)
-    nλ, nθ, nd, num_fourier, num_spherical = mesh.nλ, mesh.nθ, mesh.nd, mesh.num_fourier, mesh.num_spherical 
-    
-    vor = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    div = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    grid_vor1 = zeros(Float64, nλ, nθ, nd)
-    grid_div1 = zeros(Float64, nλ, nθ, nd)
-    
-    Vor_Div_From_Grid_UV!(mesh, grid_u0, grid_v0, vor, div)
-    @info "norm(div), norm(vor)", norm(div[:,:,1]), norm(div[:,:,2]),norm(div[:,:,3]), norm(vor)
-    Trans_Spherical_To_Grid!(mesh, div,  grid_div1)
-    @info "velocity divergence error is ", norm(grid_div0 - grid_div1)
-    
-    Trans_Spherical_To_Grid!(mesh, vor,  grid_vor1)
-    @info "velocity vorticity error is ", norm(grid_vor0 - grid_vor1)
-    
-    grid_u1 = zeros(Float64, nλ, nθ, nd)
-    grid_v1 = zeros(Float64, nλ, nθ, nd)
-    
-    UV_Grid_From_Vor_Div!(mesh, vor, div, grid_u1, grid_v1)
-    
-    @info "u error ", norm(grid_u1 - grid_u0)
-    @info "v error ", norm(grid_v1 - grid_v0)
-    
-    
-end
-
-function test_advection(IC::String = "rigid_rotation")
-    
-    mesh, grid_u0, grid_v0, _, _  = velocity_profile(IC)
-    nλ, nθ, nd, num_fourier, num_spherical = mesh.nλ, mesh.nθ, mesh.nd, mesh.num_fourier, mesh.num_spherical 
-    cosθ, sinθ = mesh.cosθ, mesh.sinθ
-    radius = mesh.radius
-    λc = mesh.λc
-    grid_hs0 = zeros(Float64, nλ, nθ, nd)
-    grid_∇hs0 = zeros(Float64, nλ, nθ, 2, nd)
-    for k = 1:nd
-        for i = 1:nλ
-            for j = 1:nθ
-                grid_hs0[i, j, k] = 25 * cosθ[j] - 30 * cosθ[j]^3 + 300 * sinθ[j]^2 * cosθ[j]^6 *sin(λc[i])
-                grid_∇hs0[i, j, 1, k] = (300 * sinθ[j]^2 * cosθ[j]^5 *cos(λc[i]))/radius
-                grid_∇hs0[i, j, 2, k] = (-25 * sinθ[j] + 90 * cosθ[j]^2*sinθ[j] + 600 * sinθ[j] * cosθ[j]^7*sin(λc[i]) - 1800 * sinθ[j]^3 * cosθ[j]^5*sin(λc[i]))/radius 
-            end
-        end
-    end
-    spe_hs0 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    
-    test_proj_error(mesh, grid_hs0)
-    test_proj_error(mesh, grid_∇hs0[:,:,2,:])
-    
-    
-    Trans_Grid_To_Spherical!(mesh, grid_hs0,  spe_hs0) 
-    spe_cos_dλ_hs = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    spe_cos_dθ_hs = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    
-    spe_dθ_hs0 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    Trans_Grid_To_Spherical!(mesh, grid_∇hs0[:,:,2,:],  spe_dθ_hs0) 
-    
-    Compute_Gradient_Cos!(mesh, spe_hs0, spe_cos_dλ_hs, spe_cos_dθ_hs)
-    #@show norm(spe_cos_dθ_hs - spe_dθ_hs0.*cosθ')
-    
-    spe_vor0 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    spe_div0 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    spe_vor1 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    spe_div1 = zeros(Complex{Float64}, num_fourier + 1, num_spherical + 1, nd)
-    grid_vor0 = zeros(Float64, nλ, nθ, nd)
-    grid_div0 = zeros(Float64, nλ, nθ, nd)
-    grid_vor1 = zeros(Float64, nλ, nθ, nd)
-    grid_div1 = zeros(Float64, nλ, nθ, nd)
-    
-    grid_δhs = zeros(Float64, nλ, nθ, nd)
-    
-    Vor_Div_From_Grid_UV!(mesh, grid_u0, grid_v0, spe_vor0, spe_div0)
-    
-    Trans_Spherical_To_Grid!(mesh, spe_div0,  grid_div0)
-    #grid_div1 = ∇((u,v)h) =   hdiv(u,v) + (u,v)∇h
-    Vor_Div_From_Grid_UV!(mesh, grid_u0.*grid_hs0, grid_v0.*grid_hs0, spe_vor1, spe_div1)
-    
-    Trans_Spherical_To_Grid!(mesh, spe_div1,  grid_div1)
-    #grid_δhs = -(u,v)∇h
-    
-    Add_Horizontal_Advection!(mesh, spe_hs0, grid_u0, grid_v0, grid_δhs)
-    
-    
-    grid_δhs_ref = -(grid_∇hs0[:, :, 1,:] .*grid_u0 + grid_∇hs0[:, :, 2,:] .* grid_v0)
-    
-    @show "adv approach error: ", norm(grid_δhs_ref - grid_δhs)
-    @show "divergence approach error: ", norm(grid_δhs_ref + grid_div1 + grid_hs0.*grid_div0)
-    
-    
-end
-
-
-if abspath(PROGRAM_FILE) == @__FILE__
-    # TODO: cosθ is poorly represented on spherical harmonic basis         
-    test_derivative("rigid_rotation")
-    test_derivative("random_1")
-    test_derivative("random_2")
-    test_derivative("mix")
-    
-    test_advection("rigid_rotation")
-    test_advection("random_1")
-    test_advection("random_2")
-    test_advection("mix")
-end
 
 end        
