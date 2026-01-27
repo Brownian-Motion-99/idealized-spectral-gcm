@@ -40,16 +40,18 @@ mutable struct Vert_Coordinate
     # memory container
     flux::Array{ComplexF64, 3}
     vert_integral::Array{Float64, 3}
-    
-    
-    
+        
 end
 
-function Vert_Coordinate(nλ::Int64, nθ::Int64, nd::Int64,
+
+
+function Vert_Coordinate(
+    nλ::Int64, nθ::Int64, nd::Int64,
     vert_coord_option::String, vert_difference_option::String, vert_advect_scheme::String,
     p_ref::Float64 = 101325., zero_top::Bool = true,
     scale_heights::Float64 = 4.0, surf_res::Float64 = 1.0, 
-    p_press::Float64 = 0.1,  p_sigma::Float64 = 0.3,  exponent::Float64 = 2.5)
+    p_press::Float64 = 0.1,  p_sigma::Float64 = 0.3,  exponent::Float64 = 2.5
+)
     
     ak, bk = Compute_Vert_Coord(nd, vert_coord_option, p_ref, zero_top, scale_heights, surf_res, p_press,  p_sigma, exponent)
     Δak, Δbk = ak[2:nd+1]-ak[1:nd], bk[2:nd+1]-bk[1:nd]
@@ -63,31 +65,34 @@ end
 
 
 
-
-function Compute_Vert_Coord(nd::Int64, vert_coord_option::String,
+function Compute_Vert_Coord(
+    nd::Int64, vert_coord_option::String,
     p_ref::Float64 = 101510., 
     zero_top::Bool = true,
     scale_heights::Float64 = 4.0, surf_res::Float64 = 1.0, 
-    p_press::Float64 = 0.1,  p_sigma::Float64 = 0.3,  exponent::Float64 = 2.5) #101325
+    p_press::Float64 = 0.1,  p_sigma::Float64 = 0.3,  exponent::Float64 = 2.5
+)
     
     
     if (vert_coord_option == "even_sigma") 
         a, b = Compute_Even_Sigma(nd)
+
     elseif (vert_coord_option == "uneven_sigma") 
-        # a = zeros(Float64, nd+1)
-        # b = zeros(Float64, nd+1)
-        
         a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, true)
-        # a, b = Compute_Uneven_Sigma(nd, a, b, scale_heights, surf_res, exponent, true)
-        
+    
+    elseif (vert_coord_option == "simmons_and_burridge")
+        a, b = Base.invokelatest(Compute_Simmons_Burridge, nd)
+    
     elseif (vert_coord_option == "hybrid") 
-        a_sigma, b_sigma = Compute_Uneven_Sigma(scale_heights, surf_res, exponent, false)
-        b_press, a_press = Compute_Uneven_Sigma(scale_heights, surf_res, exponent, false)
-        trans = Transition(b_sigma, p_sigma, p_press)
+        a_sigma, b_sigma = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
+        b_press, a_press = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
+        trans = Transition(nd, b_sigma, p_sigma, p_press)
         a = p_ref * (a_sigma.*trans + a_press.*(1.0 .- trans))
         b = b_sigma.*trans + b_press.*(1.0 .- trans)
+    
     elseif (vert_coord_option == "mcm") 
         a, b = Compute_Old_Model_Sigma()
+    
     elseif (vert_coord_option == "v197") 
         a, b = Compute_V197_Sigma()
         
@@ -97,8 +102,6 @@ function Compute_Vert_Coord(nd::Int64, vert_coord_option::String,
     
     return a, b
 end 
-
-
 
 
 
@@ -121,12 +124,15 @@ function Transition(nd::Float64, p::Array{Float64, 1}, p_sigma::Float64, p_press
     return trans
 end 
 
+
+
 function Compute_Even_Sigma(nd::Int64)
     
     a = zeros(Float64, nd+1)
     b = Array(LinRange(0, 1.0, nd+1))
     return a, b
 end 
+
 
 
 function Compute_Uneven_Sigma(nd::Int64,  scale_heights::Float64, surf_res::Float64, exponent::Float64, zero_top::Bool)
@@ -137,11 +143,17 @@ function Compute_Uneven_Sigma(nd::Int64,  scale_heights::Float64, surf_res::Floa
     
     a = zeros(Float64, nd+1)
     
+    # ζ goes from 1.0 (Top) to 0.0 (Surface)
     ζ = Array(LinRange(1.0, 0.0, nd+1))
     
+    # z goes from -1.0 (Top) to 0.0 (Surface)
     z = -(surf_res*ζ + (1.0 - surf_res)*(ζ.^exponent))
     
-    b = exp.(-z*scale_heights)
+    # --- ERROR WAS HERE ---
+    # Old: b = exp.(-z*scale_heights)  -> exp(positive) -> >1.0
+    # New: b = exp.(z*scale_heights)   -> exp(negative) -> <1.0
+    b = exp.(z*scale_heights)
+    # ----------------------
     
     b[nd+1] = 1.0
     
@@ -151,6 +163,8 @@ function Compute_Uneven_Sigma(nd::Int64,  scale_heights::Float64, surf_res::Floa
     return a, b
     
 end 
+
+
 
 function Compute_V197_Sigma()
     
@@ -166,6 +180,7 @@ function Compute_V197_Sigma()
 end 
 
 
+
 function Compute_Old_Model_Sigma()
     nd = 14
     
@@ -177,6 +192,35 @@ function Compute_Old_Model_Sigma()
 end 
 
 
+
+function Compute_Simmons_Burridge(nd::Int64)
+
+    if nd != 20
+        @warn "Simmons & Burridge grid is defined for 20 levels. Interpolation or truncation may occur if nd != 20."
+    end
+
+    # Coefficients defined at interfaces (nd+1)
+    # These are the standard "L20" values used in CCM3/CAM3
+    # A_k is in Pascals, B_k is dimensionless.
+    
+    ak = [
+        2.19422, 4.89520, 9.88241, 18.05201, 29.83724,
+        44.62333, 61.60586, 78.51243, 77.31270, 75.90131,
+        74.24086, 72.28743, 69.98933, 67.28574, 64.10509,
+        60.36321, 55.96111, 50.78224, 44.68920, 37.52196,
+        0.0
+    ] .* 100.0 # Convert hPa to Pa
+
+    bk = [
+        0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.01505, 0.03276,
+        0.05359, 0.07810, 0.10695, 0.14088, 0.18080,
+        0.22777, 0.28302, 0.34801, 0.42446, 0.51439,
+        1.0
+    ]
+    
+    return ak, bk
+end
 
 
 
@@ -193,31 +237,54 @@ function Vert_Advection!(vert_coord::Vert_Coordinate, r::Array{Float64,3}, dz::A
     w is nλ, nθ, nd+1
     r and dz are nλ, nθ, nd
     """
-    nd = vert_coord.nd
+    nd   = vert_coord.nd
     flux = vert_coord.flux
     
     # no flux boundary condition
-    flux[:,:,1]    .= 0.0
-    flux[:,:,nd+1] .= 0.0
-    #     #todo not upwind, use information from inside
-    #     flux[:,:,1]   = w[:,:,1]  *r[:,:,1]
-    #     flux[:,:,nd+1] = w[:,:,nd+1]*r[:,:,nd]
+    flux[:, :, 1]    .= 0.0
+    flux[:, :, nd+1] .= 0.0
     
     # 2nd-order centered scheme assuming variable grid spacing ------
     if vert_advect_scheme == "second_centered_wts"
-        flux[:,:,2:nd] .= w[:,:,2:nd] .* (r[:,:,1:nd-1] + (r[:,:,2:nd] - r[:,:,1:nd-1]).* dz[:,:,1:nd-1] ./(dz[:,:,1:nd-1] + dz[:,:,2:nd]))
         
-        #  2nd-order centered scheme assuming uniform grid spacing ------
+        @views begin
+            f_in  = flux[:, :, 2:nd]
+            w_in  = w[:, :, 2:nd]
+            r_up  = r[:, :, 1:nd-1]
+            r_dn  = r[:, :, 2:nd]
+            dz_up = dz[:, :, 1:nd-1]
+            dz_dn = dz[:, :, 2:nd]
+            
+            @. f_in = w_in * (r_up + (r_dn - r_up)* dz_up / (dz_up + dz_dn))
+        end
+        
+    #  2nd-order centered scheme assuming uniform grid spacing ------
     elseif vert_advect_scheme == "second_centered"
-        flux[:,:,2:nd] .= w[:,:,2:nd] .* (r[:,:,1:nd-1]+r[:,:,2:nd])/2.0
+        
+        @views begin
+            f_in = flux[:, :, 2:nd]
+            w_in = w[:, :, 2:nd]
+            r_up = r[:, :, 1:nd-1]
+            r_dn = r[:, :, 2:nd]
+
+            @. f_in = w_in * (r_up + r_dn) * 0.5
+        end
+        
     else 
         error("vert_advect_scheme ", vert_advect_scheme, " is not a valid value for option")
     end
     
-    
-    
-    rdt[:,:,1:nd] .= (flux[:,:,1:nd] - flux[:,:,2:nd+1] + r[:,:,1:nd].*(w[:,:,2:nd+1]-w[:,:,1:nd])) ./ dz[:,:,1:nd]
-    
+    @views begin
+        rdt_k    = rdt[:, :, 1:nd]
+        flux_k   = flux[:, :, 1:nd]
+        flux_kp1 = flux[:, :, 2:nd+1]
+        r_k      = r[:, :, 1:nd]
+        w_k      = w[:, :, 1:nd]
+        w_kp1    = w[:, :, 2:nd+1]
+        dz_k     = dz[:, :, 1:nd]
+
+        @. rdt_k = (flux_k - flux_kp1 + r_k * (w_kp1 - w_k)) / dz_k
+    end
     
 end
 
