@@ -14,7 +14,8 @@ config = Model_Config(
     damping_order = 4, damping_coef = 1.e-4, 
     robert_coef = 0.04, implicit_coef = 0.0,
 
-    num_tracers = 0, 
+    num_grid_tracters = 0,
+    num_spe_tracters  = 0,
     
     initial_condition = :Barotropic_Jet,
     

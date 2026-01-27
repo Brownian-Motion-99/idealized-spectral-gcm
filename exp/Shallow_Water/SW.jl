@@ -54,7 +54,8 @@ config = Model_Config(
     output_interval = 1200,
     
     # Initialization & Physics
-    num_tracers = 0,
+    num_grid_tracters = 1,
+    num_spe_tracters  = 1,
     initial_condition = :Shallow_Water_Test,
     physics_params = physics_params
 )
