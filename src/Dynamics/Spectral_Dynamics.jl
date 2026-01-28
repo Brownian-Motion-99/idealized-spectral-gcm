@@ -593,14 +593,11 @@ function Spectral_Initialize_Fields!(
         grid_t_p   .= grid_t
 
         # Tracer initialization
-        initial_RH      = 0.8
-        Lv              = 2.5*10^6.
-        Rv              = 461.
         qv0             = 0.018
         θc              = mesh.θc # lat
         phi_hw          = 2 * pi / 9 * deg2rad(40)
         p_hw            = 30000.
-        phi             = LinRange(-90,90,64)
+        phi             = LinRange(-90, 90, nθ)
         p0              = 100000.
         for k in 1:20
             for j in 1:64
@@ -707,6 +704,9 @@ function Spectral_Dynamics_Physics!(
     factor3           = dyn_data.factor3  
     # factor4 = dyn_data.factor4  
 
+    grid_shflx = dyn_data.grid_shflx
+    grid_lhflx = dyn_data.grid_lhflx
+
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
     grid_δtracers     = dyn_data.grid_δtracers 
@@ -725,25 +725,14 @@ function Spectral_Dynamics_Physics!(
 
     spe_tracers_c = dyn_data.spe_tracers_c
     spe_t_c = dyn_data.spe_t_c
-    
 
-    V_c      = zeros(((128,64,20)))
-    za       = zeros(((128,64,20)))
-    rho      = zeros(((128,64,20)))
-
-    C_E = 0.0044
-    Lv  = 2.5*10^6.
-    Rv  = atmo_data.rvgas  
-    Rd  = atmo_data.rdgas  
-    cp  = atmo_data.cp_air 
-    """
-    # Cal V_c and za
-    """
-    V_c_loc, za_loc, rho_loc = Calculate_V_c_za_rho!(dyn_data, atmo_data, grid_p_half, grid_p_full, grid_ps, grid_t, grid_u, grid_v, grid_tracers_c)
-
-    V_c     .= V_c_loc
-    za      .= za_loc
-    rho     .= rho_loc
+    # V_c, za, rho
+    V_c, za, rho = Calculate_V_c_za_rho(
+        atmo_data, dyn_data,
+        grid_p_half, grid_p_full, grid_ps,
+        grid_u, grid_v,
+        grid_t, grid_tracers_c
+    )
     
     """
     ## large-scale precipitation
@@ -771,23 +760,40 @@ function Spectral_Dynamics_Physics!(
         grid_δt       .= 0.
     end
 
-    # Calculate grid_δt(.+=) and grid_t(.=)
     if do_Sensible_heat_fluxes == true
-        Sensible_heat_fluxes!(mesh, atmo_data, grid_t, grid_t_n, grid_tracers_c, grid_δt, V_c, Δt, za)
+        Sensible_Heating!(
+            mesh, atmo_data,
+            grid_t, grid_shflx,
+            V_c, za, rho,
+            Δt
+        )
         Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
         Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
     end
 
     if do_Surface_evaporation == true
-        # Calculate grid_δtracers(.+=) and grid_tracers_c(.=)  (Latent_heat_flux! == Surface_evaporation!)
-        Surface_evaporation!(mesh, atmo_data, grid_t, grid_tracers_c, grid_tracers_n, grid_δtracers, grid_ps, V_c, za, Δt, factor1)
+        Surface_Evaporation!(
+            mesh, atmo_data,
+            grid_ps,
+            grid_tracers_c, grid_lhflx,
+            V_c, za, rho,
+            Δt
+        )
         Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
         Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
     end
 
     # Calculate {grid_δtracers(.+=) and grid_tracers_c(.=)} and {grid_δt(.+=) and grid_t(.=)}
     if do_Implicit_PBL_Scheme == true
-        Implicit_PBL_Scheme!(atmo_data, grid_t, grid_t_n, grid_tracers_c, grid_tracers_n, grid_δtracers, grid_δt, grid_p_full, grid_p_half, V_c, za, Δt, factor2, K_E, rho)
+        # Implicit_PBL_Scheme!(atmo_data, grid_t, grid_t_n, grid_tracers_c, grid_tracers_n, grid_δtracers, grid_δt, grid_p_full, grid_p_half, V_c, za, Δt, factor2, K_E, rho)
+        Implicit_PBL_Mixing!(
+            atmo_data,
+            grid_p_full, grid_p_half,
+            grid_t, grid_tracers_c,
+            K_E,
+            V_c, za, rho,
+            Δt
+        )
     
         Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
         Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
@@ -795,11 +801,19 @@ function Spectral_Dynamics_Physics!(
         Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
         Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
     end
-    ######################################################################################################
-    HS_Forcing!(atmo_data, Δt, mesh.sinθ, grid_u_p, grid_v_p, grid_p_half, grid_p_full, grid_t_p, grid_δu, grid_δv,
-    grid_t_eq, grid_δt, physics_params)
 
- 
+    grid_δt .= 0.0
+    
+    HS_Forcing!(
+        atmo_data, Δt, 86400, mesh.sinθ,
+        grid_u_p, grid_v_p,
+        grid_p_half, grid_p_full,
+        grid_t,
+        grid_δu, grid_δv,
+        grid_t_eq, grid_δt,
+        physics_params
+    )
+
 end
 
 
@@ -879,163 +893,6 @@ function HS_forcing_water_vapor!(semi_implicit::Semi_Implicit_Solver, dyn_data::
     ############################################################################
     factor3          .= grid_tracers_diff    
     grid_δt         .= (grid_tracers_diff .* Lv ./ cp) .* L 
-end
-
-function Calculate_V_c_za_rho!(dyn_data::Dyn_Data, atmo_data::Atmo_Data, grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_ps::Array{Float64, 3}, grid_t::Array{Float64, 3}, grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3})
-    ##
-    C_E = 0.0044
-    Lv  = 2.5*10^6.
-    Rv  = atmo_data.rvgas  
-    Rd  = atmo_data.rdgas  
-    cp  = atmo_data.cp_air 
-    grav = atmo_data.grav
-
-    # grid_δtracers .-= factor3 ./(2. .* Δt)
-    ### try
-    # @info maximum(grid_u)
-    """
-    # Cal V_c and za
-    """
-    # Calculate V_c
-    V_c = sqrt.(grid_u .^ 2 .+ grid_v .^ 2)
-    ### add moisture at surface following paper
-    ### ∂q_a/∂t = C_E * V_a * (q_sat,a - q_a) ./ z_a 
-
-    # rho_s = zeros(((128,64,1)))
-    # rho_s[:,:,1] .=  grid_ps_n[:,:,1] ./ Rd ./ (grid_t[:,:,20])
-
-    # cal za
-    tv         = zeros(((128,64,1)))
-    za         = zeros(((128,64,1)))
-    tv[:,:,1] .= grid_t[:,:,20] .* (1. .+ 0.608 .* grid_tracers_c[:,:,20])
-    za[:,:,1] .= Rd .* tv[:,:,1] ./grav .* (log.(grid_ps[:,:,1] ./ ((grid_p_full[:,:,20] .+ grid_p_half[:,:,21]) ./ 2.) )) ./2
-    # cal rho
-    rho = zeros(((128,64,20)))
-    for i in 1:20
-        rho[:,:,i] .=  grid_p_full[:,:,i] ./ Rd ./ (grid_t[:,:,i].* (1. .+ 0.608 .* grid_tracers_c[:,:,20]))
-    end
-    
-    return V_c, za, rho
-end
-
-function Sensible_heat_fluxes!(mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, grid_t::Array{Float64, 3}, grid_t_n::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_δt::Array{Float64, 3}, V_c::Array{Float64, 3}, Δt::Int64, za::Array{Float64, 3})
-
-    C_E = 0.0044
-    θc  = mesh.θc
-    Tsurf = zeros((128,64))
-    Tsurf = deepcopy(grid_t[:,:,20]) .*0
-    for i in 1:64
-         Tsurf[:,i] .= 29. .* exp.(-(θc[i] .^2. ./ (2 * (26. * pi / 180.)^2.))) .+ 271.
-    end
-
-    grid_t[:,:,20]  .= ((grid_t[:,:,20] .+ C_E .* V_c[:,:,20] .* Tsurf[:,:,1] .* Δt ./ za[:,:,1]) 
-                        ./ (1. .+ C_E .* V_c[:,:,20] .* Δt ./ za[:,:,1]))
-
-end
-
-function Surface_evaporation!(mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, grid_t::Array{Float64, 3}, grid_tracers_c::Array{Float64,3}, grid_tracers_n::Array{Float64,3}, grid_δtracers::Array{Float64,3}, grid_ps::Array{Float64, 3}, V_c::Array{Float64, 3}, za::Array{Float64, 3}, Δt::Int64, factor1::Array{Float64, 3})
-
-    C_E = 0.0044
-    Lv  = 2.5*10^6.
-    Rv  = atmo_data.rvgas  
-    Rd  = atmo_data.rdgas  
-    
-    θc = mesh.θc
-    Tsurf = zeros((128,64))
-    Tsurf = deepcopy(grid_t[:,:,20]) .*0
-    for i in 1:64
-        Tsurf[:,i] .= 29. .* exp.(-(θc[i] .^2. ./ (2 * (26. * pi / 180.)^2.))) .+ 271.
-    end
-    surface_evaporation         = deepcopy(grid_δtracers).*0
-    
-    grid_tracers_c_ps_max           = zeros(((128,64,1))) 
-    grid_tracers_c_ps_max          .= (0.622 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ Tsurf[:,:])) )) ./ (grid_ps[:,:,1] .- 0.378 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ Tsurf[:,:])))) 
-    
-    surface_evaporation[:,:,20] .= ((C_E .* V_c[:,:,20] .* Δt ./ za[:,:,1] .*  (grid_tracers_c_ps_max[:,:,1] .- min.(grid_tracers_c[:,:,20], grid_tracers_c_ps_max[:,:,1]))) ./ (1. .+ C_E .* V_c[:,:,20] .* Δt ./ za[:,:,1])) 
-        
-    grid_tracers_c[:,:,20]      .= ((grid_tracers_c[:,:,20] .+ C_E .* V_c[:,:,20] .* max.(grid_tracers_c[:,:,20],grid_tracers_c_ps_max[:,:,1]) .* Δt ./ za[:,:,1]) ./ (1. .+ C_E .* V_c[:,:,20]  .* Δt ./ za[:,:,1]))
-
-    factor1[:,:,20]              .= grid_tracers_c[:,:,20] ./(2. .* Δt) 
-    
-
-    
-end 
-
-function Implicit_PBL_Scheme!(atmo_data::Atmo_Data,grid_t::Array{Float64, 3}, grid_t_n::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_tracers_n::Array{Float64, 3}, grid_δtracers::Array{Float64, 3},  grid_δt::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, V_c::Array{Float64, 3}, za::Array{Float64, 3}, Δt::Int64, factor2::Array{Float64, 3}, K_E::Array{Float64, 3}, rho::Array{Float64, 3})
-
-    """
-    Boundary layer mixing, see Reed and Jablonowski (JAMES, 2012)
-    
-    Step1. Calculate K_E = C_E * V_c * za
-    Step2. Calculate A, B, C --> E, F
-    Step3. Calculate new grid_tracers_c and grid_t
-    """
-    C_E = 0.0044
-    Lv  = 2.5*10^6.
-    Rv  = atmo_data.rvgas  
-    Rd  = atmo_data.rdgas   
-    cp  = atmo_data.cp_air 
-    
-    V_a = V_c[:,:,20]
-    
-    grav = atmo_data.grav
-    
-    ###
-    for i in 17:21
-        K_E[:,:,i] .= C_E .* V_a .* za[:,:,1]
-    end
-    K_E[:,:, 1:16] .= C_E .* V_a .* za[:,:,1] .* exp.(-((85000. .- grid_p_half[:,:,1:16]) ./ 10000.).^2)
-    ### cal PBL Scheme
-    rpdel  = zeros(((128,64,20))) # = 1 / (p^n_{+} - p^n_{-}) , which p^_{-} mean upper layer
-    for i in 1:20
-        rpdel[:,:,i] .= 1. ./ (grid_p_half[:,:,i+1] .- grid_p_half[:,:,i])
-    end
-
-    CA     = zeros(((128,64,20)))
-    CC     = zeros(((128,64,20)))
-    CE     = zeros(((128,64,20+1)))
-    CF     = zeros(((128,64,20+1)))
-    CFt    = zeros(((128,64,20+1)))
-    
-
-    for k in 1:19 
-        CA[:,:,k]   .= (rpdel[:,:,k]   .* Δt .* grav.^2 .* K_E[:,:,k+1]  .* rho[:,:,k+1].^2 
-                       ./ (grid_p_full[:,:,k+1] .- grid_p_full[:,:,k]))
-        CC[:,:,k+1] .= (rpdel[:,:,k+1] .* Δt .* grav.^2 .* K_E[:,:,k+1]  .* rho[:,:,k+1].^2
-                       ./ (grid_p_full[:,:,k+1] .- grid_p_full[:,:,k]))
-    end
-    
-    CA[:,:,20]   .= 0.
-    CC[:,:, 1]   .= 0.
-    CE[:,:, 1]   .= 0.
-    CE[:,:,21]   .= 0.
-    CF[:,:,21]   .= 0.
-    CFt[:,:,21]  .= 0.
-
-    p0 = 100000.
-    for k in 20:-1:1
-        CE[:,:,k]    .= CC[:,:,k] ./ (1. .+ CA[:,:,k] .+ CC[:,:,k] .- CA[:,:,k] .* CE[:,:,k+1])
-        CF[:,:,k]    .= ((grid_tracers_c[:,:,k] .+ CA[:,:,k] .* CF[:,:,k+1])
-                        ./ (1. .+ CA[:,:,k] .+ CC[:,:,k] .- CA[:,:,k] .* CE[:,:,k+1]))
-
-        CFt[:,:,k]   .= (((p0./grid_p_full[:,:,k]).^(Rd/cp).*grid_t[:,:,k] .+ CA[:,:,k] .* CFt[:,:,k+1])
-                        ./ (1. .+ CA[:,:,k] .+ CC[:,:,k] .- CA[:,:,k] .* CE[:,:,k+1]))
-    end
-    # first calculate the updates at the top model level
-    ### WARNING factor1 just factor, so it did  ./ ./ (2. .* Δt). 
-    ### So did factor2
-    factor2[:,:,1]        .= (CF[:,:,1] .- grid_tracers_c[:,:,1]) ./ (2. .* Δt)  # because CE at top = 0
-    grid_tracers_c[:,:,1] .= CF[:,:,1] 
-    ##########################################################################################
-    grid_t[:,:,1]     .= (CFt[:,:,1] .* (grid_p_full[:,:,1]./p0).^(Rd/cp))
-
-    # Loop over the remaining level
-    for k in 2:20
-        factor2[:,:,k]         .= (CE[:,:,k] .* grid_tracers_c[:,:,k-1] .+ CF[:,:,k] .- grid_tracers_c[:,:,k]) ./ (2. .* Δt)
-        grid_tracers_c[:,:,k]  .=  CE[:,:,k] .* grid_tracers_c[:,:,k-1] .+ CF[:,:,k]
-        grid_t[:,:,k]      .= ((CE[:,:,k] .* grid_t[:,:,k-1] .* (p0./grid_p_full[:,:,k-1]).^(Rd/cp) .+ CFt[:,:,k]) .* (grid_p_full[:,:,k]./p0).^(Rd/cp))
-    end
-
 end
 
 end
