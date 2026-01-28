@@ -1,5 +1,4 @@
 using Base.Threads
-using Infiltrator
 
 function Calculate_V_c_za_rho(
     atmo_data::Atmo_Data, dyn_data::Dyn_Data,
@@ -226,8 +225,6 @@ function Implicit_PBL_Mixing!(
                 end
             end
 
-            @infiltrate any(isnan, K_E)
-
             # --- Finite volume coupling coef. --- #
             CA[nd] = 0
             CC[1]  = 0
@@ -236,8 +233,6 @@ function Implicit_PBL_Mixing!(
                 CA[k]   = rpdel * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
                 CC[k+1] = rpdel * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
             end
-
-            @infiltrate any(isnan, CA) || any(isnan, CC)
 
             # --- Forward sweep --- #
             CE[1]     = 0
@@ -250,8 +245,6 @@ function Implicit_PBL_Mixing!(
                 CFt[k] = (((p0 / grid_p_full[i, j, k])^(Rd_cp) * grid_t[i, j, k] + CA[k] * CFt[k+1]) / (1. + CA[k] + CC[k] - CA[k] .* CE[k+1]))
             end
 
-            @infiltrate any(isnan, CE) || any(isnan, CF) || any(isnan, CFt)
-
             # --- Backward substitute --- #
             grid_q[i, j, 1] = CF[1]
             grid_t[i, j, 1] = CFt[1] * (grid_p_full[i, j, 1] / p0)^Rd_cp
@@ -259,8 +252,6 @@ function Implicit_PBL_Mixing!(
                 grid_q[i, j, k] = CE[k] * grid_q[i, j, k-1] + CF[k]
                 grid_t[i, j, k] = (CE[k] * grid_t[i, j, k-1] * (p0 / grid_p_full[i, j, k-1])^Rd_cp + CFt[k]) * (grid_p_full[i, j, k] / p0)^Rd_cp
             end
-
-            @infiltrate any(isnan, grid_q) || any(isnan, grid_t)
 
         end
     end
