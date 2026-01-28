@@ -14,6 +14,12 @@ physics_params = Dict{String, Any}(
     "do_Sensible_heat_fluxes"     => true,
     "do_Surface_evaporation"      => true,
     "do_Implicit_PBL_Scheme"      => true,
+
+    # --- PBL Top Settings ---
+    # "PBL_Top_Mode"  => :ModelLevel,
+    # "PBL_Top_Value" => 4,
+    "PBL_Top_Mode" => :PressureLevel,
+    "PBL_Top_Value" => 85000.0,
     
     # --- Forcing Parameters (Held-Suarez) ---
     "σ_b"     => 0.7,
