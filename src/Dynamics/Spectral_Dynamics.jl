@@ -106,7 +106,7 @@ grid_w_full[:,:,k]   = dp/dt vertical velocity
 
 update residuals
 grid_δps[:,:,k]  += -∑_{r=1}^nd Dr = -∑_{r=1}^nd ∇(vrΔp_r)
-grid_δt[:,:,k]  += κTw/p 
+grid_δt[:,:,k]   += κTw/p 
 (grid_δu[:,:,k], grid_δv[:,:,k]) -= RT ∇p/p 
 
 !  cell boundary. This is the "vertical velocity" in the hybrid coordinate system.
@@ -399,17 +399,7 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
         grid_tracers_p, grid_tracers_c, grid_tracers_n,
         grid_t, grid_p_full, grid_p_half, grid_z_full, grid_u_p, grid_v_p, grid_geopots, grid_w_full, grid_t_p, dyn_data, grid_δt, factor1, factor2)
 
-
-    # print for checking
-    # day_to_sec = 86400
-    # if (integrator.time%(day_to_sec/4) == 0)
-    #     @info "Day: ", (integrator.time/ day_to_sec), " Max |U|,|V|,|P|,|T|,|qv|: ", maximum(abs.(dyn_data.grid_u_c)), maximum(abs.(dyn_data.grid_v_c)), maximum(dyn_data.grid_p_full), maximum(dyn_data.grid_t_c), maximum(dyn_data.grid_tracers_c), maximum(dyn_data.grid_tracers_diff)
-    #     @info "Day: ", (integrator.time/ day_to_sec), " Min |U|,|V|,|P|,|T|,|qv|: ", minimum(abs.(dyn_data.grid_u_c)), minimum(abs.(dyn_data.grid_v_c)), minimum(dyn_data.grid_p_full), minimum(dyn_data.grid_t_c), minimum(dyn_data.grid_tracers_c)
-    # end
-
     Time_Advance!(dyn_data)
-
-    
 
     Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full)
     
@@ -418,7 +408,7 @@ end
 
 
 
-function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::String = "None", initial_day::Int64 = 5)
+function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::String = "None")
     if warm_start_file_name == "None" # load warm start file
         grid_geopots .= 0.0
     end
@@ -728,7 +718,7 @@ function Spectral_Dynamics_Physics!(
 
     # V_c, za, rho
     V_c, za, rho = Calculate_V_c_za_rho(
-        atmo_data, dyn_data,
+        atmo_data,
         grid_p_half, grid_p_full, grid_ps,
         grid_u, grid_v,
         grid_t, grid_tracers_c
@@ -783,9 +773,7 @@ function Spectral_Dynamics_Physics!(
         Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
     end
 
-    # Calculate {grid_δtracers(.+=) and grid_tracers_c(.=)} and {grid_δt(.+=) and grid_t(.=)}
     if do_Implicit_PBL_Scheme == true
-        # Implicit_PBL_Scheme!(atmo_data, grid_t, grid_t_n, grid_tracers_c, grid_tracers_n, grid_δtracers, grid_δt, grid_p_full, grid_p_half, V_c, za, Δt, factor2, K_E, rho)
         Implicit_PBL_Mixing!(
             atmo_data,
             grid_p_full, grid_p_half,
@@ -803,7 +791,6 @@ function Spectral_Dynamics_Physics!(
     end
 
     grid_δt .= 0.0
-    
     HS_Forcing!(
         atmo_data, Δt, 86400, mesh.sinθ,
         grid_u_p, grid_v_p,
