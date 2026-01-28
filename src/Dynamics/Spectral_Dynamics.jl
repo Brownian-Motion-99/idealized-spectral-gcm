@@ -696,6 +696,7 @@ function Spectral_Dynamics_Physics!(
 
     grid_shflx = dyn_data.grid_shflx
     grid_lhflx = dyn_data.grid_lhflx
+    grid_liquid_water_content = dyn_data.grid_liquid_water_content
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
@@ -733,10 +734,15 @@ function Spectral_Dynamics_Physics!(
     do_Implicit_PBL_Scheme       = true
     
     if do_large_scale_precipitation == true
-        HS_forcing_water_vapor!(semi_implicit, dyn_data, grid_tracers_n,  grid_t_n, grid_δt, grid_p_full, grid_u, grid_v, grid_δtracers, grid_tracers_c, grid_t, grid_tracers_diff, factor3, L, T_ref)
-        grid_tracers_c[grid_tracers_c .< 0]   .= 0     
+        Lscale_Cond!(
+            atmo_data,
+            grid_tracers_c, grid_δtracers, grid_liquid_water_content,
+            grid_t, grid_δt,
+            grid_p_full,
+            Δt
+        )
+        grid_tracers_c[grid_tracers_c .< 0]   .= 0
     
-        
         grid_tracers_c .= grid_tracers_c .- grid_δtracers .* (2*Δt)
         grid_t         .= grid_t         .+ grid_δt       .* (2*Δt)
     
