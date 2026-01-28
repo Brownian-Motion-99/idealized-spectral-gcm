@@ -172,6 +172,29 @@ end
 
 
 
+
+"""
+    Implicit Boundary Layer Mixing Scheme
+
+This function includes:
+    1. Calculating turbulent diffusivity (K_E)
+    2. Implicitly calculating the temperature and moisture at the next timestep
+
+Implicit Euler scheme for tracer concentration (ϕ), trancers can be moisture, potential temperature, etc.:
+Δϕ^{n}_{k} = (ϕ^{n+1}_{k} - ϕ^{n}_k) / Δt
+
+Rewrite in flux form: 
+Δϕ^{n}_{k} = (Flux^{n+1}_{k+1/2} - Flux^{n+1}_{k-1/2}) / Δp_{k}
+
+The flux is given by:
+Flux^{n+1}_{k+1/2} ≈ ((g^2 * ρ^2 * K_E) / Δp_{k+1/2}) * (ϕ^{n+1}_{k+1} - ϕ^{n+1}_{k})
+
+Replace the flux with three ϕs at the next timestep:
+ϕ^{n}_{k} = -CA * ϕ^{n+1}_{k-1} + (1 + CA + CC) * ϕ^{n+1}_{k} - CC * ϕ^{n+1}_{k+1}
+
+see also: Reed and Jablonowski (JAMES, 2012)
+
+"""
 function Implicit_PBL_Mixing!(
     atmo_data::Atmo_Data,
     grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, 
@@ -181,31 +204,21 @@ function Implicit_PBL_Mixing!(
     Δt::Int64, 
     C_D::Float64=0.0044
 )
-
-    """
-    Boundary layer mixing, see Reed and Jablonowski (JAMES, 2012)
-    
-    Step1. Calculate K_E = C_D * V_c * za
-    Step2. Calculate A, B, C --> E, F
-    Step3. Calculate new grid_tracers_c and grid_t
-    """
     
     nλ, nθ, nd   = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
     Rd, cp, grav = atmo_data.rdgas, atmo_data.cp_air, atmo_data.grav
 
-    # We define the PBL top at 850 hPa (85000 Pa).
-    # If p >= 85000: Mixing is constant (K_surf_2D).
-    # If p < 85000:  Mixing decays exponentially.
-    p_pbl_top = 850.0e2
+    # PBL top is at 850 hPa
+    p_pbl_top = 85000.0
     H_scale   = 10000.0
-    p0        = 1000.0e2
+    p0        = 100000.0
     Rd_cp     = Rd / cp
     grav_sq   = grav^2
 
     @threads for j = 1:nθ
         # --- Local buffers for threads --- #
-        CA  = Vector{Float64}(undef, nd)      # Matrix coef.
-        CC  = Vector{Float64}(undef, nd)      # Matrix coef.
+        CA  = Vector{Float64}(undef, nd)      # Coupling coef. to the layer above
+        CC  = Vector{Float64}(undef, nd)      # Coupling coef. to the layer below
         CE  = Vector{Float64}(undef, nd+1)    # Eliminator
         CF  = Vector{Float64}(undef, nd+1)    # Source of latent heat
         CFt = Vector{Float64}(undef, nd+1)    # Source of sensible heat
@@ -217,6 +230,8 @@ function Implicit_PBL_Mixing!(
             za_val  = za[i, j]
 
             # --- Calculate K_E --- #
+            # Within PBL (p >= 850 hPa): K_E = C_D * Vs * za
+            # Above PBL (p < 850 hPa):   K_E = C_D * Vs * za * exp(-((p_pbl_top - p) / H)^2)
             for k = 1:nd+1
                 if grid_p_half[i, j, k] >= p_pbl_top
                     K_E[i, j, k] = C_D * V_c_val * za_val
@@ -226,6 +241,8 @@ function Implicit_PBL_Mixing!(
             end
 
             # --- Finite volume coupling coef. --- #
+            # CA = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k+1/2} * Δp_{k})
+            # CC = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k-1/2} * Δp_{k})
             CA[nd] = 0
             CC[1]  = 0
             for k = 1:nd-1
@@ -235,6 +252,7 @@ function Implicit_PBL_Mixing!(
             end
 
             # --- Forward sweep --- #
+            # Thomas Algorithm
             CE[1]     = 0
             CE[nd+1]  = 0
             CF[nd+1]  = 0
@@ -246,6 +264,9 @@ function Implicit_PBL_Mixing!(
             end
 
             # --- Backward substitute --- #
+            # Loop downward to calculate the moisture and temperature at the next timestep
+            # Note that the tracer for temperature is potential temperature,
+            # so we have to transform the potential temperature to temperature with Poisson's equation
             grid_q[i, j, 1] = CF[1]
             grid_t[i, j, 1] = CFt[1] * (grid_p_full[i, j, 1] / p0)^Rd_cp
             for k = 2:nd
