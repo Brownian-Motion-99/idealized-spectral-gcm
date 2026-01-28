@@ -1,4 +1,7 @@
 using Base.Threads
+using ...Atmo_Data_Module
+using ...Dyn_Data_Module
+using ...Spectral_Spherical_Mesh_Module
 
 function Calculate_V_c_za_rho(
     atmo_data::Atmo_Data, dyn_data::Dyn_Data,
