@@ -780,12 +780,21 @@ function Spectral_Dynamics_Physics!(
     end
 
     if do_Implicit_PBL_Scheme == true
+        # Implicit_PBL_Scheme!(
+        #     atmo_data,
+        #     grid_t, grid_t_n,
+        #     grid_tracers_c, grid_tracers_n, grid_δtracers,
+        #     grid_δt,
+        #     grid_p_full, grid_p_half,
+        #     V_c, za, Δt, factor2, K_E, rho
+        # )
         Implicit_PBL_Mixing!(
             atmo_data,
             grid_p_full, grid_p_half,
             grid_t, grid_tracers_c,
             K_E,
             V_c, za, rho,
+            physics_params,
             Δt
         )
     
@@ -833,59 +842,5 @@ function Atmosphere_Update!(
 
     return
 end 
-
-
-function HS_forcing_water_vapor!(semi_implicit::Semi_Implicit_Solver, dyn_data::Dyn_Data, grid_tracers_n::Array{Float64, 3},  grid_t_n::Array{Float64, 3}, grid_δt::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_u::Array{Float64, 3},  grid_v::Array{Float64, 3}, grid_δtracers::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_t::Array{Float64, 3}, grid_tracers_diff::Array{Float64, 3}, factor3::Array{Float64, 3}, L::Float64, T_ref::Array{Float64, 3})
-
-    integrator = semi_implicit.integrator
-    Δt         = Get_Δt(integrator)
-    cp         = 1004.
-    Lv         = 2.5*10^6.
-    Rd         = 287.04
-    Rv         = 461.
-
-    grid_tracers_c_max     = dyn_data.grid_tracers_c_max     
-    grid_tracers_c_max    .= (0.622 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) )) ./ (grid_p_full .- 0.378 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) )) 
-
-    ############################################################################ 
-    # Tiffany 
-    # exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) )
-    # After differ exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) * Lv ./ Rv * (1. ./ grid_t.^2) 
-    # f(x+dx) = f(x) + dx * f'(x) + dx^2/2! * f''(x) + dx^3/3! * f'''(x) 
-    # pluge in: # T_ref(x,y,z) 
-    # f(T_ref+dT) = f(T_ref) + dT * f'(T_ref) + dT^2/2! * f''(T_ref) + dT^3/3! * f'''(T_ref)
-    # exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ dT+T_ref)) ) = exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) ) + dT * exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) * Lv ./ Rv * (1. ./ T_ref.^2) 
-    # because dT = grid_t - T_ref
-    # exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ dT+T_ref)) ) = exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) ) + (grid_t - T_ref) * exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) * Lv ./ Rv * (1. ./ T_ref.^2)
-    # exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ dT+T_ref)) ) = exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) ) + (grid_t - T_ref) * C (unchange with time)
-
-    
-    Constant  = zeros(size(grid_tracers_c)...)  
-    Constant .= exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref)) .* Lv ./ Rv .* (1. ./ T_ref.^2)
-    # @info maximum(Constant)
-    
-
-    dTmax_CCdt  = zeros(size(grid_tracers_c)...)  
-    dTmax_CCdt .= exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ T_ref))  .+ (grid_t .- T_ref) .* Constant
-    # @info maximum(dTmax_CCdt)
-    
-
-    # Tiffany final grid_tracers_c_max
-    grid_tracers_c_max_Tiffany   = dyn_data.grid_tracers_c_max_Tiffany # zeros(size(grid_tracers_c)...)
-    grid_tracers_c_max_Tiffany  .= (0.622 .* (611.12 .* dTmax_CCdt) ./ (grid_p_full))#.- 0.378 .* (611.12 .* dTmax_CCdt ))) 
-    # @info maximum(grid_tracers_c_max_Tiffany), minimum(grid_tracers_c_max_Tiffany)
-    
-    ############################################################################
-    dq_sat_dT              = zeros(size(grid_tracers_c)...)
-    dq_sat_dT             .= Lv.*grid_tracers_c_max./ (Rv .*grid_t.^2)
-    
-    ### Condensation_rate == grid_tracers_diff
-    grid_tracers_diff     .= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT) ./(2 .* Δt)
-    # grid_tracers_c       .-= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT)
-    grid_δtracers       .= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT) /(2 .* Δt)
-    ############################################################################
-    factor3          .= grid_tracers_diff    
-    grid_δt         .= (grid_tracers_diff .* Lv ./ cp) .* L 
-end
 
 end
