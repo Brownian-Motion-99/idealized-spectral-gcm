@@ -4,19 +4,14 @@ using ...Dyn_Data_Module
 using ...Spectral_Spherical_Mesh_Module
 
 function Calculate_V_c_za_rho(
-    atmo_data::Atmo_Data, dyn_data::Dyn_Data,
+    atmo_data::Atmo_Data,
     grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_ps::Array{Float64, 3},
     grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3},
     grid_t::Array{Float64, 3}, grid_q::AbstractArray{Float64, 3}
 )
     
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
-
-    Lv   = atmo_data.Lv::Float64
-    Rv   = atmo_data.rvgas::Float64
-    Rd   = atmo_data.rdgas::Float64
-    cp   = atmo_data.cp_air::Float64
-    grav = atmo_data.grav::Float64
+    Rd, grav   = atmo_data.rdgas::Float64, atmo_data.grav::Float64
 
     Rd_g   = Rd / grav
     inv_Rd = 1.0 / Rd
@@ -175,6 +170,28 @@ end
 
 
 
+abstract type PBLTop end
+struct PressureLevelBasedPBLTop <: PBLTop end
+struct ModelLevelBasedPBLTop <: PBLTop end
+
+function SelectPBLTop(sym::Symbol, value::Union{Int64, Float64})
+    if sym == :PressureLevel
+        @assert isa(value, Float64) "pbl_top_mode $sym must have Float64 pbl_top_value given."
+        return PressureLevelBasedPBLTop(), value
+
+    elseif sym == :ModelLevel
+        @assert isa(value, Int64) "pbl_top_mode $sym must have Int64 pbl_top_value given."
+        return ModelLevelBasedPBLTop(), value
+
+    else
+        error("Implicit PBL Mixing Scheme: Unknown PBLTop Symbol: $sym")
+    end
+end
+
+PBL_Top_Symbol(::PressureLevelBasedPBLTop) = :PressureLevel
+PBL_Top_Symbol(::ModelLevelBasedPBLTop)    = :ModelLevel
+
+
 
 """
     Implicit Boundary Layer Mixing Scheme
@@ -206,67 +223,93 @@ function Implicit_PBL_Mixing!(
     grid_t::Array{Float64, 3}, grid_q::Array{Float64, 3},
     K_E::Array{Float64, 3}, 
     V_c::Array{Float64, 2}, za::Array{Float64, 2}, rho::Array{Float64, 3},
+    physics_params::Dict{String, Any},
     Δt::Int64, 
     C_D::Float64=0.0044
 )
     
+    pbl_top_mode, pbl_top_value = SelectPBLTop(
+        physics_params["PBL_Top_Mode"]::Symbol, physics_params["PBL_Top_Value"]::Union{Int64, Float64}
+    )
+
     nλ, nθ, nd   = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
     Rd, cp, grav = atmo_data.rdgas, atmo_data.cp_air, atmo_data.grav
 
-    # PBL top is at 850 hPa
-    p_pbl_top = 85000.0
-    H_scale   = 10000.0
+    p_scale   = 10000.0
     p0        = 100000.0
     Rd_cp     = Rd / cp
     grav_sq   = grav^2
 
     @threads for j = 1:nθ
+        
         # --- Local buffers for threads --- #
         CA  = Vector{Float64}(undef, nd)      # Coupling coef. to the layer above
         CC  = Vector{Float64}(undef, nd)      # Coupling coef. to the layer below
         CE  = Vector{Float64}(undef, nd+1)    # Eliminator
         CF  = Vector{Float64}(undef, nd+1)    # Source of latent heat
         CFt = Vector{Float64}(undef, nd+1)    # Source of sensible heat
+        # --- Local buffers for threads --- #
 
-        for i = nλ
+        for i = 1:nλ
 
             # --- Load data --- #
             V_c_val = V_c[i, j]
             za_val  = za[i, j]
+            # --- Load data --- #
 
             # --- Calculate K_E --- #
-            # Within PBL (p >= 850 hPa): K_E = C_D * Vs * za
-            # Above PBL (p < 850 hPa):   K_E = C_D * Vs * za * exp(-((p_pbl_top - p) / H)^2)
-            for k = 1:nd+1
-                if grid_p_half[i, j, k] >= p_pbl_top
-                    K_E[i, j, k] = C_D * V_c_val * za_val
-                else
-                    K_E[i, j, k] = C_D * V_c_val * za_val * exp(-((p_pbl_top - grid_p_half[i, j, k]) / H_scale)^2)
+            # Within PBL: K_E = C_D * Vs * za
+            # Above PBL:  K_E = C_D * Vs * za * exp(-((p_pbl_top - p) / H)^2)
+            if isa(pbl_top_mode, PressureLevelBasedPBLTop)
+                p_pbl_top = pbl_top_value
+                for k = 1:nd+1
+                    if grid_p_half[i, j, k] >= p_pbl_top
+                        K_E[i, j, k] = C_D * V_c_val * za_val
+                    else
+                        K_E[i, j, k] = C_D * V_c_val * za_val * exp(-((p_pbl_top - grid_p_half[i, j, k]) / p_scale)^2)
+                    end
                 end
+
+            elseif isa(pbl_top_mode, ModelLevelBasedPBLTop)
+                p_end_constant_mixing = 85000.0
+                idk_pbl_top           = pbl_top_value
+                for k = nd+1-idk_pbl_top:nd+1
+                    K_E[i, j, k] = C_D * V_c_val * za_val
+                end
+                for k = 1:nd+1-idk_pbl_top-1
+                    K_E[i, j, k] = C_D * V_c_val * za_val * exp(-((p_end_constant_mixing - grid_p_half[i, j, k]) / p_scale)^2)
+                end
+
+            else
+                error("Implicit PBL Mixing Scheme: Unknown PBLTop Symbol: $pbl_top_mode")
             end
+            # --- Calculate K_E --- #
 
             # --- Finite volume coupling coef. --- #
             # CA = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k+1/2} * Δp_{k})
             # CC = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k-1/2} * Δp_{k})
-            CA[nd] = 0
-            CC[1]  = 0
+            CA[nd] = 0.
+            CC[1]  = 0.
             for k = 1:nd-1
-                rpdel   = 1 / (grid_p_half[i, j, k+1] - grid_p_half[i, j, k])
-                CA[k]   = rpdel * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
-                CC[k+1] = rpdel * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
+                rpdel_k   = 1 / (grid_p_half[i, j, k+1] - grid_p_half[i, j, k])
+                rpdel_kp1 = 1 / (grid_p_half[i, j, k+2] - grid_p_half[i, j, k+1])
+                CA[k]     = rpdel_k   * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
+                CC[k+1]   = rpdel_kp1 * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho[i, j, k+1]^2 / (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
             end
+            # --- Finite volume coupling coef. --- #
 
             # --- Forward sweep --- #
             # Thomas Algorithm
-            CE[1]     = 0
-            CE[nd+1]  = 0
-            CF[nd+1]  = 0
-            CFt[nd+1] = 0
+            CE[1]     = 0.
+            CE[nd+1]  = 0.
+            CF[nd+1]  = 0.
+            CFt[nd+1] = 0.
             for k = nd:-1:1
                 CE[k]  = CC[k] / (1. + CA[k] + CC[k] - CA[k] * CE[k+1])
                 CF[k]  = ((grid_q[i, j, k] + CA[k] * CF[k+1]) / (1. + CA[k] + CC[k] - CA[k] * CE[k+1]))
                 CFt[k] = (((p0 / grid_p_full[i, j, k])^(Rd_cp) * grid_t[i, j, k] + CA[k] * CFt[k+1]) / (1. + CA[k] + CC[k] - CA[k] .* CE[k+1]))
             end
+            # --- Forward sweep --- #
 
             # --- Backward substitute --- #
             # Loop downward to calculate the moisture and temperature at the next timestep
@@ -278,6 +321,7 @@ function Implicit_PBL_Mixing!(
                 grid_q[i, j, k] = CE[k] * grid_q[i, j, k-1] + CF[k]
                 grid_t[i, j, k] = (CE[k] * grid_t[i, j, k-1] * (p0 / grid_p_full[i, j, k-1])^Rd_cp + CFt[k]) * (grid_p_full[i, j, k] / p0)^Rd_cp
             end
+            # --- Backward substitute --- #
 
         end
     end
