@@ -192,6 +192,8 @@ Flux^{n+1}_{k+1/2} ≈ ((g^2 * ρ^2 * K_E) / Δp_{k+1/2}) * (ϕ^{n+1}_{k+1} - ϕ
 Replace the flux with three ϕs at the next timestep:
 ϕ^{n}_{k} = -CA * ϕ^{n+1}_{k-1} + (1 + CA + CC) * ϕ^{n+1}_{k} - CC * ϕ^{n+1}_{k+1}
 
+This equation is solved using Thomas Algorithm
+
 see also: Reed and Jablonowski (JAMES, 2012)
 
 """
