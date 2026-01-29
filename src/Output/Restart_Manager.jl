@@ -3,12 +3,19 @@ module Restart_Manager_Module
 using JLD2
 using ..Dyn_Data_Module
 
-export Restart_Manager, Write_Restart_File, Load_Restart_File!
+export Restart_Manager, Write_Restart_File, Load_Restart_File!, Cleanup_Old_Restarts
 
 
 struct Restart_Manager
     output_dir::String
-    restart_frequency::Int64 
+    restart_frequency::Int64
+    
+    function Restart_Manager(output_dir::String, frequency::Int64)
+        if frequency > 0 && !isdir(output_dir)
+            mkpath(output_dir)
+        end
+        return new(output_dir, frequency)
+    end
 end
 
 
@@ -62,6 +69,42 @@ function Load_Restart_File!(dyn_data::Dyn_Data, filename::String)
     end
 
     return saved_time
+end
+
+
+
+"""
+    Cleanup_Old_Restarts(manager, keep_last_n, protect_file)
+    
+Deletes older restart files, BUT ensures the file used to start the run 
+(protect_file) is never deleted.
+"""
+function Cleanup_Old_Restarts(manager::Restart_Manager, keep_last_n::Int=3, protect_file::String="")
+    files = readdir(manager.output_dir, join=true)
+    restart_files = filter(f -> occursin("restart_t", f) && endswith(f, ".jld2"), files)
+    
+    # Helper to extract time
+    function get_time_step(f)
+        m = match(r"restart_t(\d+).jld2", f)
+        return isnothing(m) ? 0 : parse(Int64, m[1])
+    end
+    
+    sort!(restart_files, by=get_time_step)
+    
+    if length(restart_files) > keep_last_n
+        files_to_delete = restart_files[1 : end-keep_last_n]
+        
+        for f in files_to_delete
+            # SAFETY CHECK: Do not delete if it matches the start file
+            if !isempty(protect_file) && abspath(f) == abspath(protect_file)
+                @info "Skipping cleanup for protected start file: $f"
+                continue
+            end
+            
+            rm(f; force=true)
+            @info "Disk cleanup: Deleted old checkpoint $f"
+        end
+    end
 end
 
 end

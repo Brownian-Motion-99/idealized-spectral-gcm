@@ -120,8 +120,7 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     
     # Setup Restart Manager
-    # Assuming config has these fields. If not, you can hardcode or add to Model_Config
-    restart_freq = get(config.physics_params, "restart_frequency", 86400) 
+    restart_freq = config.restart_frequency
     restart_dir  = joinpath(config.output_path, "restart")
     restart_mgr  = Restart_Manager(restart_dir, restart_freq)
 
@@ -135,6 +134,10 @@ function JGCM_Simulate(config::Model_Config)
         @info msg_restart
         open(config.logger, "a") do log; println(log, msg_restart); end
 
+        if !isfile(config.restart_file)
+            error("Warm start requested but file missing: $(config.restart_file)")
+        end
+
         # Load data AND get the time we left off
         saved_time = Load_Restart_File!(dyn_data, config.restart_file)
         
@@ -146,6 +149,17 @@ function JGCM_Simulate(config::Model_Config)
         msg_init_cond = "Cold Start: Setting Analytical Initial Conditions..."
         @info msg_init_cond
         open(config.logger, "a") do log; println(log, msg_init_cond); end
+
+        if isdir(restart_dir) && !isempty(readdir(restart_dir))
+            msg_clean_restart = "COLD START DETECTED: Cleaning up old restart files in $restart_dir"
+            @warn msg_clean_restart
+            open(config.logger, "a") do log; println(log, msg_clean_restart); end
+            for f in readdir(restart_dir, join=true)
+                if endswith(f, ".jld2")
+                    rm(f)
+                end
+            end
+        end
 
         # Standard initialization
         Initialize_Atmos_State!(mesh, atmo_data, dyn_data, vert_coord, config)
@@ -193,6 +207,10 @@ function JGCM_Simulate(config::Model_Config)
     msg_start_loop = "Starting Time Loop: $NT steps"
     @info msg_start_loop
     open(config.logger, "a") do log; println(log, msg_start_loop); end
+
+    msg_cleanup_old_restarts = "Only the last 5 restart files are kept to save space."
+    @warn msg_cleanup_old_restarts
+    open(config.logger, "a") do log; println(log, msg_cleanup_old_restarts); end
     
     # --- First Step (Euler / Init) ---
     Step_Dynamics!(
@@ -223,11 +241,20 @@ function JGCM_Simulate(config::Model_Config)
         Update_Output!(op_man, dyn_data, integrator.time)
 
         # Restart
-        if integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+        if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
             Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
-            
+
             msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
+            @info msg_ckpt
             open(config.logger, "a") do log; println(log, msg_ckpt); end
+
+            # Keep only the last 5 files to save space
+            # Keep the starting file
+            if config.is_restart
+                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5, config.restart_file)
+            else
+                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5)
+            end
         end
 
         # Simple Progress Log

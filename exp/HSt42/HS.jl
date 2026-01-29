@@ -62,11 +62,13 @@ config = Model_Config(
     implicit_coef = 0.5,
     
     # Restart
+    # WARNING!!! Using a cold start would CLEANUP the restart directory!!!
     is_restart        = false,
     restart_file      = "",
     # is_restart        = true,
     # restart_file      = joinpath(output_path_base, "restart", "restart_t86400.jld2"),
-    restart_frequency = 86400 * 2,
+    # restart_frequency = 86400 * 2,
+    restart_frequency = 0,    # disable saving restarts
 
     # Physics
     L = 0.2,
