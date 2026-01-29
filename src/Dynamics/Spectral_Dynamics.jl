@@ -56,7 +56,7 @@ function Compute_Corrections!(
     grid_t_n::Array{Float64, 3}, spe_t_n::Array{ComplexF64, 3},
     grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_tracers_n::Array{Float64, 3}, 
     grid_t::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_z_full::Array{Float64, 3}, grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3},
-    grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}, factor1::Array{Float64,3}, factor2::Array{Float64,3}
+    grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}
 )
 
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
@@ -279,10 +279,6 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     grav              = atmo_data.grav
     integrator        = semi_implicit.integrator
     Δt                = Get_Δt(integrator)
-    factor1           = dyn_data.factor1 
-    factor2           = dyn_data.factor2 
-    factor3           = dyn_data.factor3  
-    # factor4 = dyn_data.factor4  
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
@@ -397,7 +393,7 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
         grid_ps_n, spe_lnps_n, 
         grid_t_n, spe_t_n, 
         grid_tracers_p, grid_tracers_c, grid_tracers_n,
-        grid_t, grid_p_full, grid_p_half, grid_z_full, grid_u_p, grid_v_p, grid_geopots, grid_w_full, grid_t_p, dyn_data, grid_δt, factor1, factor2)
+        grid_t, grid_p_full, grid_p_half, grid_z_full, grid_u_p, grid_v_p, grid_geopots, grid_w_full, grid_t_p, dyn_data, grid_δt)
 
     Time_Advance!(dyn_data)
 
@@ -689,10 +685,6 @@ function Spectral_Dynamics_Physics!(
     grav              = atmo_data.grav
     integrator        = semi_implicit.integrator
     Δt                = Get_Δt(integrator)
-    factor1           = dyn_data.factor1 
-    factor2           = dyn_data.factor2 
-    factor3           = dyn_data.factor3  
-    # factor4 = dyn_data.factor4  
 
     grid_shflx = dyn_data.grid_shflx
     grid_lhflx = dyn_data.grid_lhflx
@@ -780,14 +772,6 @@ function Spectral_Dynamics_Physics!(
     end
 
     if do_Implicit_PBL_Scheme == true
-        # Implicit_PBL_Scheme!(
-        #     atmo_data,
-        #     grid_t, grid_t_n,
-        #     grid_tracers_c, grid_tracers_n, grid_δtracers,
-        #     grid_δt,
-        #     grid_p_full, grid_p_half,
-        #     V_c, za, Δt, factor2, K_E, rho
-        # )
         Implicit_PBL_Mixing!(
             atmo_data,
             grid_p_full, grid_p_half,

@@ -318,12 +318,6 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     grid_d_half1 = zeros(Float64, nλ, nθ, nd+1)
     grid_d_half2 = zeros(Float64, nλ, nθ, nd+1)
 
-    factor1 = zeros(Float64, nλ, nθ, nd)
-    factor2 = zeros(Float64, nλ, nθ, nd)
-    factor3 = zeros(Float64, nλ, nθ, nd)
-    factor4 = zeros(Float64, nλ, nθ, nd)
-
-
     spe_zeros = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     K_E = zeros(Float64, nλ, nθ, nd+1)
 
