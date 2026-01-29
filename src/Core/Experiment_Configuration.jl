@@ -28,7 +28,7 @@ Base.@kwdef struct Model_Config
     grav::Float64
 
     # -------------------------------------------------------
-    # 3. Vertical Coordinate (New Flexibility)
+    # 3. Vertical Coordinate
     # -------------------------------------------------------
     # Options: "even_sigma", "uneven_sigma", "hybrid"
     vert_coord_option::Any    
@@ -55,8 +55,9 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     L::Float64 = 0.2
     
-    num_grid_tracters::Int64 = 1
-    num_spe_tracters::Int64  = 1
+    moisture_processes::Bool = true
+
+    num_tracers::Int64 = 1
     
     initial_condition::Any      
     

@@ -10,16 +10,16 @@ physics_params = Dict{String, Any}(
     "do_water_correction"  => true,
     
     # --- Physical Parameterizations ---
-    "do_large_scale_condensation" => true,
-    "do_Sensible_heat_fluxes"     => true,
-    "do_Surface_evaporation"      => true,
-    "do_Implicit_PBL_Scheme"      => true,
+    "do_Lscale_Cond"          => true,
+    "do_Sensible_Heating"     => true,
+    "do_Surface_Evaporation"  => true,
+    "do_Implicit_PBL_Scheme"  => true,
 
     # --- PBL Top Settings ---
-    # "PBL_Top_Mode"  => :ModelLevel,
-    # "PBL_Top_Value" => 4,
-    "PBL_Top_Mode" => :PressureLevel,
-    "PBL_Top_Value" => 85000.0,
+    "PBL_Top_Mode"  => :ModelLevel,
+    "PBL_Top_Value" => 4,
+    # "PBL_Top_Mode" => :PressureLevel,
+    # "PBL_Top_Value" => 85000.0,
     
     # --- Forcing Parameters (Held-Suarez) ---
     "σ_b"     => 0.7,
@@ -64,9 +64,11 @@ config = Model_Config(
     # L (latent heating parameter)
     L = 0.2,
 
+    # Activate moisture processes or not
+    moisture_processes = true,
+    
     # Tracers (Important for Moist runs!)
-    num_grid_tracters = 1,
-    num_spe_tracters  = 1,
+    num_tracers = 1,
     
     # IO
     output_filename = "exp/HSt42_Parallel/output.nc",

@@ -21,12 +21,12 @@ function Compute_Corrections_Init(
     vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3}, grid_ps_p::Array{Float64, 3}, grid_t_p::Array{Float64, 3}, 
     grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_δt::Array{Float64, 3},  
-    Δt::Int64, grid_energy_temp::Array{Float64, 3}, grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_δtracers::Array{Float64,3}
+    Δt::Int64, grid_energy_temp::Array{Float64, 3}, grid_q_p::Array{Float64, 3}, grid_q_c::Array{Float64, 3}, grid_δq::Array{Float64,3}
 )
     
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
     
-    sum_tracers_p = 0.
+    sum_q_p = 0.
 
     if (do_mass_correction) 
         mean_ps_p = Area_Weighted_Global_Mean(mesh, grid_ps_p)
@@ -39,7 +39,7 @@ function Compute_Corrections_Init(
     end
 
     if (do_water_correction)
-        mean_moisture_p    =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_tracers_p .+ grid_δtracers * Δt, grid_ps_p)
+        mean_moisture_p    =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_p .+ grid_δq * Δt, grid_ps_p)
     end
     
     return mean_ps_p, mean_energy_p, mean_moisture_p 
@@ -54,7 +54,7 @@ function Compute_Corrections!(
     grid_energy_temp::Array{Float64, 3}, grid_ps_p::Array{Float64, 3},grid_ps_c::Array{Float64, 3},
     grid_ps_n::Array{Float64, 3}, spe_lnps_n::Array{ComplexF64, 3}, 
     grid_t_n::Array{Float64, 3}, spe_t_n::Array{ComplexF64, 3},
-    grid_tracers_p::Array{Float64, 3}, grid_tracers_c::Array{Float64, 3}, grid_tracers_n::Array{Float64, 3}, 
+    grid_q_p::Array{Float64, 3}, grid_q_c::Array{Float64, 3}, grid_q_n::Array{Float64, 3}, 
     grid_t::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_z_full::Array{Float64, 3}, grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3},
     grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}
 )
@@ -88,10 +88,10 @@ function Compute_Corrections!(
     Δt         = Get_Δt(integrator)
 
     if (do_water_correction) 
-        grid_tracers_n[grid_tracers_n .< 0.] .=  0.
-        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_tracers_n, grid_ps_n)
-        grid_tracers_n                      .*=  mean_moisture_p ./ mean_moisture_n 
-        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_tracers_n, grid_ps_n) 
+        grid_q_n[grid_q_n .< 0.] .=  0.
+        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n)
+        grid_q_n                      .*=  mean_moisture_p ./ mean_moisture_n 
+        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n) 
         return mean_moisture_n
     end
     
@@ -119,7 +119,7 @@ function Four_In_One!(
     grid_dλ_ps::Array{Float64,3}, grid_dθ_ps::Array{Float64,3}, 
     grid_t::Array{Float64,3}, 
     grid_M_half::Array{Float64,3}, grid_w_full::Array{Float64,3}, 
-    grid_δu::Array{Float64,3}, grid_δv::Array{Float64,3}, grid_δps::Array{Float64,3}, grid_δt::Array{Float64,3}, grid_δtracers::Array{Float64,3}
+    grid_δu::Array{Float64,3}, grid_δv::Array{Float64,3}, grid_δps::Array{Float64,3}, grid_δt::Array{Float64,3}, grid_δq::Array{Float64,3}
 )
     
     # Unpack parameters
@@ -230,21 +230,27 @@ We have
 δT = f^t - I^t + I^t
 
 """
-function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coordinate, 
+function Spectral_Dynamics!(
+    config::Model_Config,
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
     atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
-    semi_implicit::Semi_Implicit_Solver, L::Float64 = 0.1)
+    semi_implicit::Semi_Implicit_Solver
+)
     
     # spectral equation quantities
     spe_lnps_p, spe_lnps_c, spe_lnps_n, spe_δlnps = dyn_data.spe_lnps_p, dyn_data.spe_lnps_c, dyn_data.spe_lnps_n, dyn_data.spe_δlnps
     spe_vor_p, spe_vor_c, spe_vor_n, spe_δvor     = dyn_data.spe_vor_p, dyn_data.spe_vor_c, dyn_data.spe_vor_n, dyn_data.spe_δvor
     spe_div_p, spe_div_c, spe_div_n, spe_δdiv     = dyn_data.spe_div_p, dyn_data.spe_div_c, dyn_data.spe_div_n, dyn_data.spe_δdiv
     spe_t_p, spe_t_c, spe_t_n, spe_δt             = dyn_data.spe_t_p, dyn_data.spe_t_c, dyn_data.spe_t_n, dyn_data.spe_δt
+    spe_tracers_p, spe_tracers_c, spe_tracers_n, spe_δtracers = dyn_data.spe_tracers_p, dyn_data.spe_tracers_c, dyn_data.spe_tracers_n, dyn_data.spe_δtracers
+
     
     # grid quantities
     grid_u_p, grid_u, grid_u_n    = dyn_data.grid_u_p, dyn_data.grid_u_c, dyn_data.grid_u_n
     grid_v_p, grid_v, grid_v_n    = dyn_data.grid_v_p, dyn_data.grid_v_c, dyn_data.grid_v_n
     grid_ps_p, grid_ps, grid_ps_n = dyn_data.grid_ps_p, dyn_data.grid_ps_c, dyn_data.grid_ps_n
     grid_t_p, grid_t, grid_t_n    = dyn_data.grid_t_p, dyn_data.grid_t_c, dyn_data.grid_t_n
+    grid_tracers_p, grid_tracers, grid_tracers_n, grid_δtracers = dyn_data.grid_tracers_p, dyn_data.grid_tracers_c, dyn_data.grid_tracers_n, dyn_data.grid_δtracers
 
 
     # related quanties
@@ -259,18 +265,16 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     grid_energy_full, spe_energy                           = dyn_data.grid_energy_full, dyn_data.spe_energy
     
     # moisture pre-process
-    spe_tracers_n     = dyn_data.spe_tracers_n
-    spe_tracers_c     = dyn_data.spe_tracers_c
-    spe_tracers_p     = dyn_data.spe_tracers_p 
+    spe_q_n     = dyn_data.spe_q_n
+    spe_q_c     = dyn_data.spe_q_c
+    spe_q_p     = dyn_data.spe_q_p 
     
-    grid_tracers_n    = dyn_data.grid_tracers_n
-    grid_tracers_c    = dyn_data.grid_tracers_c
-    grid_tracers_p    = dyn_data.grid_tracers_p 
+    grid_q_n    = dyn_data.grid_q_n
+    grid_q_c    = dyn_data.grid_q_c
+    grid_q_p    = dyn_data.grid_q_p 
     
-    grid_tracers_diff = dyn_data.grid_tracers_diff
-    
-    spe_δtracers      = dyn_data.spe_δtracers  
-    grid_δtracers     = dyn_data.grid_δtracers 
+    spe_δq      = dyn_data.spe_δq  
+    grid_δq     = dyn_data.grid_δq 
     
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
@@ -282,7 +286,7 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
-    grid_δtracers     = dyn_data.grid_δtracers 
+    grid_δq     = dyn_data.grid_δq 
 
     K_E               = dyn_data.K_E
     # pressure difference
@@ -298,7 +302,7 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     mean_ps_p, mean_energy_p, mean_moisture_p = Compute_Corrections_Init(vert_coord, mesh, atmo_data,
     grid_u_p, grid_v_p, grid_ps_p, grid_t_p, 
     grid_δu, grid_δv, grid_δt,  
-    Δt, grid_energy_full, grid_tracers_p, grid_tracers_c, grid_δtracers)
+    Δt, grid_energy_full, grid_q_p, grid_q_c, grid_δq)
     
     # compute pressure based on grid_ps -> grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full 
     Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full)
@@ -314,12 +318,12 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     grid_Δp, grid_lnp_half, grid_lnp_full, grid_p_full,
     grid_dλ_ps, grid_dθ_ps, 
     grid_t, 
-    grid_M_half, grid_w_full, grid_δu, grid_δv, grid_δps, grid_δt, grid_δtracers)
+    grid_M_half, grid_w_full, grid_δu, grid_δv, grid_δps, grid_δt, grid_δq)
 
     Compute_Geopotential!(vert_coord, atmo_data, 
     grid_lnp_half, grid_lnp_full,  
     grid_t, 
-    grid_geopots, grid_geopot_full, grid_geopot_half, grid_tracers_c)
+    grid_geopots, grid_geopot_full, grid_geopot_half, grid_q_c)
 
     grid_δlnps .= grid_δps ./ grid_ps
     Trans_Grid_To_Spherical!(mesh, grid_δlnps, spe_δlnps)
@@ -332,19 +336,42 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
     Vert_Advection!(vert_coord, grid_t, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme, grid_δQ)
     grid_δt  .+= grid_δQ
     
-    ### moisture process ###
-    # update q
-    Vert_Advection!(vert_coord, grid_tracers_c, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme,  grid_δQ)
-    grid_δtracers .+= grid_δQ 
-    Add_Horizontal_Advection!(mesh, spe_tracers_c, grid_u, grid_v, grid_δtracers) 
-    Trans_Grid_To_Spherical!(mesh, grid_δtracers, spe_δtracers)
-    Compute_Spectral_Damping!(integrator, spe_tracers_c, spe_tracers_p, spe_δtracers)
-    Filtered_Leapfrog!(integrator, spe_δtracers, spe_tracers_p, spe_tracers_c, spe_tracers_n)
-    Trans_Spherical_To_Grid!(mesh, spe_tracers_n, grid_tracers_n)
-    # update t
+    # passive tracers
+    for i in 1:dyn_data.num_tracers
+        @views begin
+            spe_p  = spe_tracers_p[:, :, :, i]
+            spe_c  = spe_tracers_c[:, :, :, i]
+            spe_n  = spe_tracers_n[:, :, :, i]
+            spe_δ  = spe_δtracers[:, :, :, i]
+            grid_c = grid_tracers[:, :, :, i]
+            grid_n = grid_tracers_n[:, :, :, i]
+            grid_δ = grid_δtracers[:, :, :, i]
+            Vert_Advection!(vert_coord, grid_c, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme, grid_δQ)
+            grid_δ .+= grid_δQ 
+            Add_Horizontal_Advection!(mesh, spe_c, grid_u, grid_v, grid_δ) 
+            Trans_Grid_To_Spherical!(mesh, grid_δ, spe_δ)
+            Compute_Spectral_Damping!(integrator, spe_c, spe_p, spe_δ)
+            Filtered_Leapfrog!(integrator, spe_δ, spe_p, spe_c, spe_n)
+            Trans_Spherical_To_Grid!(mesh, spe_n, grid_n)
+        end
+    end
+    
+    # moisture
+    if config.moisture_processes
+        Vert_Advection!(vert_coord, grid_q_c, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme,  grid_δQ)
+        grid_δq .+= grid_δQ 
+        Add_Horizontal_Advection!(mesh, spe_q_c, grid_u, grid_v, grid_δq) 
+        Trans_Grid_To_Spherical!(mesh, grid_δq, spe_δq)
+        Compute_Spectral_Damping!(integrator, spe_q_c, spe_q_p, spe_δq)
+        Filtered_Leapfrog!(integrator, spe_δq, spe_q_p, spe_q_c, spe_q_n)
+        Trans_Spherical_To_Grid!(mesh, spe_q_n, grid_q_n)
+    end
+    
+    # temperature
     Add_Horizontal_Advection!(mesh, spe_t_c, grid_u, grid_v, grid_δt)
     Trans_Grid_To_Spherical!(mesh, grid_δt, spe_δt)
-    ###################################################
+    
+
     grid_absvor = dyn_data.grid_absvor
     Compute_Abs_Vor!(grid_vor, atmo_data.coriolis, grid_absvor)
     
@@ -392,7 +419,7 @@ function Spectral_Dynamics!(mesh::Spectral_Spherical_Mesh,  vert_coord::Vert_Coo
         grid_energy_full, grid_ps_p,grid_ps,
         grid_ps_n, spe_lnps_n, 
         grid_t_n, spe_t_n, 
-        grid_tracers_p, grid_tracers_c, grid_tracers_n,
+        grid_q_p, grid_q_c, grid_q_n,
         grid_t, grid_p_full, grid_p_half, grid_z_full, grid_u_p, grid_v_p, grid_geopots, grid_w_full, grid_t_p, dyn_data, grid_δt)
 
     Time_Advance!(dyn_data)
@@ -438,12 +465,12 @@ function Spectral_Initialize_Fields!(
         
         # moisture pre-process
         grid_t_n          = dyn_data.grid_t_n
-        spe_tracers_c     = dyn_data.spe_tracers_c
-        spe_tracers_p     = dyn_data.spe_tracers_p 
+        spe_q_c     = dyn_data.spe_q_c
+        spe_q_p     = dyn_data.spe_q_p 
 
-        grid_tracers_n    = dyn_data.grid_tracers_n
-        grid_tracers_c    = dyn_data.grid_tracers_c
-        grid_tracers_p    = dyn_data.grid_tracers_p 
+        grid_q_n    = dyn_data.grid_q_n
+        grid_q_c    = dyn_data.grid_q_c
+        grid_q_p    = dyn_data.grid_q_p 
 
         grid_u_n      = dyn_data.grid_u_n
         grid_v_n      = dyn_data.grid_v_n
@@ -451,7 +478,7 @@ function Spectral_Initialize_Fields!(
         grid_δu = dyn_data.grid_δu
         grid_δv = dyn_data.grid_δv
 
-        grid_δtracers = dyn_data.grid_δtracers
+        grid_δq = dyn_data.grid_δq
         ####################################################################
         @info warm_start_file_name # to make sure get the correct warmstart_PR.dat
         read_file      = load(warm_start_file_name)        
@@ -488,12 +515,12 @@ function Spectral_Initialize_Fields!(
         grid_t_p    .= read_file["grid_t_p_final"][:,:,:,1]
         ####################################################################        
         # q
-        grid_tracers_n .= read_file["grid_tracers_n_final"][:,:,:,1] 
-        grid_tracers_c .= read_file["grid_tracers_c_final"][:,:,:,1]
-        grid_tracers_p .= read_file["grid_tracers_p_final"][:,:,:,1]
+        grid_q_n .= read_file["grid_q_n_final"][:,:,:,1] 
+        grid_q_c .= read_file["grid_q_c_final"][:,:,:,1]
+        grid_q_p .= read_file["grid_q_p_final"][:,:,:,1]
         
-        spe_tracers_c  .= read_file["spe_tracers_c_final"][:,:,:,1]
-        spe_tracers_p  .= read_file["spe_tracers_p_final"][:,:,:,1]
+        spe_q_c  .= read_file["spe_q_c_final"][:,:,:,1]
+        spe_q_p  .= read_file["spe_q_p_final"][:,:,:,1]
         ####################################################################
 
     end
@@ -510,16 +537,14 @@ function Spectral_Initialize_Fields!(
         nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
                 
         # update q
-        spe_tracers_c     = dyn_data.spe_tracers_c
-        spe_tracers_p     = dyn_data.spe_tracers_p 
+        spe_q_c     = dyn_data.spe_q_c
+        spe_q_p     = dyn_data.spe_q_p 
             
-        grid_tracers_c    = dyn_data.grid_tracers_c
-        grid_tracers_p    = dyn_data.grid_tracers_p 
+        grid_q_c    = dyn_data.grid_q_c
+        grid_q_p    = dyn_data.grid_q_p 
 
         rdgas = atmo_data.rdgas
         grid_t         .=  init_t 
-
-        T_ref = dyn_data.T_ref
 
         # dΦ/dlnp = -RT    Δp = -ΔΦ/RT
         grid_lnps[:,:,1] .= log(sea_level_ps_ref) .- grid_geopots[:,:,1] ./ (rdgas * init_t) 
@@ -588,42 +613,30 @@ function Spectral_Initialize_Fields!(
         for k in 1:20
             for j in 1:64
                for i in 1:128
-                   grid_tracers_c[i,j,k] = qv0 * exp(-((grid_p_full[i,j,k]/grid_ps[i,j,1] - 1.)*(p0/p_hw))^2) * exp(-((θc[j])/phi_hw)^4) 
+                   grid_q_c[i,j,k] = qv0 * exp(-((grid_p_full[i,j,k]/grid_ps[i,j,1] - 1.)*(p0/p_hw))^2) * exp(-((θc[j])/phi_hw)^4) 
                     
                end            
             end
         end
-        grid_tracers_c[:,:,1] .= 0.
+        grid_q_c[:,:,1] .= 0.
         
-        Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
-        Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
+        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
 
-        grid_tracers_p .= grid_tracers_c
-        spe_tracers_p  .= spe_tracers_c
+        grid_q_p .= grid_q_c
+        spe_q_p  .= spe_q_c
     end
-    
-    ######################################
-    # Tiffany project
-    Tiffany_project = false
-    
-    if Tiffany_project == true
-        T_ref_file_name = "PR0_last_10000step_time_mean_t.h5"
-        read_file     = load(T_ref_file_name) 
-        T_ref        .= read_file["t"][:,:,:]
-        @info "Tiffany project: True"
-    else
-        @info "Tiffany project: False"
-    end
-    ######################################
-
      
 end 
 
 
 
 function Spectral_Dynamics_Physics!(
-    semi_implicit::Semi_Implicit_Solver, atmo_data::Atmo_Data, mesh::Spectral_Spherical_Mesh, dyn_data::Dyn_Data, 
-    Δt::Int64, physics_params::Dict{String, Any}, L::Float64, T_ref::Array{Float64, 3}
+    config::Model_Config,
+    mesh::Spectral_Spherical_Mesh, 
+    atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
+    semi_implicit::Semi_Implicit_Solver, 
+    physics_params::Dict{String, Any}
 )
     
     grid_δu, grid_δv, grid_δps, grid_δt = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δps, dyn_data.grid_δt
@@ -631,14 +644,14 @@ function Spectral_Dynamics_Physics!(
     grid_p_half, grid_p_full            = dyn_data.grid_p_half, dyn_data.grid_p_full
     grid_t_eq                           = dyn_data.grid_t_eq
 
-    grid_δtracers                       = dyn_data.grid_δtracers
-    spe_δtracers                        = dyn_data.spe_δtracers
+    grid_δq                       = dyn_data.grid_δq
+    spe_δq                        = dyn_data.spe_δq
 
     # Initialize ps and q
     grid_δps .= 0.0
 
-    spe_δtracers   .= 0.
-    grid_δtracers  .= 0.
+    spe_δq   .= 0.
+    grid_δq  .= 0.
     #####################################################################################################
      # spectral equation quantities
     spe_lnps_p, spe_lnps_c, spe_lnps_n, spe_δlnps = dyn_data.spe_lnps_p, dyn_data.spe_lnps_c, dyn_data.spe_lnps_n, dyn_data.spe_δlnps
@@ -664,18 +677,16 @@ function Spectral_Dynamics_Physics!(
     grid_energy_full, spe_energy                           = dyn_data.grid_energy_full, dyn_data.spe_energy
     
     # moisture pre-process
-    spe_tracers_n     = dyn_data.spe_tracers_n
-    spe_tracers_c     = dyn_data.spe_tracers_c
-    spe_tracers_p     = dyn_data.spe_tracers_p 
+    spe_q_n     = dyn_data.spe_q_n
+    spe_q_c     = dyn_data.spe_q_c
+    spe_q_p     = dyn_data.spe_q_p 
     
-    grid_tracers_n    = dyn_data.grid_tracers_n
-    grid_tracers_c    = dyn_data.grid_tracers_c
-    grid_tracers_p    = dyn_data.grid_tracers_p 
+    grid_q_n    = dyn_data.grid_q_n
+    grid_q_c    = dyn_data.grid_q_c
+    grid_q_p    = dyn_data.grid_q_p 
     
-    grid_tracers_diff = dyn_data.grid_tracers_diff
-    
-    spe_δtracers      = dyn_data.spe_δtracers  
-    grid_δtracers     = dyn_data.grid_δtracers 
+    spe_δq      = dyn_data.spe_δq  
+    grid_δq     = dyn_data.grid_δq 
     
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
@@ -692,7 +703,7 @@ function Spectral_Dynamics_Physics!(
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
-    grid_δtracers     = dyn_data.grid_δtracers 
+    grid_δq     = dyn_data.grid_δq 
 
     K_E               = dyn_data.K_E
     ###############################################################################
@@ -706,87 +717,88 @@ function Spectral_Dynamics_Physics!(
     integrator          = semi_implicit.integrator
     Δt                  = Get_Δt(integrator)
 
-    spe_tracers_c = dyn_data.spe_tracers_c
+    spe_q_c = dyn_data.spe_q_c
     spe_t_c = dyn_data.spe_t_c
+    
+    if config.moisture_processes
 
-    # V_c, za, rho
-    V_c, za, rho = Calculate_V_c_za_rho(
-        atmo_data,
-        grid_p_half, grid_p_full, grid_ps,
-        grid_u, grid_v,
-        grid_t, grid_tracers_c
-    )
-    
-    """
-    ## large-scale precipitation
-    """
-    do_large_scale_precipitation = true
-    do_Sensible_heat_fluxes      = true
-    do_Surface_evaporation       = true
-    do_Implicit_PBL_Scheme       = true
-    
-    if do_large_scale_precipitation == true
-        Lscale_Cond!(
+        do_large_scale_precipitation = physics_params["do_Lscale_Cond"]
+        do_Sensible_heat_fluxes      = physics_params["do_Sensible_Heating"]
+        do_Surface_evaporation       = physics_params["do_Surface_Evaporation"]
+        do_Implicit_PBL_Scheme       = physics_params["do_Implicit_PBL_Scheme"]
+
+        # V_c, za, rho
+        V_c, za, rho = Calculate_V_c_za_rho(
             atmo_data,
-            grid_tracers_c, grid_δtracers, grid_liquid_water_content,
-            grid_t, grid_δt,
-            grid_p_full,
-            Δt
+            grid_p_half, grid_p_full, grid_ps,
+            grid_u, grid_v,
+            grid_t, grid_q_c
         )
-        grid_tracers_c[grid_tracers_c .< 0]   .= 0
-    
-        grid_tracers_c .= grid_tracers_c .- grid_δtracers .* (2*Δt)
-        grid_t         .= grid_t         .+ grid_δt       .* (2*Δt)
-    
-        Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
-        Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
         
-        Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+        if do_large_scale_precipitation == true
+            Lscale_Cond!(
+                atmo_data,
+                grid_q_c, grid_δq, grid_liquid_water_content,
+                grid_t, grid_δt,
+                grid_p_full,
+                Δt
+            )
+            grid_q_c[grid_q_c .< 0]   .= 0
         
-        grid_δtracers .= 0.
-        grid_δt       .= 0.
-    end
-
-    if do_Sensible_heat_fluxes == true
-        Sensible_Heating!(
-            mesh, atmo_data,
-            grid_t, grid_shflx,
-            V_c, za, rho,
-            Δt
-        )
-        Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
-    end
-
-    if do_Surface_evaporation == true
-        Surface_Evaporation!(
-            mesh, atmo_data,
-            grid_ps,
-            grid_tracers_c, grid_lhflx,
-            V_c, za, rho,
-            Δt
-        )
-        Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
-        Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
-    end
-
-    if do_Implicit_PBL_Scheme == true
-        Implicit_PBL_Mixing!(
-            atmo_data,
-            grid_p_full, grid_p_half,
-            grid_t, grid_tracers_c,
-            K_E,
-            V_c, za, rho,
-            physics_params,
-            Δt
-        )
-    
-        Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+            grid_q_c .= grid_q_c .- grid_δq .* (2*Δt)
+            grid_t   .= grid_t   .+ grid_δt .* (2*Δt)
         
-        Trans_Grid_To_Spherical!(mesh, grid_tracers_c, spe_tracers_c)
-        Trans_Spherical_To_Grid!(mesh, spe_tracers_c, grid_tracers_c)
+            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
+            
+            Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
+            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+            
+            grid_δq .= 0.
+            grid_δt .= 0.
+        end
+
+        if do_Sensible_heat_fluxes == true
+            Sensible_Heating!(
+                mesh, atmo_data,
+                grid_t, grid_shflx,
+                V_c, za, rho,
+                Δt
+            )
+            Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
+            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+        end
+
+        if do_Surface_evaporation == true
+            Surface_Evaporation!(
+                mesh, atmo_data,
+                grid_ps,
+                grid_q_c, grid_lhflx,
+                V_c, za, rho,
+                Δt
+            )
+            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
+        end
+
+        if do_Implicit_PBL_Scheme == true
+            Implicit_PBL_Mixing!(
+                atmo_data,
+                grid_p_full, grid_p_half,
+                grid_t, grid_q_c,
+                K_E,
+                V_c, za, rho,
+                physics_params,
+                Δt
+            )
+        
+            Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
+            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+            
+            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
+        end
+
     end
 
     grid_δt .= 0.0
@@ -804,25 +816,27 @@ end
 
 
 function Atmosphere_Update!(
-    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, 
-    semi_implicit::Semi_Implicit_Solver, dyn_data::Dyn_Data, 
-    physics_params::Dict{String, Any}, L::Float64, T_ref::Array{Float64, 3}
+    config::Model_Config,
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
+    atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
+    semi_implicit::Semi_Implicit_Solver,
+    physics_params::Dict{String, Any}
 )
 
     Δt = Get_Δt(semi_implicit.integrator)
-    Spectral_Dynamics_Physics!(semi_implicit, atmo_data, mesh,  dyn_data, Δt, physics_params, L, T_ref) # HS forcing
-    Spectral_Dynamics!(mesh,  vert_coord , atmo_data, dyn_data, semi_implicit, L) # dynamics 
+    Spectral_Dynamics_Physics!(config, mesh, atmo_data, dyn_data, semi_implicit, physics_params)
+    Spectral_Dynamics!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit)
 
     grid_ps , grid_Δp, grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_ps_c,  dyn_data.grid_Δp, dyn_data.grid_p_half, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full 
     
     grid_t = dyn_data.grid_t_c
     grid_geopots, grid_z_full, grid_z_half = dyn_data.grid_geopots, dyn_data.grid_z_full, dyn_data.grid_z_half
 
-    grid_tracers_c = dyn_data.grid_tracers_c
+    grid_q_c = dyn_data.grid_q_c
         
     Compute_Pressures_And_Heights!(atmo_data, vert_coord,     
     grid_ps, grid_geopots, grid_t, 
-    grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full, grid_z_full, grid_z_half, grid_tracers_c)
+    grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full, grid_z_full, grid_z_half, grid_q_c)
 
     return
 end 

@@ -98,15 +98,11 @@ function JGCM_Simulate(config::Model_Config)
     )
 
     # Dyn_Data
-    # Determine number of tracers based on physics (e.g. 1 for moist, 0 for dry)
-    num_grid_tracters = 1
-    num_spe_tracters  = 1
-    
     dyn_data = Dyn_Data(
         config.name, 
         config.num_fourier, num_spherical, 
         nλ, config.nθ, config.nd, 
-        num_grid_tracters, num_spe_tracters
+        config.num_tracers
     )
 
     # Semi-Implicit Solver (Only for 3D)
@@ -267,7 +263,7 @@ end
 # Helper: Dynamics Dispatcher
 # ==============================================================================
 
-function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_imp, vert_coord, params)
+function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_implicit, vert_coord, physics_params)
 
     model_type = config.model_type
     if model_type == :Barotropic
@@ -275,10 +271,10 @@ function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_imp,
         
     elseif model_type == :Shallow_Water
         # Extract SW params safely
-        kappa_m = get(params, "kappa_m", 1.0/(20.0*86400))
-        kappa_t = get(params, "kappa_t", 1.0/(10.0*86400))
+        kappa_m = get(physics_params, "kappa_m", 1.0/(20.0*86400))
+        kappa_t = get(physics_params, "kappa_t", 1.0/(10.0*86400))
         h_eq    = dyn_data.grid_geopots # We stored h_eq here during init
-        h_0     = get(params, "h_0", 3.0e4)
+        h_0     = get(physics_params, "h_0", 3.0e4)
         
         Shallow_Water_Physics!(dyn_data, kappa_m, kappa_t, h_eq)
         Shallow_Water_Dynamics!(mesh, atmo_data, h_0, dyn_data, integrator)
@@ -286,7 +282,7 @@ function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_imp,
     elseif model_type == :PrimitiveEquation
         # Primitive Equation Dynamics
         # Note: Atmosphere_Update! handles physics internals based on Atmo_Data flags
-        Atmosphere_Update!(mesh, atmo_data, vert_coord, semi_imp, dyn_data, params, config.L, dyn_data.T_ref)
+        Atmosphere_Update!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit, physics_params)
         
     else
         error("Unknown Model Type: $model_type")

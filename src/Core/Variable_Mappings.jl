@@ -20,6 +20,7 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
     if var_name == :div; return dyn_data.grid_div; end
     if var_name == :geopots; return dyn_data.grid_geopots; end
     if var_name == :w; return dyn_data.grid_w_full; end
+    if var_name == :q; return dyn_data.grid_q_c; end
 
     # Tendencies
     if var_name == :du; return dyn_data.grid_δu; end
@@ -28,28 +29,11 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
     if var_name == :dvor; return dyn_data.grid_δvor; end
     if var_name == :ddiv; return dyn_data.grid_δdiv; end
     if var_name == :dps; return dyn_data.grid_δps; end
+    if var_name == :dq; return dyn_data.grid_δq; end
     
     # Fluxes
     if var_name == :shflx; return dyn_data.grid_shflx; end
     if var_name == :lhflx; return dyn_data.grid_lhflx; end
-
-    # Tracers (Dynamic Handling)
-    # :q is alias for Tracer #1 (Specific Humidity)
-    if var_name == :q
-        if size(dyn_data.grid_tracers_c, 4) >= 1
-            return view(dyn_data.grid_tracers_c, :, :, :, 1)
-        else
-            return nothing
-        end
-    end
-
-    if var_name == :dq
-        if size(dyn_data.grid_tracers_c, 4) >= 1
-            return view(dyn_data.grid_δtracers, :, :, :, 1)
-        else
-            return nothing
-        end
-    end
 
     # Handle :tr1, :tr2, etc.
     s_str = string(var_name)
@@ -88,6 +72,7 @@ function Get_Dyn_Var_Map(dyn::Dyn_Data, ::Val{:PrimitiveEquation})
         :v      => dyn.grid_v_c,
         :w      => dyn.grid_w_full,
         :p      => dyn.grid_p_full,
+        :q      => dyn.grid_q_c,
         :z      => dyn.grid_geopot_full,
         :lnps   => dyn.grid_lnps,
         :t_eq   => dyn.grid_t_eq,
@@ -99,15 +84,8 @@ function Get_Dyn_Var_Map(dyn::Dyn_Data, ::Val{:PrimitiveEquation})
         :dvor   => dyn.grid_δvor,
         :ddiv   => dyn.grid_δdiv,
         :dps    => dyn.grid_δps,
-        :dq     => dyn.grid_δtracers
+        :dq     => dyn.grid_δq
     )
-
-    # Inject Tracers dynamically
-    # Alias :q -> Tracer 1 (if exists)
-    if size(dyn.grid_tracers_c, 4) >= 1
-        base_map[:q]  = view(dyn.grid_tracers_c, :, :, :, 1)
-        base_map[:dq] = view(dyn.grid_δtracers, :, :, :, 1)
-    end
 
     # Inject :tr1, :tr2...
     for i in 1:size(dyn.grid_tracers_c, 4)

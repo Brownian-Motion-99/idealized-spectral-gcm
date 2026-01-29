@@ -10,34 +10,38 @@ mutable struct Dyn_Data
     nλ::Int64
     nθ::Int64
     nd::Int64
-    num_grid_tracters::Int64
-    num_spe_tracters::Int64
+    num_tracers::Int64
     
     #########################################################
-    # specral vor 
+    # spectral vor 
     spe_vor_n::Array{ComplexF64, 3}
     spe_vor_c::Array{ComplexF64, 3}
     spe_vor_p::Array{ComplexF64, 3}
 
-    # specral div
+    # spectral div
     spe_div_n::Array{ComplexF64, 3}
     spe_div_c::Array{ComplexF64, 3}
     spe_div_p::Array{ComplexF64, 3}
 
-    # specral height or surface pressure
+    # spectral height or surface pressure
     spe_lnps_n::Array{ComplexF64, 3}
     spe_lnps_c::Array{ComplexF64, 3}
     spe_lnps_p::Array{ComplexF64, 3}
 
-    # specral temperature
+    # spectral temperature
     spe_t_n::Array{ComplexF64, 3}
     spe_t_c::Array{ComplexF64, 3}
     spe_t_p::Array{ComplexF64, 3}
 
-    # specral tracer
-    spe_tracers_n::Array{ComplexF64, 3}
-    spe_tracers_c::Array{ComplexF64, 3}
-    spe_tracers_p::Array{ComplexF64, 3}
+    # spectral tracers
+    spe_tracers_n::Array{ComplexF64, 4}
+    spe_tracers_c::Array{ComplexF64, 4}
+    spe_tracers_p::Array{ComplexF64, 4}
+
+    # spectral moisture
+    spe_q_n::Array{ComplexF64, 3}
+    spe_q_c::Array{ComplexF64, 3}
+    spe_q_p::Array{ComplexF64, 3}
 
     ##########################################################################
     # grid w-e velocity
@@ -60,16 +64,15 @@ mutable struct Dyn_Data
     grid_t_c::Array{Float64, 3}
     grid_t_p::Array{Float64, 3}
 
+    # grid tracers
+    grid_tracers_n::Array{Float64, 4}
+    grid_tracers_c::Array{Float64, 4}
+    grid_tracers_p::Array{Float64, 4}
 
-    # grid tracer
-    grid_tracers_n::Array{Float64, 3}
-    grid_tracers_c::Array{Float64, 3}
-    grid_tracers_p::Array{Float64, 3}
-    
-    grid_tracers_diff::Array{Float64, 3}
-    
-    ### By CJY3
-    grid_tracers_full::Array{Float64, 3}
+    # grid moisture
+    grid_q_n::Array{Float64, 3}
+    grid_q_c::Array{Float64, 3}
+    grid_q_p::Array{Float64, 3}
 
     ############################################################
     # Memory contrainer for temporal variables
@@ -117,9 +120,13 @@ mutable struct Dyn_Data
     spe_δt::Array{ComplexF64, 3}
     grid_δt::Array{Float64, 3}
     
-    ### By CJY2
-    spe_δtracers::Array{ComplexF64, 3}
-    grid_δtracers::Array{Float64, 3}
+    # tracers tendencies
+    spe_δtracers::Array{ComplexF64, 4}
+    grid_δtracers::Array{Float64, 4}
+
+    # moisture tendency
+    spe_δq::Array{ComplexF64, 3}
+    grid_δq::Array{Float64, 3}
 
     # absolute vor
     grid_absvor::Array{Float64, 3}
@@ -161,26 +168,13 @@ mutable struct Dyn_Data
 
     grid_d_half1::Array{Float64, 3}
     grid_d_half2::Array{Float64, 3}
-    
-    factor1::Array{Float64, 3}
-    factor2::Array{Float64, 3}
-    factor3::Array{Float64, 3}
-    factor4::Array{Float64, 3}
 
     spe_zeros::Array{ComplexF64, 3}
     K_E::Array{Float64, 3}
 
-    convection::Array{Float64, 3}
-
-    #######################################
-    # Tiffany_project
-    T_ref::Array{Float64, 3}
-    grid_tracers_c_max_Tiffany::Array{Float64, 3}
-    grid_tracers_c_max::Array{Float64, 3}
-    #######################################
 end
 
-function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, num_grid_tracters::Int64=1, num_spe_tracters::Int64=1)
+function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, num_tracers::Int64=1)
     # specral vor 
     spe_vor_n = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     spe_vor_c = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
@@ -202,9 +196,14 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     spe_t_p = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
 
     # spectral tracer
-    spe_tracers_n = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
-    spe_tracers_c = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
-    spe_tracers_p = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
+    spe_tracers_n = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd, num_tracers)
+    spe_tracers_c = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd, num_tracers)
+    spe_tracers_p = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd, num_tracers)
+
+    # spectral moisture
+    spe_q_n = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
+    spe_q_c = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
+    spe_q_p = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     #########################################################
     # grid w-e velocity
     grid_u_n = zeros(Float64, nλ, nθ, nd)
@@ -226,13 +225,16 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     grid_t_c = zeros(Float64, nλ, nθ, nd)
     grid_t_p = zeros(Float64, nλ, nθ, nd)
 
-    # grid tracer
-    grid_tracers_n = zeros(Float64, nλ, nθ, nd)
-    grid_tracers_c = zeros(Float64, nλ, nθ, nd)
-    grid_tracers_p = zeros(Float64, nλ, nθ, nd)
-    
-    grid_tracers_diff = zeros(Float64, nλ, nθ, nd)
-    grid_tracers_full = zeros(Float64, nλ, nθ, nd)
+    # grid tracers
+    grid_tracers_n = zeros(Float64, nλ, nθ, nd, num_tracers)
+    grid_tracers_c = zeros(Float64, nλ, nθ, nd, num_tracers)
+    grid_tracers_p = zeros(Float64, nλ, nθ, nd, num_tracers)
+
+    # grid moisture
+    grid_q_n = zeros(Float64, nλ, nθ, nd)
+    grid_q_c = zeros(Float64, nλ, nθ, nd)
+    grid_q_p = zeros(Float64, nλ, nθ, nd)
+
     ############################################################
     # Memory contrainer for temporal variables
     # vor
@@ -274,9 +276,13 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     spe_δt  = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     grid_δt = zeros(Float64, nλ, nθ, nd)
     
-    # tracers tendency
-    spe_δtracers  = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
-    grid_δtracers = zeros(Float64, nλ, nθ, nd)
+    # tracers tendencies
+    spe_δtracers  = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd, num_tracers)
+    grid_δtracers = zeros(Float64, nλ, nθ, nd, num_tracers)
+
+    # moisture tendency
+    spe_δq  = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
+    grid_δq = zeros(Float64, nλ, nθ, nd)
     
     # absolute vor
     grid_absvor = zeros(Float64, nλ, nθ, nd)
@@ -321,27 +327,20 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     spe_zeros = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     K_E = zeros(Float64, nλ, nθ, nd+1)
 
-    # qv_global_intergral = zeros(Float64, nλ,  nθ, nd)
-    convection = zeros(Float64, nλ, nθ, nd)
-
-    # Tiffany_project
-    T_ref = zeros(Float64, nλ, nθ, nd)
-    grid_tracers_c_max_Tiffany = zeros(Float64, nλ, nθ, nd)
-    grid_tracers_c_max         = zeros(Float64, nλ, nθ, nd)
-
-
-    Dyn_Data(name, num_fourier, num_spherical, nλ, nθ, nd, num_grid_tracters, num_spe_tracters,
+    Dyn_Data(name, num_fourier, num_spherical, nλ, nθ, nd, num_tracers,
     spe_vor_n, spe_vor_c, spe_vor_p, 
     spe_div_n, spe_div_c, spe_div_p, 
     spe_lnps_n, spe_lnps_c, spe_lnps_p,
     spe_t_n, spe_t_c, spe_t_p,
-    spe_tracers_n, spe_tracers_c, spe_tracers_p, 
+    spe_tracers_n, spe_tracers_c, spe_tracers_p,
+    spe_q_n, spe_q_c, spe_q_p, 
     ########################################################################
     grid_u_n, grid_u_c, grid_u_p,
     grid_v_n, grid_v_c, grid_v_p,
     grid_ps_n, grid_ps_c, grid_ps_p, 
     grid_t_n, grid_t_c, grid_t_p,
-    grid_tracers_n, grid_tracers_c, grid_tracers_p, grid_tracers_full, grid_tracers_diff,
+    grid_tracers_n, grid_tracers_c, grid_tracers_p,
+    grid_q_n, grid_q_c, grid_q_p,
     #########################################################################
     spe_δvor, grid_vor, grid_δvor,  
     spe_δdiv, grid_div, grid_δdiv, 
@@ -350,7 +349,7 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     spe_δlnps, grid_lnps, grid_δlnps, grid_δps, 
     grid_p_full, grid_p_half, grid_lnp_full, grid_lnp_half, grid_Δp,
     grid_dλ_ps, grid_dθ_ps,
-    spe_δt, grid_δt, spe_δtracers, grid_δtracers,
+    spe_δt, grid_δt, spe_δtracers, grid_δtracers, spe_δq, grid_δq,
     grid_absvor,
     grid_w_full, grid_M_half,
     spe_energy, grid_energy_full, 
@@ -359,7 +358,7 @@ function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::I
     grid_z_full, grid_z_half,grid_t_eq,
     #########################################################################
     spe_d1, spe_d2, grid_d_full1, grid_d_full2, grid_d_half1, grid_d_half2,
-    factor1, factor2, factor3, factor4, spe_zeros, K_E, convection, T_ref, grid_tracers_c_max_Tiffany, grid_tracers_c_max)
+    spe_zeros, K_E)
 end
 
 
@@ -378,10 +377,8 @@ function Time_Advance!(dyn_data::Dyn_Data)
     dyn_data.spe_t_p .= dyn_data.spe_t_c
     dyn_data.spe_t_c .= dyn_data.spe_t_n
 
-    if dyn_data.num_spe_tracters > 0
-        dyn_data.spe_tracers_p .= dyn_data.spe_tracers_c
-        dyn_data.spe_tracers_c .= dyn_data.spe_tracers_n
-    end
+    dyn_data.spe_q_p .= dyn_data.spe_q_c
+    dyn_data.spe_q_c .= dyn_data.spe_q_n
 
 
     # update grid variables
@@ -396,12 +393,9 @@ function Time_Advance!(dyn_data::Dyn_Data)
 
     dyn_data.grid_t_p .= dyn_data.grid_t_c
     dyn_data.grid_t_c .= dyn_data.grid_t_n
-
     
-    if dyn_data.num_grid_tracters > 0
-        dyn_data.grid_tracers_p .= dyn_data.grid_tracers_c
-        dyn_data.grid_tracers_c .= dyn_data.grid_tracers_n
-    end
+    dyn_data.grid_q_p .= dyn_data.grid_q_c
+    dyn_data.grid_q_c .= dyn_data.grid_q_n
     
 end
 
