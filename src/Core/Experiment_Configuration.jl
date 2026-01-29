@@ -14,7 +14,7 @@ Base.@kwdef struct Model_Config
     # 1. Experiment Identity
     # -------------------------------------------------------
     name::String
-    model_type::Symbol  # :Barotropic, :Shallow_Water, :Primitive_Equation
+    model_type::Symbol  # :Barotropic, :Shallow_Water, :PrimitiveEquation
 
     # -------------------------------------------------------
     # 2. Resolution & Geometry
@@ -47,11 +47,18 @@ Base.@kwdef struct Model_Config
     
     damping_order::Int      
     damping_coef::Float64   
-    robert_coef::Float64    
+    robert_coef::Float64
     implicit_coef::Float64  
 
     # -------------------------------------------------------
-    # 5. Composition & Physics
+    # 5. Restart Configuration
+    # -------------------------------------------------------
+    is_restart::Bool         = false       # Toggle warm start
+    restart_file::String     = ""          # Path to the .jld2 file to load
+    restart_frequency::Int64 = 86400       # How often to save checkpoints (seconds)
+
+    # -------------------------------------------------------
+    # 6. Composition & Physics
     # -------------------------------------------------------
     L::Float64 = 0.2
     
@@ -61,8 +68,13 @@ Base.@kwdef struct Model_Config
     
     initial_condition::Any      
     
-    output_filename::String
-    logger::String
+    # -------------------------------------------------------
+    # 7. IO Settings
+    # -------------------------------------------------------
+    output_path::String                   # Base directory for all outputs
+    output_filename::String               # Full path for the main NetCDF
+    logger::String                        # Full path for the log file
+    
     do_raw_output::Bool = true
     pressure_levels::Vector{Float64} = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0]
     vars_to_output::Vector{Symbol} 

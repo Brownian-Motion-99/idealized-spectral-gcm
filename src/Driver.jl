@@ -10,8 +10,9 @@ using ..Output_Manager_Module
 using ..Experiment_Configuration
 using ..Initial_Conditions
 using ..Semi_Implicit_Module
-using ..Spectral_Dynamics_Module
+using ..Restart_Manager_Module
 
+using ..Spectral_Dynamics_Module
 using ..Barotropic_Dynamics_Module
 using ..Shallow_Water_Dynamics_Module
 
@@ -118,13 +119,40 @@ function JGCM_Simulate(config::Model_Config)
     # 2. Initialization
     # =========================================================================
     
-    msg_init_cond = "Setting Initial Conditions..."
-    @info msg_init_cond
-    open(config.logger, "a") do log; println(log, msg_init_cond); end
+    # Setup Restart Manager
+    # Assuming config has these fields. If not, you can hardcode or add to Model_Config
+    restart_freq = get(config.physics_params, "restart_frequency", 86400) 
+    restart_dir  = joinpath(config.output_path, "restart")
+    restart_mgr  = Restart_Manager(restart_dir, restart_freq)
 
-    # Call the Bridge in Initial_Conditions.jl
-    # Note: We pass full 'config' so it can access parameters (h0, perturbations)
-    Initialize_Atmos_State!(mesh, atmo_data, dyn_data, vert_coord, config)
+    # State Variables for Integrator
+    start_time = 0
+    init_step  = true
+
+    if config.is_restart
+        # --- PATH A: WARM START ---
+        msg_restart = "Warm Start Detected. Loading: $(config.restart_file)"
+        @info msg_restart
+        open(config.logger, "a") do log; println(log, msg_restart); end
+
+        # Load data AND get the time we left off
+        saved_time = Load_Restart_File!(dyn_data, config.restart_file)
+        
+        start_time = saved_time
+        init_step  = false  # We are resuming, so we don't need the Euler start
+        
+    else
+        # --- PATH B: COLD START ---
+        msg_init_cond = "Cold Start: Setting Analytical Initial Conditions..."
+        @info msg_init_cond
+        open(config.logger, "a") do log; println(log, msg_init_cond); end
+
+        # Standard initialization
+        Initialize_Atmos_State!(mesh, atmo_data, dyn_data, vert_coord, config)
+        
+        start_time = 0
+        init_step  = true
+    end
     
     # =========================================================================
     # 3. Output Management
@@ -194,61 +222,17 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
 
+        # Restart
+        if integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+            Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
+            
+            msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
+            open(config.logger, "a") do log; println(log, msg_ckpt); end
+        end
+
         # Simple Progress Log
         if i % (config.day_to_sec / config.Δt / 4) == 0
-            
-            day = integrator.time / config.day_to_sec
-
-            msg_step_and_day = @sprintf("=== Step %d | Day %.2f ===", i, day)
-            @info msg_step_and_day
-            open(config.logger, "a") do log; println(log, msg_step_and_day); end
-            
-            # Define variables to monitor
-            # Using Views for tracers to avoid allocation
-            diag_vars = [
-                (:U,      dyn_data.grid_u_c),
-                (:V,      dyn_data.grid_v_c),
-                (:T,      dyn_data.grid_t_c),
-                (:W,      dyn_data.grid_w_full),
-                (:P_full, dyn_data.grid_p_full),
-                (:T_eq,   dyn_data.grid_t_eq),
-                (:Q,      @view dyn_data.grid_tracers_c[:, :, :, 1])
-            ]
-
-            for (name, field) in diag_vars
-                # Find index of maximum absolute magnitude
-                max_val, idx = findmax(abs, field)
-                
-                # Retrieve the actual signed value at that location
-                actual_val = field[idx]
-                
-                # Extract coordinates
-                if ndims(field) == 3
-                    
-                    i, j, k = idx[1], idx[2], idx[3]
-                    msg_var_diagnostic = @sprintf(
-                        "%-6s: %10.4f  at (λ=%03d, θ=%03d, k=%02d)", 
-                        string(name), actual_val, i, j, k
-                    )
-                    @info msg_var_diagnostic
-                    open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
-
-                elseif ndims(field) == 2
-                    
-                    i, j = idx[1], idx[2]
-                    msg_var_diagnostic = @sprintf(
-                        "%-6s: %10.4f  at (λ=%03d, θ=%03d)", 
-                        string(name), actual_val, i, j
-                    )
-                    @info msg_var_diagnostic
-                    open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
-
-                end
-            end
-            
-            println("-"^40) # Separator line
-            open(config.logger, "a") do log; println(log, "-"^40); end
-
+            status_diagnostics(i, config, dyn_data, integrator)
         end
     end
     
@@ -258,6 +242,69 @@ function JGCM_Simulate(config::Model_Config)
     open(config.logger, "a") do log; println(log, msg_end); end
 
 end
+
+
+
+# ==============================================================================
+# Helper: Status Diagnostics
+# ==============================================================================
+function status_diagnostics(step::Int64, config::Model_Config, dyn_data::Dyn_Data, integrator::Filtered_Leapfrog)
+
+    day = integrator.time / config.day_to_sec
+
+    msg_step_and_day = @sprintf("=== Step %d | Day %.2f ===", step, day)
+    @info msg_step_and_day
+    open(config.logger, "a") do log; println(log, msg_step_and_day); end
+    
+    # Define variables to monitor
+    # Using Views for tracers to avoid allocation
+    diag_vars = [
+        (:U,      dyn_data.grid_u_c),
+        (:V,      dyn_data.grid_v_c),
+        (:T,      dyn_data.grid_t_c),
+        (:W,      dyn_data.grid_w_full),
+        (:P_full, dyn_data.grid_p_full),
+        (:T_eq,   dyn_data.grid_t_eq),
+        (:Q,      dyn_data.grid_q_c[:, :, :, 1])
+    ]
+
+    for (name, field) in diag_vars
+        # Find index of maximum absolute magnitude
+        max_val, idx = findmax(abs, field)
+        
+        # Retrieve the actual signed value at that location
+        actual_val = field[idx]
+        
+        # Extract coordinates
+        if ndims(field) == 3
+            
+            i, j, k = idx[1], idx[2], idx[3]
+            msg_var_diagnostic = @sprintf(
+                "%-6s: %10.4f  at (λ=%03d, θ=%03d, k=%02d)", 
+                string(name), actual_val, i, j, k
+            )
+            @info msg_var_diagnostic
+            open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
+
+        elseif ndims(field) == 2
+            
+            i, j = idx[1], idx[2]
+            msg_var_diagnostic = @sprintf(
+                "%-6s: %10.4f  at (λ=%03d, θ=%03d)", 
+                string(name), actual_val, i, j
+            )
+            @info msg_var_diagnostic
+            open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
+
+        end
+    end
+    
+    println("-"^40) # Separator line
+    open(config.logger, "a") do log; println(log, "-"^40); end
+
+end
+
+
 
 # ==============================================================================
 # Helper: Dynamics Dispatcher

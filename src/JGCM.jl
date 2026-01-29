@@ -32,6 +32,7 @@ include("Dynamics/Spectral_Dynamics.jl")
 # ============================================================================== #
 # INITIALIZATION & OUTPUT
 # ============================================================================== #
+include("Output/Restart_Manager.jl")
 include("Initialization/Initial_Conditions.jl")
 include("Output/Output_Mappings.jl")
 include("Output/Vertical_Interpolation.jl")
@@ -86,6 +87,8 @@ using .Shallow_Water_Dynamics_Module
 export Shallow_Water_Dynamics!
 
 # Output
+using .Restart_Manager_Module
+export Restart_Manager, Write_Restart_File, Load_Restart_File!
 using .Output_Manager_Module
 export Output_Manager, Update_Output!, Finalize_Output!
 

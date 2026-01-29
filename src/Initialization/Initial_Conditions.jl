@@ -1,6 +1,5 @@
 module Initial_Conditions
 
-using Infiltrator
 using ..Spectral_Spherical_Mesh_Module
 using ..Atmo_Data_Module
 using ..Dyn_Data_Module
@@ -8,6 +7,7 @@ using ..Experiment_Configuration
 using ..Variable_Mappings_Module
 using ..Vert_Coordinate_Module
 using ..Spectral_Dynamics_Module: Spectral_Initialize_Fields!, Get_Topography!
+using ..Restart_Manager_Module
 
 export Initialize_Atmos_State!
 
@@ -28,6 +28,20 @@ function Initialize_Atmos_State!(
     vert_coord::Union{Vert_Coordinate, Nothing},
     config::Model_Config
 )
+    
+    # --- Restart --- #
+    if config.is_restart
+        if isfile(config.restart_file)
+            Load_Restart_File!(dyn_data, config.restart_file)
+            @info "Initialization complete: Loaded warm start from $(config.restart_file)"
+            return # <--- Crucial: Stop here!
+        else
+            error("Restart requested but file not found: $(config.restart_file)")
+        end
+    end
+    # --- Restart --- #
+    
+    # --- Cold start --- #
     ic_source = config.initial_condition
     
     if ic_source isa Function
@@ -46,6 +60,8 @@ function Initialize_Atmos_State!(
     else
         error("Unsupported Initial Condition Type: $(typeof(ic_source))")
     end
+    # --- Cold start --- #
+
 end
 
 
@@ -239,9 +255,10 @@ function Init_3D_Standard!(
     # 2. Call Standard Spectral Initialization
     # This sets up T, lnps, and adds small perturbations to break symmetry
     Spectral_Initialize_Fields!(
-        mesh, atmo_data, vert_coord, 
+        config,
+        mesh, vert_coord, 
+        atmo_data, dyn_data,
         sea_level_ps_ref, init_t, dyn_data.grid_geopots,
-        dyn_data
     )
 end
 

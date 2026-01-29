@@ -418,203 +418,134 @@ end
 
 
 
-function Get_Topography!(grid_geopots::Array{Float64, 3}, warm_start_file_name::String = "None")
-    if warm_start_file_name == "None" # load warm start file
-        grid_geopots .= 0.0
-    end
+function Get_Topography!(grid_geopots::Array{Float64, 3})
 
-    if warm_start_file_name != "None" # load warm start file
-        read_file     = load(warm_start_file_name)
-        grid_geopots .= read_file["grid_geopots_final"][:,:,:,1]
-    end
-    
-    return
+    grid_geopots .= 0.0
+
 end 
 
 
 
 function Spectral_Initialize_Fields!(
-    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, vert_coord::Vert_Coordinate, 
+    config::Model_Config,
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
+    atmo_data::Atmo_Data, dyn_data::Dyn_Data,
     sea_level_ps_ref::Float64, init_t::Float64, grid_geopots::Array{Float64,3},
-    dyn_data::Dyn_Data, warm_start_file_name::String = "None"
 )
 
-    if warm_start_file_name != "None" # load warm start file
-        spe_vor_c, spe_div_c, spe_lnps_c, spe_t_c = dyn_data.spe_vor_c, dyn_data.spe_div_c, dyn_data.spe_lnps_c, dyn_data.spe_t_c
-        spe_vor_p, spe_div_p, spe_lnps_p, spe_t_p = dyn_data.spe_vor_p, dyn_data.spe_div_p, dyn_data.spe_lnps_p, dyn_data.spe_t_p
-        grid_u, grid_v, grid_ps, grid_t           = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c, dyn_data.grid_t_c
-        grid_u_p, grid_v_p, grid_ps_p, grid_t_p   = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_ps_p, dyn_data.grid_t_p
-        
-        grid_lnps,  grid_vor, grid_div            = dyn_data.grid_lnps, dyn_data.grid_vor, dyn_data.grid_div
-        
-        grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_p_half, dyn_data.grid_Δp, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full
-        nλ, nθ, nd                                = mesh.nλ, mesh.nθ, mesh.nd
-        
-        # moisture pre-process
-        grid_t_n          = dyn_data.grid_t_n
-        spe_q_c     = dyn_data.spe_q_c
-        spe_q_p     = dyn_data.spe_q_p 
+    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd    
+    rdgas = atmo_data.rdgas    
 
-        grid_q_n    = dyn_data.grid_q_n
-        grid_q_c    = dyn_data.grid_q_c
-        grid_q_p    = dyn_data.grid_q_p 
+    spe_vor_c, spe_div_c, spe_lnps_c, spe_t_c = dyn_data.spe_vor_c, dyn_data.spe_div_c, dyn_data.spe_lnps_c, dyn_data.spe_t_c
+    spe_vor_p, spe_div_p, spe_lnps_p, spe_t_p = dyn_data.spe_vor_p, dyn_data.spe_div_p, dyn_data.spe_lnps_p, dyn_data.spe_t_p
+    
+    grid_u, grid_v, grid_ps, grid_t = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c, dyn_data.grid_t_c
+    grid_u_p, grid_v_p, grid_ps_p, grid_t_p = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_ps_p, dyn_data.grid_t_p
+    
+    grid_lnps, grid_vor, grid_div =  dyn_data.grid_lnps, dyn_data.grid_vor, dyn_data.grid_div
+    
+    grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_p_half, dyn_data.grid_Δp, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full
 
-        grid_u_n      = dyn_data.grid_u_n
-        grid_v_n      = dyn_data.grid_v_n
-        # Tendency 
-        grid_δu = dyn_data.grid_δu
-        grid_δv = dyn_data.grid_δv
+    grid_t .=  init_t 
 
-        grid_δq = dyn_data.grid_δq
-        ####################################################################
-        @info warm_start_file_name # to make sure get the correct warmstart_PR.dat
-        read_file      = load(warm_start_file_name)        
-        grid_u[:,:,:] .= read_file["grid_u_c_final"][:,:,:,1]
-        grid_v[:,:,:] .= read_file["grid_v_c_final"][:,:,:,1]  
-        grid_t        .= read_file["grid_t_c_final"][:,:,:,1] 
-        
-        grid_lnps     .= log.(read_file["grid_ps_c_final"][:,:,1,1])
-        grid_ps       .= read_file["grid_ps_c_final"][:,:,1,1]
-
-        # grid_ps -> grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full
-        Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp,
-        grid_lnp_half, grid_p_full, grid_lnp_full)
-        ####################################################################        
-        num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-        
-        # for current variables
-        spe_t_c       .= read_file["spe_t_c_final"][:,:,:,1]         
-        spe_vor_c[:,:,:] .= read_file["spe_vor_c_final"][:,:,:,1]
-        spe_div_c[:,:,:] .= read_file["spe_div_c_final"][:,:,:,1]
-        spe_lnps_c    .= (read_file["spe_lnps_c_final"][:,:,1,1])
-        grid_vor .= read_file["grid_vor_final"][:,:,:,1]  
-        grid_div .= read_file["grid_div_final"][:,:,:,1] 
-        ####################################################################        
-        # for past variables
-        spe_vor_p   .= read_file["spe_vor_p_final"][:,:,:,1]
-        spe_div_p   .= read_file["spe_div_p_final"][:,:,:,1]
-        spe_lnps_p  .= read_file["spe_lnps_p_final"][:,:,:,1]
-        spe_t_p     .= read_file["spe_t_p_final"][:,:,:,1]
-
-        grid_u_p    .= read_file["grid_u_p_final"][:,:,:,1]
-        grid_v_p    .= read_file["grid_v_p_final"][:,:,:,1]
-        grid_ps_p   .= read_file["grid_ps_p_final"][:,:,:,1]
-        grid_t_p    .= read_file["grid_t_p_final"][:,:,:,1]
-        ####################################################################        
-        # q
-        grid_q_n .= read_file["grid_q_n_final"][:,:,:,1] 
-        grid_q_c .= read_file["grid_q_c_final"][:,:,:,1]
-        grid_q_p .= read_file["grid_q_p_final"][:,:,:,1]
-        
-        spe_q_c  .= read_file["spe_q_c_final"][:,:,:,1]
-        spe_q_p  .= read_file["spe_q_p_final"][:,:,:,1]
-        ####################################################################
-
+    # dΦ/dlnp = -RT    Δp = -ΔΦ/RT
+    grid_lnps[:,:,1] .= log(sea_level_ps_ref) .- grid_geopots[:,:,1] ./ (rdgas * init_t) 
+    grid_ps   .= exp.(grid_lnps)
+    
+    
+    spe_div_c .= 0.0
+    spe_vor_c .= 0.0
+    
+    # # initial perturbation
+    num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
+    
+    initial_perturbation = 1.0e-7/sqrt(2.0)
+    # initial vorticity perturbation used in benchmark code
+    # In gfdl spe[i,j] =  myspe[i, i+j-1]*√2
+    for k = nd-2:nd
+        spe_vor_c[2, 5, k] = initial_perturbation
+        spe_vor_c[6, 9, k] = initial_perturbation
+        spe_vor_c[2, 4, k] = initial_perturbation  
+        spe_vor_c[6, 8, k] = initial_perturbation
     end
+    
+    UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
+    
+    
+    # initial spectral fields (and spectrally-filtered) grid fields
+    
+    Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
+    Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
+    
+    Trans_Grid_To_Spherical!(mesh, grid_lnps, spe_lnps_c)
+    Trans_Spherical_To_Grid!(mesh, spe_lnps_c,  grid_lnps)
+    grid_ps .= exp.(grid_lnps)
+    
+    
+    Vor_Div_From_Grid_UV!(mesh, grid_u, grid_v, spe_vor_c, spe_div_c)
+    
+    UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
+    
+    Trans_Spherical_To_Grid!(mesh, spe_vor_c, grid_vor)
+    Trans_Spherical_To_Grid!(mesh, spe_div_c, grid_div)
+    
+    #update pressure variables for hs forcing
+    Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp,
+    grid_lnp_half, grid_p_full, grid_lnp_full)
+    
+    
+    spe_vor_p  .= spe_vor_c
+    spe_div_p  .= spe_div_c
+    spe_lnps_p .= spe_lnps_c
+    spe_t_p    .= spe_t_c
+    
+    
+    grid_u_p   .= grid_u
+    grid_v_p   .= grid_v
+    grid_ps_p  .= grid_ps
+    grid_t_p   .= grid_t
 
-    if warm_start_file_name == "None" # then use original start
-        spe_vor_c, spe_div_c, spe_lnps_c, spe_t_c = dyn_data.spe_vor_c, dyn_data.spe_div_c, dyn_data.spe_lnps_c, dyn_data.spe_t_c
-        spe_vor_p, spe_div_p, spe_lnps_p, spe_t_p = dyn_data.spe_vor_p, dyn_data.spe_div_p, dyn_data.spe_lnps_p, dyn_data.spe_t_p
-        grid_u, grid_v, grid_ps, grid_t = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c, dyn_data.grid_t_c
-        grid_u_p, grid_v_p, grid_ps_p, grid_t_p = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_ps_p, dyn_data.grid_t_p
-        
-        grid_lnps,  grid_vor, grid_div =  dyn_data.grid_lnps, dyn_data.grid_vor, dyn_data.grid_div
-        
-        grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_p_half, dyn_data.grid_Δp, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full
-        nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
-                
-        # update q
-        spe_q_c     = dyn_data.spe_q_c
-        spe_q_p     = dyn_data.spe_q_p 
-            
-        grid_q_c    = dyn_data.grid_q_c
-        grid_q_p    = dyn_data.grid_q_p 
-
-        rdgas = atmo_data.rdgas
-        grid_t         .=  init_t 
-
-        # dΦ/dlnp = -RT    Δp = -ΔΦ/RT
-        grid_lnps[:,:,1] .= log(sea_level_ps_ref) .- grid_geopots[:,:,1] ./ (rdgas * init_t) 
-        grid_ps   .= exp.(grid_lnps)
-        
-        
-        spe_div_c .= 0.0
-        spe_vor_c .= 0.0
-      
-        # # initial perturbation
-        num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-        
-        initial_perturbation = 1.0e-7/sqrt(2.0)
-        # initial vorticity perturbation used in benchmark code
-        # In gfdl spe[i,j] =  myspe[i, i+j-1]*√2
-        for k = nd-2:nd
-          spe_vor_c[2,5,k] = initial_perturbation
-          spe_vor_c[6,9,k] = initial_perturbation
-          spe_vor_c[2,4,k] = initial_perturbation  
-          spe_vor_c[6,8,k] = initial_perturbation
-        end
-      
-        UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
-        
-      
-        # initial spectral fields (and spectrally-filtered) grid fields
-        
-        Trans_Grid_To_Spherical!(mesh, grid_t, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
-      
-        Trans_Grid_To_Spherical!(mesh, grid_lnps, spe_lnps_c)
-        Trans_Spherical_To_Grid!(mesh, spe_lnps_c,  grid_lnps)
-        grid_ps .= exp.(grid_lnps)
-        
-      
-        Vor_Div_From_Grid_UV!(mesh, grid_u, grid_v, spe_vor_c, spe_div_c)
-      
-        UV_Grid_From_Vor_Div!(mesh, spe_vor_c, spe_div_c, grid_u, grid_v)
-        
-        Trans_Spherical_To_Grid!(mesh, spe_vor_c, grid_vor)
-        Trans_Spherical_To_Grid!(mesh, spe_div_c, grid_div)
-        
-        #update pressure variables for hs forcing
-        Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp,
-        grid_lnp_half, grid_p_full, grid_lnp_full)
-        
-        
-        spe_vor_p  .= spe_vor_c
-        spe_div_p  .= spe_div_c
-        spe_lnps_p .= spe_lnps_c
-        spe_t_p    .= spe_t_c
-      
-      
-        grid_u_p   .= grid_u
-        grid_v_p   .= grid_v
-        grid_ps_p  .= grid_ps
-        grid_t_p   .= grid_t
-
-        # Tracer initialization
-        qv0             = 0.018
-        θc              = mesh.θc # lat
-        phi_hw          = 2 * pi / 9 * deg2rad(40)
-        p_hw            = 30000.
-        phi             = LinRange(-90, 90, nθ)
-        p0              = 100000.
-        for k in 1:20
-            for j in 1:64
-               for i in 1:128
-                   grid_q_c[i,j,k] = qv0 * exp(-((grid_p_full[i,j,k]/grid_ps[i,j,1] - 1.)*(p0/p_hw))^2) * exp(-((θc[j])/phi_hw)^4) 
-                    
-               end            
-            end
-        end
-        grid_q_c[:,:,1] .= 0.
-        
-        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-
-        grid_q_p .= grid_q_c
-        spe_q_p  .= spe_q_c
+    # moisture initialization
+    if config.moisture_processes
+        Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data)
     end
      
-end 
+end
+
+
+
+function Initialize_Analytic_Moisture!(
+    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, dyn_data::Dyn_Data
+)
+    
+    nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
+
+    spe_q_p, spe_q_c     = dyn_data.spe_q_p,     dyn_data.spe_q_c
+    grid_q_p, grid_q_c   = dyn_data.grid_q_p,    dyn_data.grid_q_c
+    grid_p_full, grid_ps = dyn_data.grid_p_full, dyn_data.grid_ps_c
+
+    qv0             = 0.018
+    θc              = mesh.θc # lat
+    phi_hw          = 2 * pi / 9 * deg2rad(40)
+    p_hw            = 30000.
+    phi             = LinRange(-90, 90, nθ)
+    p0              = 100000.
+    
+    for k in 1:nd
+        for j in 1:nθ
+            for i in 1:nλ
+                grid_q_c[i, j, k] = qv0 * exp(-((grid_p_full[i, j, k] / grid_ps[i, j, 1] - 1.) * (p0/p_hw))^2) * exp(-((θc[j]) / phi_hw)^4) 
+            end            
+        end
+    end
+    dyn_data.grid_q_c[:,:,1] .= 0.
+
+    Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+    Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
+
+    grid_q_p .= grid_q_c
+    spe_q_p  .= spe_q_c
+end
 
 
 
