@@ -10,10 +10,10 @@ physics_params = Dict{String, Any}(
     "do_Surface_Evaporation"  => true,
     "do_Implicit_PBL_Scheme"  => true,
     
-    "PBL_Top_Mode"  => :ModelLevel,
-    "PBL_Top_Value" => 4,
-    # "PBL_Top_Mode"  => :PressureLevel,
-    # "PBL_Top_Value" => 85000.0,
+    # "PBL_Top_Mode"  => :ModelLevel,
+    # "PBL_Top_Value" => 4,
+    "PBL_Top_Mode"  => :PressureLevel,
+    "PBL_Top_Value" => 85000.0,
 
     "σ_b"     => 0.7,
     "k_a"     => 1.0/(40.0),
@@ -24,7 +24,7 @@ physics_params = Dict{String, Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name  = "HSt42_Parallel"
+experiment_name  = "HSt42"
 output_path_base = joinpath("exp", experiment_name) 
 mkpath(output_path_base)
 
@@ -52,7 +52,7 @@ config = Model_Config(
     
     # Time Integration
     Δt         = 600,
-    end_time   = 86400 * 3,
+    end_time   = 86400 * 10,
     spinup_day = 0.0,
     
     # Numerics
@@ -62,11 +62,11 @@ config = Model_Config(
     implicit_coef = 0.5,
     
     # Restart
-    # is_restart        = false,
-    # restart_file      = "",
-    is_restart        = true,
-    restart_file      = joinpath(output_path_base, "restart", "restart_t86400.jld2"),
-    restart_frequency = 86400,
+    is_restart        = false,
+    restart_file      = "",
+    # is_restart        = true,
+    # restart_file      = joinpath(output_path_base, "restart", "restart_t86400.jld2"),
+    restart_frequency = 86400 * 2,
 
     # Physics
     L = 0.2,
@@ -80,8 +80,8 @@ config = Model_Config(
 
     do_raw_output   = true,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
-    vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx],
-    output_interval = 600,
+    vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
+    output_interval = 3000,
     
     # Initialization
     initial_condition = :Moist_Spinup,

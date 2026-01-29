@@ -1,14 +1,17 @@
 using Base.Threads
+using ...Vert_Coordinate_Module
 using ...Atmo_Data_Module
 
 function Lscale_Cond!(
+    vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data, 
-    grid_q::AbstractArray{Float64, 3}, grid_δq::AbstractArray{Float64, 3}, grid_liquid_water_content::Array{Float64, 3},
+    grid_q::AbstractArray{Float64, 3}, grid_δq::AbstractArray{Float64, 3}, grid_liquid_water_content::Array{Float64, 3}, grid_precip::Array{Float64, 3},
     grid_t::Array{Float64, 3}, grid_δt::Array{Float64, 3}, 
-    grid_p_full::Array{Float64, 3}, 
+    grid_p_full::Array{Float64, 3}, grid_ps::Array{Float64, 3}, 
     Δt
 )
 
+    Δak, Δbk   = vert_coord.Δak, vert_coord.Δbk
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
 
     cp = atmo_data.cp_air
@@ -46,19 +49,12 @@ function Lscale_Cond!(
                 # Liquid water content
                 grid_liquid_water_content[i, j, k] = δq
 
+                # Pseudo-adiabatic precipitation
+                Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
+                grid_precip[i, j, 1] += δq * Δp
+
             end
         end
     end
-
-    # grid_tracers_c_max    .= (0.622 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) )) ./ (grid_p_full .- 0.378 .* (611.12 .* exp.(Lv ./ Rv .* (1. ./ 273.15 .- 1. ./ grid_t)) )) 
-
-    # dq_sat_dT              = zeros(size(grid_tracers_c)...)
-    # dq_sat_dT             .= Lv.*grid_tracers_c_max./ (Rv .*grid_t.^2)
-    
-    # grid_tracers_diff     .= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT) ./(2 .* Δt)
-    # # grid_tracers_c       .-= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT)
-    # grid_δtracers       .= (max.(grid_tracers_c, grid_tracers_c_max) .- grid_tracers_c_max) ./ (1 .+ (Lv / cp) .* dq_sat_dT) /(2 .* Δt)
-    
-    # grid_δt         .= (grid_tracers_diff .* Lv ./ cp) .* L 
 
 end

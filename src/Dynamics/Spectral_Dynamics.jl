@@ -557,7 +557,7 @@ function Atmosphere_Update!(
     physics_params::Dict{String, Any}
 )
 
-    Spectral_Physics!(config, mesh, atmo_data, dyn_data, semi_implicit, physics_params)
+    Spectral_Physics!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit, physics_params)
     Spectral_Dynamics!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit)
 
     grid_ps , grid_Δp, grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_ps_c,  dyn_data.grid_Δp, dyn_data.grid_p_half, dyn_data.grid_lnp_half, dyn_data.grid_p_full, dyn_data.grid_lnp_full 

@@ -35,6 +35,9 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
     if var_name == :shflx; return dyn_data.grid_shflx; end
     if var_name == :lhflx; return dyn_data.grid_lhflx; end
 
+    # Pseudo-adiabatic precipitation
+    if var_name == :precip; return dyn_data.grid_precip; end
+
     # Handle :tr1, :tr2, etc.
     s_str = string(var_name)
     if startswith(s_str, "tr")
@@ -78,6 +81,7 @@ function Get_Dyn_Var_Map(dyn::Dyn_Data, ::Val{:PrimitiveEquation})
         :t_eq   => dyn.grid_t_eq,
         :shflx  => dyn.grid_shflx,
         :lhflx  => dyn.grid_lhflx,
+        :precip => dyn.grid_precip,
         :du     => dyn.grid_δu,
         :dv     => dyn.grid_δv,
         :dt     => dyn.grid_δt,

@@ -1,12 +1,13 @@
 using ...Experiment_Configuration
 using ...Spectral_Spherical_Mesh_Module
+using ...Vert_Coordinate_Module
 using ...Atmo_Data_Module
 using ...Dyn_Data_Module
 using ...Semi_Implicit_Module
 
 function Spectral_Physics!(
     config::Model_Config,
-    mesh::Spectral_Spherical_Mesh, 
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
     semi_implicit::Semi_Implicit_Solver, 
     physics_params::Dict{String, Any}
@@ -71,7 +72,9 @@ function Spectral_Physics!(
 
     grid_shflx = dyn_data.grid_shflx
     grid_lhflx = dyn_data.grid_lhflx
+
     grid_liquid_water_content = dyn_data.grid_liquid_water_content
+    grid_precip               = dyn_data.grid_precip
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
@@ -80,9 +83,9 @@ function Spectral_Physics!(
     K_E               = dyn_data.K_E
     ###############################################################################
     # pressure difference
-    grid_Δp             = dyn_data.grid_Δp
+    grid_Δp = dyn_data.grid_Δp
     # temporary variables
-    grid_δQ             = dyn_data.grid_d_full1
+    grid_δQ = dyn_data.grid_d_full1
     
     if config.moisture_processes
 
@@ -95,14 +98,16 @@ function Spectral_Physics!(
         )
         
         if physics_params["do_Lscale_Cond"]
+            grid_precip .= 0.0
             Lscale_Cond!(
+                vert_coord,
                 atmo_data,
-                grid_q_c, grid_δq, grid_liquid_water_content,
+                grid_q_c, grid_δq, grid_liquid_water_content, grid_precip,
                 grid_t, grid_δt,
-                grid_p_full,
+                grid_p_full, grid_ps,
                 Δt
             )
-            grid_q_c[grid_q_c .< 0]   .= 0
+            grid_q_c[grid_q_c .< 0] .= 0
         
             grid_q_c .= grid_q_c .- grid_δq .* (2*Δt)
             grid_t   .= grid_t   .+ grid_δt .* (2*Δt)
