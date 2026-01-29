@@ -181,7 +181,7 @@ end
 
 
 
-function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::Array{ComplexF64,3},  pfield::Array{Float64,3})
+function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::AbstractArray{ComplexF64,3},  pfield::AbstractArray{Float64,3})
     """
     With F_{m,n} = (-1)^m F_{-m,n}*   
     P_{m,n} = (-1)^m P_{-m,n}
@@ -326,7 +326,7 @@ end
 
 
 
-function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::Array{Float64,3}, snm::Array{ComplexF64,3})
+function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64,3}, snm::AbstractArray{ComplexF64,3})
     
     """
     With F_{m,n} = (-1)^m F_{-m,n}*   
@@ -463,7 +463,7 @@ end
 
 
 
-function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::Array{Float64,3}, fourier_g::Array{ComplexF64,3})
+function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64,3}, fourier_g::AbstractArray{ComplexF64,3})
     
     """
     With F_{m,n} = (-1)^m F_{-m,n}*   
@@ -513,7 +513,7 @@ end
 
 
 
-function Divide_By_Cos!(cosθ::Array{Float64,1}, grid_d::Array{Float64,3})
+function Divide_By_Cos!(cosθ::Array{Float64,1}, grid_d::AbstractArray{Float64,3})
     nd = size(grid_d)[3]
     for k = 1:nd
         v = @view grid_d[:, :, k]
@@ -523,7 +523,7 @@ end
 
 
 
-function Multiply_By_Cos!(cosθ::Array{Float64,1}, grid_d::Array{Float64,3}, grid_d_cos::Array{Float64,3})
+function Multiply_By_Cos!(cosθ::Array{Float64,1}, grid_d::AbstractArray{Float64,3}, grid_d_cos::AbstractArray{Float64,3})
     nd = size(grid_d)[3]
     for k = 1:nd
         v_in  = @view grid_d[:, :, k]
@@ -895,7 +895,7 @@ end
 
 
 
-function Compute_Gradient_Cos!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64,3}, 
+function Compute_Gradient_Cos!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64,3}, 
     spe_cos_dλ_hs::Array{ComplexF64,3}, spe_cos_dθ_hs::Array{ComplexF64,3})
     """
     cosθ∇hs = 1/r ∂hs/∂λ e_λ +  1/r cosθ∂hs/∂θ e_θ
@@ -938,8 +938,8 @@ end
 
 
 
-function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64,3},
-    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_δhs::Array{Float64, 3})
+function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64,3},
+    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_δhs::AbstractArray{Float64, 3})
     
     """
     grid_δh -= (u e_λ + v e_θ)⋅∇hs
@@ -966,7 +966,7 @@ end
 
 
 
-function Compute_Gradients!(mesh::Spectral_Spherical_Mesh, spe_hs::Array{ComplexF64, 3}, 
+function Compute_Gradients!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64, 3}, 
     grid_dλ_hs::Array{Float64, 3}, grid_dθ_hs::Array{Float64, 3})
     #todo 
     @assert(size(spe_hs)[3] == mesh.nd || size(spe_hs)[3] == 1)
@@ -991,7 +991,7 @@ end
 
 
 
-function Area_Weighted_Global_Mean(mesh::Spectral_Spherical_Mesh, grid_datas::Array{Float64,3})
+function Area_Weighted_Global_Mean(mesh::Spectral_Spherical_Mesh, grid_datas::AbstractArray{Float64,3})
     """
     ∫_0^2π ∫_-π/2^π/2 f(φ, θ) cosθ dφ dθ /4π
     = ∫_0^2π ∫_-1^1 f(φ, η) dφ dη /4π

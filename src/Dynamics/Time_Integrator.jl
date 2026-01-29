@@ -21,10 +21,13 @@ mutable struct Filtered_Leapfrog
 
 end
 
-function Filtered_Leapfrog(robert_coef::Float64, 
-                           damping_order::Int64, damping_coef::Float64, eigen::Array{Float64,2},
-                           implicit_coef::Float64,
-                           Δt::Int64, init_step::Bool, start_time::Int64, end_time::Int64)
+function Filtered_Leapfrog(
+    robert_coef::Float64, 
+    damping_order::Int64, damping_coef::Float64, eigen::Array{Float64,2},
+    implicit_coef::Float64,
+    Δt::Int64, init_step::Bool, start_time::Int64, end_time::Int64
+)
+
     @assert(damping_order%2 == 0)
     
     num_fourier, num_spherical = size(eigen) .- 1 
@@ -59,9 +62,11 @@ function Get_ξ(integrator::Filtered_Leapfrog)
     return (init_step ? Δt*implicit_coef : 2*Δt*implicit_coef) 
 end
 
-function Compute_Spectral_Damping!(integrator::Filtered_Leapfrog,
-                                   Qc::Array{ComplexF64,3}, Qp::Array{ComplexF64,3}, 
-                                   δQ::Array{ComplexF64,3})
+function Compute_Spectral_Damping!(
+    integrator::Filtered_Leapfrog,
+    Qc::AbstractArray{ComplexF64,3}, Qp::AbstractArray{ComplexF64,3}, 
+    δQ::AbstractArray{ComplexF64,3}
+)
     """
     update δQ
 
@@ -87,9 +92,11 @@ end
 
 
 
-function Filtered_Leapfrog!(integrator::Filtered_Leapfrog,
-                   δQ::Array{ComplexF64,3},
-                   Qp::Array{ComplexF64,3}, Qc::Array{ComplexF64,3}, Qn::Array{ComplexF64,3})
+function Filtered_Leapfrog!(
+    integrator::Filtered_Leapfrog,
+    δQ::AbstractArray{ComplexF64,3},
+    Qp::AbstractArray{ComplexF64,3}, Qc::AbstractArray{ComplexF64,3}, Qn::AbstractArray{ComplexF64,3}
+)
 
     init_step = integrator.init_step
     robert_coef = integrator.robert_coef

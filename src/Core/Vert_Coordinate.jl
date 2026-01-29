@@ -224,7 +224,7 @@ end
 
 
 
-function Vert_Advection!(vert_coord::Vert_Coordinate, r::Array{Float64,3}, dz::Array{Float64, 3},  w::Array{Float64,3}, Δt::Int64, vert_advect_scheme::String, rdt::Array{Float64,3})
+function Vert_Advection!(vert_coord::Vert_Coordinate, r::AbstractArray{Float64,3}, dz::Array{Float64, 3},  w::Array{Float64,3}, Δt::Int64, vert_advect_scheme::String, rdt::Array{Float64,3})
     """
     Consider the coordinate from atmosphere top to the surface,
     top -1---2---3---4-----> bottom
