@@ -18,28 +18,28 @@ using Interpolations
 export Compute_Corrections_Init, Compute_Corrections!, Four_In_One!, Spectral_Dynamics!, Get_Topography!, Spectral_Initialize_Fields!, Spectral_Dynamics_Physics!, Atmosphere_Update!
 
 function Compute_Corrections_Init(
-    vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
-    grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3}, grid_ps_p::Array{Float64, 3}, grid_t_p::Array{Float64, 3}, 
-    grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_δt::Array{Float64, 3},  
-    Δt::Int64, grid_energy_temp::Array{Float64, 3}, grid_q_p::Array{Float64, 3}, grid_q_c::Array{Float64, 3}, grid_δq::Array{Float64,3}
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
+    atmo_data::Atmo_Data,
+    grid_ps_p::Array{Float64, 3},
+    grid_energy_temp::Array{Float64, 3}, grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3}, grid_t_p::Array{Float64, 3}, grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_δt::Array{Float64, 3},  
+    grid_q_p::Array{Float64, 3}, grid_δq::Array{Float64,3},
+    Δt::Int64,
 )
     
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
-    
-    sum_q_p = 0.
+    cp_air = atmo_data.cp_air
 
     if (do_mass_correction) 
         mean_ps_p = Area_Weighted_Global_Mean(mesh, grid_ps_p)
     end
     
     if (do_energy_correction) 
-        cp_air, grav       = atmo_data.cp_air, atmo_data.grav 
-        grid_energy_temp  .= 0.5 * ((grid_u_p + Δt*grid_δu).^2 + (grid_v_p + Δt*grid_δv).^2) + cp_air * (grid_t_p + Δt*grid_δt)
-        mean_energy_p      = Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_energy_temp, grid_ps_p)
+        grid_energy_temp .= 0.5 * ((grid_u_p + Float64(Δt) * grid_δu).^2 + (grid_v_p + Float64(Δt) * grid_δv).^2) + cp_air * (grid_t_p + Float64(Δt) * grid_δt)
+        mean_energy_p     = Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_energy_temp, grid_ps_p)
     end
 
     if (do_water_correction)
-        mean_moisture_p    =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_p .+ grid_δq * Δt, grid_ps_p)
+        mean_moisture_p =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_p .+ grid_δq * Float64(Δt), grid_ps_p)
     end
     
     return mean_ps_p, mean_energy_p, mean_moisture_p 
@@ -48,51 +48,37 @@ end
 
 
 function Compute_Corrections!(
-    semi_implicit::Semi_Implicit_Solver, vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
-    mean_ps_p::Float64, mean_energy_p::Float64, mean_moisture_p::Float64,
-    grid_u_n::Array{Float64, 3}, grid_v_n::Array{Float64, 3},
-    grid_energy_temp::Array{Float64, 3}, grid_ps_p::Array{Float64, 3},grid_ps_c::Array{Float64, 3},
-    grid_ps_n::Array{Float64, 3}, spe_lnps_n::Array{ComplexF64, 3}, 
-    grid_t_n::Array{Float64, 3}, spe_t_n::Array{ComplexF64, 3},
-    grid_q_p::Array{Float64, 3}, grid_q_c::Array{Float64, 3}, grid_q_n::Array{Float64, 3}, 
-    grid_t::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_z_full::Array{Float64, 3}, grid_u_p::Array{Float64, 3}, grid_v_p::Array{Float64, 3},
-    grid_geopots::Array{Float64, 3}, grid_w_full::Array{Float64,3}, grid_t_p::Array{Float64, 3}, dyn_data::Dyn_Data, grid_δt::Array{Float64,3}
+    mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
+    atmo_data::Atmo_Data,
+    mean_ps_p::Float64, grid_ps_n::Array{Float64, 3},spe_lnps_n::Array{ComplexF64, 3}, 
+    mean_energy_p::Float64, grid_energy_temp::Array{Float64, 3}, grid_u_n::Array{Float64, 3}, grid_v_n::Array{Float64, 3}, grid_t_n::Array{Float64, 3}, spe_t_n::Array{ComplexF64, 3},
+    mean_moisture_p::Float64, grid_q_n::Array{Float64, 3}
 )
 
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
+    cp_air, grav = atmo_data.cp_air, atmo_data.grav
     
     if (do_mass_correction) 
         mean_ps_n              = Area_Weighted_Global_Mean(mesh, grid_ps_n)
-        mass_correction_factor = mean_ps_p/mean_ps_n
+        mass_correction_factor = mean_ps_p / mean_ps_n
         grid_ps_n            .*= mass_correction_factor
-        #P00 = 1 
         spe_lnps_n[1,1,1]     += log(mass_correction_factor)
     end
     
     if (do_energy_correction) 
-        cp_air, grav           = atmo_data.cp_air, atmo_data.grav
-        grid_energy_temp      .= 0.5*(grid_u_n.^2 + grid_v_n.^2) + cp_air*grid_t_n
+        grid_energy_temp      .= 0.5 * (grid_u_n.^2 + grid_v_n.^2) + cp_air * grid_t_n
         mean_energy_n          = Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_energy_temp, grid_ps_n)
         
-        temperature_correction = grav*(mean_energy_p - mean_energy_n)/(cp_air*mean_ps_p)
-        #@info grav, mean_energy_p , mean_energy_n, cp_air, mean_ps_p
+        temperature_correction = grav*(mean_energy_p - mean_energy_n) / (cp_air * mean_ps_p)
         grid_t_n             .+= temperature_correction
         spe_t_n[1,1,:]       .+= temperature_correction
     end
 
-    nλ         = mesh.nλ
-    nθ         = mesh.nθ
-    nd         = mesh.nd
-    grav       = atmo_data.grav
-    integrator = semi_implicit.integrator
-    Δt         = Get_Δt(integrator)
-
     if (do_water_correction) 
         grid_q_n[grid_q_n .< 0.] .=  0.
-        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n)
-        grid_q_n                      .*=  mean_moisture_p ./ mean_moisture_n 
-        mean_moisture_n                       =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n) 
-        return mean_moisture_n
+        mean_moisture_n           =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n)
+        grid_q_n                .*=  mean_moisture_p ./ mean_moisture_n 
+        mean_moisture_n           =  Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n) 
     end
     
 end 
@@ -299,10 +285,14 @@ function Spectral_Dynamics!(
     integrator          = semi_implicit.integrator
     Δt                  = Get_Δt(integrator)
     ###############################################################################
-    mean_ps_p, mean_energy_p, mean_moisture_p = Compute_Corrections_Init(vert_coord, mesh, atmo_data,
-    grid_u_p, grid_v_p, grid_ps_p, grid_t_p, 
-    grid_δu, grid_δv, grid_δt,  
-    Δt, grid_energy_full, grid_q_p, grid_q_c, grid_δq)
+    mean_ps_p, mean_energy_p, mean_moisture_p = Compute_Corrections_Init(
+        mesh, vert_coord,
+        atmo_data,
+        grid_ps_p,
+        grid_energy_full, grid_u_p, grid_v_p, grid_t_p, grid_δu, grid_δv, grid_δt,
+        grid_q_p, grid_δq,
+        Δt
+    )
     
     # compute pressure based on grid_ps -> grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full 
     Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full)
@@ -391,14 +381,12 @@ function Spectral_Dynamics!(
     spe_div_c, spe_div_p, spe_lnps_c, spe_lnps_p, spe_t_c, spe_t_p, 
     spe_δdiv, spe_δlnps, spe_δt)
 
-
     
     Compute_Spectral_Damping!(integrator, spe_vor_c, spe_vor_p, spe_δvor)
     Compute_Spectral_Damping!(integrator, spe_div_c, spe_div_p, spe_δdiv)
     Compute_Spectral_Damping!(integrator, spe_t_c, spe_t_p, spe_δt)
 
 
-    
     Filtered_Leapfrog!(integrator, spe_δvor, spe_vor_p, spe_vor_c, spe_vor_n)
     Filtered_Leapfrog!(integrator, spe_δdiv, spe_div_p, spe_div_c, spe_div_n)
     Filtered_Leapfrog!(integrator, spe_δlnps, spe_lnps_p, spe_lnps_c, spe_lnps_n)
@@ -413,14 +401,13 @@ function Spectral_Dynamics!(
     Trans_Spherical_To_Grid!(mesh, spe_t_n, grid_t_n) 
 
 
-    
-    mean_moisture_n_loc = Compute_Corrections!(semi_implicit, vert_coord, mesh, atmo_data, mean_ps_p, mean_energy_p,mean_moisture_p, 
-        grid_u_n, grid_v_n,
-        grid_energy_full, grid_ps_p,grid_ps,
-        grid_ps_n, spe_lnps_n, 
-        grid_t_n, spe_t_n, 
-        grid_q_p, grid_q_c, grid_q_n,
-        grid_t, grid_p_full, grid_p_half, grid_z_full, grid_u_p, grid_v_p, grid_geopots, grid_w_full, grid_t_p, dyn_data, grid_δt)
+    Compute_Corrections!(
+        mesh, vert_coord,
+        atmo_data,
+        mean_ps_p, grid_ps_n, spe_lnps_n,
+        mean_energy_p, grid_energy_full, grid_u_n, grid_v_n, grid_t_n, spe_t_n,
+        mean_moisture_p, grid_q_n
+    )
 
     Time_Advance!(dyn_data)
 
