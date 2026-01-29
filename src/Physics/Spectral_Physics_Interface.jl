@@ -86,11 +86,6 @@ function Spectral_Physics!(
     
     if config.moisture_processes
 
-        do_large_scale_precipitation = physics_params["do_Lscale_Cond"]
-        do_Sensible_heat_fluxes      = physics_params["do_Sensible_Heating"]
-        do_Surface_evaporation       = physics_params["do_Surface_Evaporation"]
-        do_Implicit_PBL_Scheme       = physics_params["do_Implicit_PBL_Scheme"]
-
         # V_c, za, rho
         V_c, za, rho = Calculate_V_c_za_rho(
             atmo_data,
@@ -99,7 +94,7 @@ function Spectral_Physics!(
             grid_t, grid_q_c
         )
         
-        if do_large_scale_precipitation == true
+        if physics_params["do_Lscale_Cond"]
             Lscale_Cond!(
                 atmo_data,
                 grid_q_c, grid_δq, grid_liquid_water_content,
@@ -122,7 +117,7 @@ function Spectral_Physics!(
             grid_δt .= 0.
         end
 
-        if do_Sensible_heat_fluxes == true
+        if physics_params["do_Sensible_Heating"]
             Sensible_Heating!(
                 mesh, atmo_data,
                 grid_t, grid_shflx,
@@ -133,7 +128,7 @@ function Spectral_Physics!(
             Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t)
         end
 
-        if do_Surface_evaporation == true
+        if physics_params["do_Surface_Evaporation"]
             Surface_Evaporation!(
                 mesh, atmo_data,
                 grid_ps,
@@ -145,7 +140,7 @@ function Spectral_Physics!(
             Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
         end
 
-        if do_Implicit_PBL_Scheme == true
+        if physics_params["do_Implicit_PBL_Scheme"]
             Implicit_PBL_Mixing!(
                 atmo_data,
                 grid_p_full, grid_p_half,
