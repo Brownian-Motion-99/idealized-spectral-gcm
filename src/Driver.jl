@@ -78,7 +78,7 @@ function JGCM_Simulate(config::Model_Config)
     atmo_data = Atmo_Data(
         config.name,
         nλ, config.nθ, config.nd,
-        do_mass, do_energy, do_water, use_virt, config.L,
+        do_mass, do_energy, do_water, use_virt,
         mesh.sinθ;
         radius = config.radius, omega = config.omega, grav = config.grav,
         # Pass dictionary as kwargs to handle optional physics flags

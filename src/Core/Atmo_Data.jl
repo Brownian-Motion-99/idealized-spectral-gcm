@@ -23,7 +23,6 @@ struct Atmo_Data
     rvgas::Float64
     cp_air::Float64
     Lv::Float64
-    L::Float64
     gamma::Float64
     alpha::Float64
 
@@ -35,7 +34,7 @@ end
 function Atmo_Data(
     name::String,  
     nλ::Int64, nθ::Int64, nd::Int64, 
-    do_mass_correction::Bool, do_energy_correction::Bool, do_water_correction::Bool, use_virtual_temperature::Bool, L::Float64,
+    do_mass_correction::Bool, do_energy_correction::Bool, do_water_correction::Bool, use_virtual_temperature::Bool,
     sinθ::Array{Float64,1};
     radius::Float64, omega::Float64=7.292e-5, grav::Float64=9.80, rdgas::Float64=287.04, kappa::Float64=2.0/7.0, rvgas::Float64=461.50,
     gamma::Float64=0.0065,
@@ -51,7 +50,7 @@ function Atmo_Data(
         name, 
         nλ, nθ, nd,
         do_mass_correction, do_energy_correction, do_water_correction, use_virtual_temperature,
-        radius, omega, grav, rdgas, kappa, rvgas, cp_air, Lv, L, gamma, alpha,
+        radius, omega, grav, rdgas, kappa, rvgas, cp_air, Lv, gamma, alpha,
         coriolis
     )
 end

@@ -8,7 +8,8 @@ function Lscale_Cond!(
     grid_q::AbstractArray{Float64, 3}, grid_δq::AbstractArray{Float64, 3}, grid_liquid_water_content::Array{Float64, 3}, grid_precip::Array{Float64, 3},
     grid_t::Array{Float64, 3}, grid_δt::Array{Float64, 3}, 
     grid_p_full::Array{Float64, 3}, grid_ps::Array{Float64, 3}, 
-    Δt
+    Δt::Int64,
+    L::Float64
 )
 
     Δak, Δbk   = vert_coord.Δak, vert_coord.Δbk
@@ -17,7 +18,6 @@ function Lscale_Cond!(
     cp = atmo_data.cp_air
     Lv = atmo_data.Lv
     Rv = atmo_data.rvgas
-    L  = atmo_data.L
 
     const_es     = 611.12
     const_q1     = 0.622

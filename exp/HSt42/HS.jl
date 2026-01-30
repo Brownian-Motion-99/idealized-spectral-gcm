@@ -2,25 +2,40 @@ using JGCM
 
 # 1. Physics Configuration
 physics_params = Dict{String, Any}(
+    
+    # Corrections    
     "do_mass_correction"   => true,
     "do_energy_correction" => true,
     "do_water_correction"  => true,
-    "do_Lscale_Cond"          => true,
-    "do_Sensible_Heating"     => true,
-    "do_Surface_Evaporation"  => true,
-    "do_Implicit_PBL_Scheme"  => true,
+
+    # Grid scale condensation
+    "do_Lscale_Cond" => true,
+    "L"              => 0.2,
+
+    # PBL fluxes
+    "do_Sensible_Heating"    => true,
+    "C_H"                    => 0.0044,
+    "do_Surface_Evaporation" => true,
+    "C_E"                    => 0.0044,
+    "do_Implicit_PBL_Scheme" => true,
+    "C_D"                    => 0.0044,
     
     # "PBL_Top_Mode"  => :ModelLevel,
     # "PBL_Top_Value" => 4,
     "PBL_Top_Mode"  => :PressureLevel,
     "PBL_Top_Value" => 85000.0,
 
-    "σ_b"     => 0.7,
-    "k_a"     => 1.0/(40.0),
-    "k_s"     => 1.0/(4.0),
-    "k_f"     => 1.0/(1.0),
-    "ΔT_y"    => 60.0, 
-    "Δθ_z"    => 10.0
+    # Held-Suarez
+    "do_HS_Forcing" => true,
+    "σ_b"           => 0.7,
+    "k_a"           => 1.0/(40.0),
+    "k_s"           => 1.0/(4.0),
+    "k_f"           => 1.0/(1.0),
+    "ΔT_y"          => 60.0, 
+    "Δθ_z"          => 10.0
+
+    # TODO: cumulus parameterization
+    # TODO: radiation parameterization
 )
 
 # 2. Define Output Paths *Before* Configuration
@@ -52,7 +67,7 @@ config = Model_Config(
     
     # Time Integration
     Δt         = 600,
-    end_time   = 86400 * 10,
+    end_time   = 86400 * 4,
     spinup_day = 0.0,
     
     # Numerics
@@ -70,8 +85,10 @@ config = Model_Config(
     # restart_frequency = 86400 * 2,
     restart_frequency = 0,    # disable saving restarts
 
+    # Cold start (disabled if is_restart is true)
+    initial_condition = :Moist_Spinup,
+
     # Physics
-    L = 0.2,
     moisture_processes = true,
     num_tracers = 1,
     
@@ -83,11 +100,10 @@ config = Model_Config(
     do_raw_output   = true,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
     vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
-    output_interval = 3000,
+    output_interval = 600,
     
-    # Initialization
-    initial_condition = :Moist_Spinup,
-    physics_params    = physics_params
+    # Physics
+    physics_params = physics_params
 )
 
 # 4. Run Simulation
