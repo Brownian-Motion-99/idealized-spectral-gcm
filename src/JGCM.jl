@@ -48,7 +48,7 @@ include("Driver.jl")
 # ============================================================================== #
 # Core Types
 using .Gauss_And_Legendre_Module
-export Compute_Gaussian!, Compute_Legendre!
+export Compute_Gaussian, Compute_Legendre
 
 using .Spectral_Spherical_Mesh_Module
 export Spectral_Spherical_Mesh
