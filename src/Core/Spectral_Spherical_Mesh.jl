@@ -90,8 +90,8 @@ end
 
 function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, radius::Float64)
     
-    sinθ, wts = Compute_Gaussian!(nθ)
-    qnm, dqnm = Compute_Legendre!(num_fourier, num_spherical, sinθ, nθ)
+    sinθ, wts = Compute_Gaussian(nθ)
+    qnm, dqnm = Compute_Legendre(num_fourier, num_spherical, sinθ, nθ)
     
     cosθ = sqrt.(1 .- sinθ.^2)
     

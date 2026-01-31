@@ -8,11 +8,11 @@ function test()
     num_spherical = num_fourier+1
     nλ = nθ
 
-    sinθ, wts = Compute_Gaussian!(nθ)
+    sinθ, wts = Compute_Gaussian(nθ)
     #compare with https://pomax.github.io/bezierinfo/legendre-gauss.html
 
 
-    qnm, dqnm = Compute_Legendre!(num_fourier, num_spherical, sinθ, nθ)
+    qnm, dqnm = Compute_Legendre(num_fourier, num_spherical, sinθ, nθ)
 
     q44 = sqrt(35)/4*(1 .- sinθ.^2).^(3/2) 
     q34 = sqrt(105/8)*(sinθ .- sinθ.^3)
