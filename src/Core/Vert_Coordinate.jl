@@ -4,7 +4,7 @@ import Base
 using ..Spectral_Spherical_Mesh_Module
 using ..Atmo_Data_Module
 
-export Vert_Coordinate, Compute_Vert_Coord, Vert_Advection!, Mass_Weighted_Global_Integral, qv_Global_Integral_to_e
+export Vert_Coordinate, Compute_Vert_Coord, Vert_Advection!, Mass_Weighted_Global_Integral
 
 """
 There are nd levels (nd+1 interfaces)
@@ -315,31 +315,6 @@ function Mass_Weighted_Global_Integral(vert_coord::Vert_Coordinate, mesh::Spectr
     mass_weighted_global_integral = Area_Weighted_Global_Mean(mesh, vert_integral)/grav
     
     return mass_weighted_global_integral
-end 
-
-
-function qv_Global_Integral_to_e(vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
-    grid_data::Array{Float64, 3}, grid_ps::Array{Float64, 3})
-    # The result would be global integral water vapor (e) and the unit is Pa.
-    
-    grav = atmo_data.grav
-    nd = vert_coord.nd
-    Δak, Δbk = vert_coord.Δak, vert_coord.Δbk
-    vert_integral = vert_coord.vert_integral
-    
-    Δp = similar(grid_ps)
-    
-    vert_integral .= 0.0
-    for k=1:nd
-        Δp .= Δak[k] .+ Δbk[k] * grid_ps
-        vert_integral .+= grid_data[:,:,k] .* Δp[:,:,1]
-    end
-    
-    # precipitable water
-    Pv = vert_integral ./ grav
-
-    total_water = Area_Weighted_Global_Mean(mesh, Pv) * 4. * pi * atmo_data.radius^2
-    return total_water
 end 
 
 end
