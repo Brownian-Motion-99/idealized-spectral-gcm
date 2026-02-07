@@ -374,7 +374,7 @@ combined with a semi-implicit semi-Lagrangian (or Eulerian) time integration sch
 ### Notes
     - **Algorithm Sequence:**
     1. **Conservation Check:** Computes global mass/energy integrals of the previous state.
-    2. **Grid-Point Physics:** Updates pressure variables and computes gradients ∇pₛ.
+    2. **Pressure-related:** Updates pressure variables and computes gradients ∇pₛ.
     3. **Adiabatic Tendencies:** Calls `Four_In_One!` to compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
     4. **Vertical Advection:** Explicitly computes vertical advection for u, v, T, and tracers.
     5. **Horizontal Advection:** Computes non-linear advection terms.
@@ -384,22 +384,6 @@ combined with a semi-implicit semi-Lagrangian (or Eulerian) time integration sch
     9. **Time Integration:** Advances the state using `Filtered_Leapfrog!` (Robert-Asselin-Williams filter).
     10. **Conservation Fixer:** Corrects the final predicted state to match global integrals.
     11. **Time Advance:** Rotates time indices (p ← c, c ← n).
-
-The governing equations are
-∂div/∂t  = ∇ × (A, B) - ∇^2E := f^d                    
-∂lnps/∂t = (-∑_k div_k Δp_k + v_k ∇ Δp_k)/ps := f^p    
-∂T/∂t    = -(u,v)∇T - dσ∂T∂σ + κTw/p + J:= f^t           
-Φ        = f^Φ                                               
-
-implicit part: -∇^2Φ - ∇(RT∇lnp) ≈ I^d = -∇^2(γT + H2 ps_ref lnps) - ∇^2 H1 ps_ref lnps, here RT∇lnp ≈  H1 ps_ref ∇lnps
-implicit part:  f^p              ≈ I^p = -ν div / ps_ref
-implicit part:  - dσ∂T∂σ + κTw/p ≈ I^t = -τ div  
-implicit part:  f^Φ              ≈ I^Φ = γT + H2 ps_ref lnps 
-
-We have 
-δdiv = f^d - I^d + I^d
-δlnps = f^p - I^p + I^p
-δT = f^t - I^t + I^t
 
 """
 function Spectral_Dynamics!(
@@ -470,7 +454,9 @@ function Spectral_Dynamics!(
     grid_δu, grid_δv, grid_δps, grid_δlnps, grid_δt = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δps, dyn_data.grid_δlnps, dyn_data.grid_δt
     integrator          = semi_implicit.integrator
     Δt                  = Get_Δt(integrator)
-    ###############################################################################
+    
+    # --- Conservation check --- #
+    # Computes global mass/energy integrals of the previous state.
     mean_ps_p, mean_energy_p, mean_moisture_p = Compute_Corrections_Init(
         mesh, vert_coord,
         atmo_data,
@@ -479,7 +465,10 @@ function Spectral_Dynamics!(
         grid_q_p, grid_δq,
         Δt
     )
+    # --- Conservation check --- #
     
+    # --- Pressure-related --- #
+    # Updates pressure variables and computes gradients ∇pₛ.
     # compute pressure based on grid_ps -> grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full 
     Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full)
 
@@ -487,9 +476,10 @@ function Spectral_Dynamics!(
     Compute_Gradients!(mesh, spe_lnps_c,  grid_dλ_ps, grid_dθ_ps)
     grid_dλ_ps .*= grid_ps
     grid_dθ_ps .*= grid_ps
+    # --- Pressure-related --- #
 
-    # compute grid_M_half, grid_w_full, grid_δu, grid_δv, grid_δps, grid_δt, 
-    # except the contributions from geopotential or vertical advection
+    # --- Adiabatic Tendencies --- #
+    # Compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
     Four_In_One!(vert_coord, atmo_data, grid_div, grid_u, grid_v, grid_ps, 
     grid_Δp, grid_lnp_half, grid_lnp_full, grid_p_full,
     grid_dλ_ps, grid_dθ_ps, 
@@ -503,8 +493,11 @@ function Spectral_Dynamics!(
 
     grid_δlnps .= grid_δps ./ grid_ps
     Trans_Grid_To_Spherical!(mesh, grid_δlnps, spe_δlnps)
+    # --- Adiabatic Tendencies --- #
 
-    # compute vertical advection, todo  finite volume method 
+    # --- Advections --- #
+    # Explicitly computes vertical advection for u, v, T, and tracers.
+    # Computes non-linear advection terms.
     Vert_Advection!(vert_coord, grid_u, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme, grid_δQ)
     grid_δu  .+= grid_δQ
     Vert_Advection!(vert_coord, grid_v, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme, grid_δQ)
@@ -546,8 +539,10 @@ function Spectral_Dynamics!(
     # temperature
     Add_Horizontal_Advection!(mesh, spe_t_c, grid_u, grid_v, grid_δt)
     Trans_Grid_To_Spherical!(mesh, grid_δt, spe_δt)
-    
+    # --- Advections --- #
 
+    # --- Vector Invariant Formulation --- #
+    # Compute vorticity and divergence tendencies (ηv, ηu) and kinetic energy (E = Φ + ½(u² + v²)).
     grid_absvor = dyn_data.grid_absvor
     Compute_Abs_Vor!(grid_vor, atmo_data.coriolis, grid_absvor)
     
@@ -560,33 +555,38 @@ function Spectral_Dynamics!(
     Trans_Grid_To_Spherical!(mesh, grid_energy_full, spe_energy)
     Apply_Laplacian!(mesh, spe_energy)
     spe_δdiv .-= spe_energy
-    
-    
-    
+    # --- Vector Invariant Formulation --- #
+
+    # --- Semi-Implicit Solve --- #
+    # Inverts the Helmholtz equation in spectral space to stabilize gravity waves.
     Implicit_Correction!(semi_implicit, vert_coord, atmo_data,
     spe_div_c, spe_div_p, spe_lnps_c, spe_lnps_p, spe_t_c, spe_t_p, 
     spe_δdiv, spe_δlnps, spe_δt)
-
+    # --- Semi-Implicit Solve --- #
     
+    # --- Spectral Damping --- #
+    # Applies ∇²ⁿ hyper-diffusion to dampen small-scale noise.
     Compute_Spectral_Damping!(integrator, spe_vor_c, spe_vor_p, spe_δvor)
     Compute_Spectral_Damping!(integrator, spe_div_c, spe_div_p, spe_δdiv)
     Compute_Spectral_Damping!(integrator, spe_t_c, spe_t_p, spe_δt)
+    # --- Spectral Damping --- #
 
-
+    # --- Time Integration --- #
     Filtered_Leapfrog!(integrator, spe_δvor, spe_vor_p, spe_vor_c, spe_vor_n)
     Filtered_Leapfrog!(integrator, spe_δdiv, spe_div_p, spe_div_c, spe_div_n)
     Filtered_Leapfrog!(integrator, spe_δlnps, spe_lnps_p, spe_lnps_c, spe_lnps_n)
     Filtered_Leapfrog!(integrator, spe_δt, spe_t_p, spe_t_c, spe_t_n)
-    
-    
+
     Trans_Spherical_To_Grid!(mesh, spe_vor_n, grid_vor)
     Trans_Spherical_To_Grid!(mesh, spe_div_n, grid_div)
     UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
     Trans_Spherical_To_Grid!(mesh, spe_lnps_n, grid_lnps)
     grid_ps_n .= exp.(grid_lnps)
     Trans_Spherical_To_Grid!(mesh, spe_t_n, grid_t_n) 
+    # --- Time Integration --- #
 
-
+    # --- Conservation Fixer --- #
+    # Corrects the final predicted state to match global integrals.
     Compute_Corrections!(
         mesh, vert_coord,
         atmo_data,
@@ -594,11 +594,15 @@ function Spectral_Dynamics!(
         mean_energy_p, grid_energy_full, grid_u_n, grid_v_n, grid_t_n, spe_t_n,
         mean_moisture_p, grid_q_n
     )
+    # --- Conservation Fixer --- #
 
+    # -- Time Advance -- #
+    # Rotates time indices (p ← c, c ← n).
     Time_Advance!(dyn_data)
 
     Pressure_Variables!(vert_coord, grid_ps, grid_p_half, grid_Δp, grid_lnp_half, grid_p_full, grid_lnp_full)
-    
+    # -- Time Advance -- #
+
     return 
 end 
 

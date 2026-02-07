@@ -6,7 +6,7 @@ using ..Atmo_Data_Module
 using ..Time_Integrator_Module
 using ..Press_And_Geopot_Module
 
-export Semi_Implicit_Solver, Build_Implicit_Matrices, Build_Wave_Matrices, Update_Init_Step!, Linear_Press_Gradient_δps, Linear_Geopot_δt!,
+export Semi_Implicit_Solver, Build_Implicit_Matrices, Build_Wave_Matrices, Update_Init_Step!, Linear_Press_δps, Linear_Geopot_δt!,
 Linear_Geopot_δps, Linear_Ps_T_δdiv!, Adjust_δlnps_δt_δdiv!, Implicit_Correction!
 
 mutable struct Semi_Implicit_Solver
@@ -163,14 +163,13 @@ required for the semi-implicit gravity wave correction.
 
 ### Returns
     - h: Combined pressure gradient and geopotential linearization vector with respect to ln(pₛ).
-    - div_mat: The final linearized system matrix (γτ + hνᵀ) representing the vertical 
-    structure of the Helmholtz equation.
+    - div_mat: The final linearized system matrix (γτ + hνᵀ) representing the vertical structure of the Helmholtz equation.
 
 implicit part: -∇^2Φ - ∇(RT∇lnp) ≈ I^d = -∇^2(γT + H2 ps_ref lnps) - ∇^2 H1 ps_ref lnps, here RT∇lnp ≈  H1 ps_ref ∇lnps
 implicit part:  f^p              ≈ I^p = -ν div / ps_ref
 implicit part:  - dσ∂T∂σ + κTw/p ≈ I^t = -τ div  
 implicit part:  f^Φ              ≈ I^Φ = γT + H2 ps_ref lnps 
-ν is a row vectors, H1 = RT_ref∂lnp/∂ps, H2 are colume vectors, γ is an upper triangular matrix,  τ is a lower triangular matrix
+ν is a row vectors, H1 = RT_ref∂lnp/∂ps, H2 are column vectors, γ is an upper triangular matrix,  τ is a lower triangular matrix
 (1 - ξ^2 ∇^2(γ τ + (H2+H1)ν)δdiv = Δdiv
 
 div_mat = (γ τ + (H2+H1)ν)
@@ -186,11 +185,11 @@ function Build_Implicit_Matrices(
 )
 
     nd      = vert_coord.nd
-    tau     = zeros(Float64, nd, nd)    # temperature with respect to div (adiabatic heating)
-    gamma   = zeros(Float64, nd, nd)    # geopotential with respect to T (hydrostatic)
+    tau     = zeros(Float64, nd, nd)    # Temperature with respect to div (adiabatic heating)
+    gamma   = zeros(Float64, nd, nd)    # Geopotential with respect to T (hydrostatic)
     nu      = zeros(Float64, nd)        # lnps with respect to div (continuity)
-    h1      = zeros(Float64, nd)        # pressure gradient with respect to ps
-    h2      = zeros(Float64, nd)        # geopotential with respect to ps
+    h1      = zeros(Float64, nd)        # Pressure gradient with respect to ps
+    h2      = zeros(Float64, nd)        # Geopotential with respect to ps
     h       = zeros(Float64, nd)        # h1 + h2
     div_mat = zeros(Float64, nd, nd)    # gamma * tau + h nu^T   
 
@@ -201,10 +200,14 @@ function Build_Implicit_Matrices(
     δlnp_half_zero, δlnp_full_zero = zeros(Float64, 1, 1, nd + 1), zeros(Float64, 1, 1, nd)
 
     spe_M_half_temp, spe_Mdt_half_temp = zeros(ComplexF64, 1, 1, nd+1), zeros(ComplexF64, 1, 1, nd+1)
+
     for k = 1:nd
+        
+        # Set divergence as 0 at level ≠ k to isolate the effect of divergence at level = k.
         spe_input .= 0.0
         spe_input[1, 1, k] = 1.0
 
+        # Divergence drives the change of surface pressure and temperautre.
         Linear_Ps_T_δdiv!(
             vert_coord, atmo_data, 
             spe_input, 
@@ -220,12 +223,15 @@ function Build_Implicit_Matrices(
         # -d_T/d_div
         tau[:, k] = -spe_δt[1, 1, :]
 
+        # Change of temperature drives the change of geopotential
         Linear_Geopot_δt!(vert_coord, atmo_data, lnp_half_ref, lnp_full_ref, spe_input, t_ref, spe_δgeopot_half, spe_δgeopot)
         gamma[:, k] = spe_δgeopot[1, 1, :]
+        
     end
 
+    # Change of surface pressure drives the change of pressure and geopotential
     # used only once
-    h1 = Linear_Press_Gradient_δps(vert_coord, atmo_data, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref)
+    h1 = Linear_Press_δps(vert_coord, atmo_data, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref)
     h2 = Linear_Geopot_δps(vert_coord, atmo_data, δlnp_half_ref, δlnp_full_ref, lnp_half_ref, lnp_full_ref, t_ref)
 
     h = h1 + h2
@@ -259,6 +265,13 @@ function Build_Wave_Matrices(num_total_wavenumbers::Int64, eigen::Array{Float64,
     nd = size(div_mat)[1]
     wave_matrix = zeros(Float64, nd, nd, num_total_wavenumbers+1)
 
+    # `wave_matrix` has the form of: (I - factor * div_mat)⁻¹.
+    # `factor` has unit of t²/m², representing square of ratio of timestep and wavelength.
+    # `div_mat` has unit of m²/t², representing square of phase speed of gravity waves.
+    # `factor` * `div_mat` is unitless, representing "equivalent" Courant number for corresponding wavenumber.
+    # The "equivalent" Courant number produces scale selection damping.
+    # Larger the wavelength is (i.e. small wavenumber), smaller is the `factor`,
+    # thus the `wave_matrix` is very close to I for small wavenumbers, large scale divergence is almost undamped.
     for i = 0:num_total_wavenumbers
         factor = ξ^2 * eigen[1, i+1]
         for k = 1:nd
@@ -283,7 +296,7 @@ end
 
 
 """
-    Linear_Press_Gradient_δps(
+    Linear_Press_δps(
         vert_coord, atmo_data,
         ps_ref, Δp_ref,
         lnp_half_ref, lnp_full_ref,
@@ -309,7 +322,7 @@ of the pressure gradient term to surface pressure variations (∂(RT ∇lnp)/∂
     - R_T_δlnp: A component of the linearized gravity wave operator. 
 
 """
-function Linear_Press_Gradient_δps(
+function Linear_Press_δps(
     vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
     ps_ref::Float64, Δp_ref::Array{Float64,1},
     lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
@@ -443,9 +456,10 @@ function Linear_Geopot_δps(
     #
     # This function compute ∂Φ∂ps_ref
 
-    nd = vert_coord.nd
+    nd    = vert_coord.nd
     rdgas = atmo_data.rdgas
-    δgeopot_ref = zeros(Float64, nd)
+    
+    δgeopot_ref      = zeros(Float64, nd)
     δgeopot_half_ref = zeros(Float64, nd + 1)
 
     for k = nd:-1:2
@@ -520,17 +534,17 @@ function Linear_Ps_T_δdiv!(
     #                     = δ(-dσ∂T∂σ + κTw/p)
     #                     = δ(-dσ∂T∂σ) + [κT]_ref δ(w/p) (D_r depends on div)
     #                    
-    # dmeam = D_k = div_k Δp_k, dmean_tot = ∑_{r=1}^{k-1} div_r Δp_r =  ∑_{r=1}^{k-1} Dr
+    # dmean = D_k = div_k Δp_k, dmean_tot = ∑_{r=1}^{k-1} div_r Δp_r =  ∑_{r=1}^{k-1} D_r
     # w_k/p_k = dlnp/dt = ∂lnp/∂t + dσ ∂lnp/∂σ + v∇lnp
-    #         = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k + v∇lnp
-    #         = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k (∇lnp = 0)
+    #         = -[(∑_{r=1}^{k-1} D_r)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k + v∇lnp
+    #         = -[(∑_{r=1}^{k-1} D_r)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k (∇lnp = 0)
     #
+    # For surface pressure
     # ∂ps/∂t = -∑ div_r Δp_r = -dmean_tot
-    # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
+    # M_{k+1/2} = -∑_{r=1}^k ∇(v_r Δp_r) - B_{k+1/2}∂ps/∂t
     # The vertical discretization is 
     # [dσ∂T/∂σ]_k = 0.5(M_{k+1/2}(T_k+1 - T_k) + M_{k-1/2}(T_k - T_k-1))/Δp_k
     #
-    # For surface pressure
     # δ(-∑∇(vk Δpk)) = δ(-∑div_k Δpk ) = -∑Δpk δdiv_k  = -nu δdiv
     #
     # div = [0,0, ..1,...0], spe_δps -> -nu, spe_δt ->  -tau[:,k]
@@ -551,9 +565,10 @@ function Linear_Ps_T_δdiv!(
             Δlnp_p = lnp_half_ref[k+1] - lnp_full_ref[k]
             Δlnp   = lnp_half_ref[k+1] - lnp_half_ref[k]
             
-            # dmean = ∇ (vk Δp_k) = ∇vk Δp_k = Dk
+            # dmean = ∇ (v_k Δp_k) = ∇v_k Δp_k = D_k
             dmean .= spe_δdiv[:, :, k] * Δp_ref[k]
 
+            # Adiabatic heating/cooling driven by divergence
             spe_δt[:, :, k] .= -kappa * t_ref[k] * (dmean_tot * Δlnp + dmean * Δlnp_p) / Δp_ref[k]
             
             # dmean_tot = ∑_r=1^k Dr
@@ -562,6 +577,7 @@ function Linear_Ps_T_δdiv!(
         end
     end
 
+    # Change of surface pressure
     spe_δps[:, :, 1] .= -dmean_tot
 
     for k = 1:nd-1
@@ -571,7 +587,7 @@ function Linear_Ps_T_δdiv!(
     spe_M_half[:, :, 1] .= 0.0
     spe_M_half[:, :, nd+1] .= 0.0
 
-    # approximate the vertical advection term
+    # Vertical temperature advection
     for k = 2:nd
         spe_Mdt_half[:, :, k] .= spe_M_half[:, :, k] * (t_ref[k] - t_ref[k-1])
     end
@@ -665,14 +681,14 @@ function Adjust_δlnps_δt_δdiv!(
     # use as a memory container
     spe_δlnps_temp = semi_implicit.spe_δps_temp
 
-    #todo
+    # Implicitly update the temperature and surface pressure tendencies at current step.
+    # Updated temperature and surface pressure tendencies are used for calculating divergence only.
     ξ = Get_ξ(semi_implicit.integrator)
-
     spe_δt_temp .= spe_t_p - spe_t_c + ξ * spe_δt
     spe_δlnps_temp .= spe_lnps_p - spe_lnps_c + ξ * spe_δlnps
 
-    # Updates the divergence tendency (spe_δdiv) by 
-    # subtracting the Laplacian of the linear geopotential and pressure gradient terms derived from δT* and δlnpₛ*.
+    # Updates the divergence tendency (spe_δdiv) 
+    # by subtracting the Laplacian of the linear geopotential and pressure gradient terms derived from δT* and δlnpₛ*.
     # δD_final = δD_explicit - ∇²(Φ(δT*) + RT₀ ∇lnpₛ*)
     Linear_Geopot_δt!(vert_coord, atmo_data, lnp_half_ref, lnp_full_ref, spe_δt_temp, t_ref, spe_δgeopot_half_temp, spe_δgeopot_temp)
 
@@ -723,7 +739,7 @@ and back-substituting the results to update temperature and surface pressure ten
     - spe_δt
 
 The governing equations are
-∂div/∂t  = ∇ × (A, B) - ∇^2E := f^d                    
+∂div/∂t  = ∇ ⋅ (A, B) - ∇^2E := f^d                    
 ∂lnps/∂t = (-∑_k div_k Δp_k + v_k ∇ Δp_k)/ps := f^p    
 ∂T/∂t    = -(u,v)∇T - dσ∂T∂σ + κTw/p + J := f^t           
 Φ        = f^Φ                                               
@@ -732,7 +748,7 @@ implicit part: -∇^2Φ - ∇(RT∇lnp) ≈ I^d = -∇^2(γT + H2 ps_ref lnps) -
 implicit part:  f^p              ≈ I^p = -ν div / ps_ref
 implicit part:  - dσ∂T∂σ + κTw/p ≈ I^t = -τ div  
 implicit part:  f^Φ              ≈ I^Φ = γT + H2 ps_ref lnps 
-ν is a row vectors, H1, H2 are colume vectors, τ, γ and are matrices
+ν is a row vectors, H1, H2 are column vectors, τ, γ and are matrices.
 
 We have 
 δdiv  = f^d - I^d + I^d := E^d + I^d
@@ -819,8 +835,7 @@ function Implicit_Correction!(
     spe_M_half_temp, spe_Mdt_half_temp = semi_implicit.spe_M_half_temp, semi_implicit.spe_Mdt_half_temp
 
     # Back-Substitution
-    # Updates the temperature and surface pressure tendencies using the newly solved 
-    # divergence tendency:
+    # Updates the temperature and surface pressure tendencies using the newly solved divergence tendency:
     # δT = δT* + ξ ⋅ (-τ ⋅ δD)
     # δlnpₛ = δlnpₛ* + ξ ⋅ (-ν ⋅ δD)
     # This ensures the final tendencies are consistent with the semi-implicit formulation.
