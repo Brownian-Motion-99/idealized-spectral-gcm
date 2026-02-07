@@ -259,19 +259,21 @@ This inversion solves the Helmholtz equation arising from the semi-implicit disc
     - wave_matrix: A 3D array [nd, nd, num_total_wavenumbers + 1] containing the 
     inverse matrix for each wavenumber.
 
+### Notes
+    - `wave_matrix` has the form of: (I - factor * div_mat)⁻¹.
+    - `factor` has unit of t²/m², representing square of ratio of timestep and wavelength.
+    - `div_mat` has unit of m²/t², representing square of phase speed of gravity waves.
+    - `factor` * `div_mat` is unitless, representing "equivalent" Courant number for corresponding wavenumber.
+    - The "equivalent" Courant number produces scale selection damping.
+    - Larger the wavelength is (i.e. small wavenumber), smaller is the `factor`,
+      thus the `wave_matrix` is very close to I for small wavenumbers, large scale divergence is almost undamped.
+
 """
 function Build_Wave_Matrices(num_total_wavenumbers::Int64, eigen::Array{Float64,2}, div_mat::Array{Float64,2}, ξ::Float64)
     
     nd = size(div_mat)[1]
     wave_matrix = zeros(Float64, nd, nd, num_total_wavenumbers+1)
 
-    # `wave_matrix` has the form of: (I - factor * div_mat)⁻¹.
-    # `factor` has unit of t²/m², representing square of ratio of timestep and wavelength.
-    # `div_mat` has unit of m²/t², representing square of phase speed of gravity waves.
-    # `factor` * `div_mat` is unitless, representing "equivalent" Courant number for corresponding wavenumber.
-    # The "equivalent" Courant number produces scale selection damping.
-    # Larger the wavelength is (i.e. small wavenumber), smaller is the `factor`,
-    # thus the `wave_matrix` is very close to I for small wavenumbers, large scale divergence is almost undamped.
     for i = 0:num_total_wavenumbers
         factor = ξ^2 * eigen[1, i+1]
         for k = 1:nd
