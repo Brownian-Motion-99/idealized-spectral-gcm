@@ -4,9 +4,10 @@ using JGCM
 physics_params = Dict{String, Any}(
     
     # Corrections    
-    "do_mass_correction"   => true,
-    "do_energy_correction" => true,
-    "do_water_correction"  => true,
+    "do_mass_correction"      => true,
+    "do_energy_correction"    => true,
+    "do_water_correction"     => true,
+    "use_virtual_temperature" => true,
 
     # Grid scale condensation
     "do_Lscale_Cond" => true,

@@ -58,8 +58,6 @@ function JGCM_Simulate(config::Model_Config)
     # Vertical Coordinate (Only for 3D)
     vert_coord = nothing
     if is_3d
-        # We assume standard sigma levels for now. 
-        # Future: Add config.vert_coord_type to Model_Config for hybrid support.
         vert_coord = Vert_Coordinate(
             nλ, config.nθ, config.nd, 
             config.vert_coord_option, 
@@ -72,8 +70,8 @@ function JGCM_Simulate(config::Model_Config)
     # We parse physics flags from the config dictionary
     do_mass   = get(config.physics_params, "do_mass_correction",   true)
     do_energy = get(config.physics_params, "do_energy_correction", true)
-    do_water  = get(config.physics_params, "do_water_correction",  false)
-    use_virt  = get(config.physics_params, "use_virtual_temperature", false)
+    do_water  = get(config.physics_params, "do_water_correction",  true)
+    use_virt  = get(config.physics_params, "use_virtual_temperature", true)
 
     atmo_data = Atmo_Data(
         config.name,

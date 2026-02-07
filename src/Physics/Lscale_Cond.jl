@@ -2,6 +2,53 @@ using Base.Threads
 using ...Vert_Coordinate_Module
 using ...Atmo_Data_Module
 
+
+
+"""
+    Lscale_Cond!(
+        vert_coord, atmo_data, 
+        grid_q, grid_δq, 
+        grid_liquid_water_content, grid_precip,
+        grid_t, grid_δt, 
+        grid_p_full, grid_ps, 
+        Δt, 
+        L
+    )
+
+Calculates the phase change from water vapor to liquid water (large-scale condensation) 
+using a saturation adjustment scheme. If the specific humidity exceeds the saturation 
+specific humidity, the excess vapor is condensed, releasing latent heat.
+
+### Parameters
+    - vert_coord: Vertical coordinate parameters (Δak, Δbk).
+    - atmo_data: Atmospheric constants (cp, Lv, Rv).
+
+    - grid_q: Specific humidity field [nλ, nθ, nd].
+    - grid_δq: Humidity tendency field. Modified in-place.
+    
+    - grid_liquid_water_content: Diagnostic field for condensation rate (used as proxy for LWC production).
+    - grid_precip: Surface precipitation rate accumulator.
+    
+    - grid_t: Temperature field.
+    - grid_δt: Temperature tendency field. Modified in-place.
+    
+    - grid_p_full: Pressure at layer centers.
+    - grid_ps: Surface pressure.
+    
+    - Δt: Time step size.
+    
+    - L: A scaling factor for the heating rate (typically 1.0 or used for unit conversion).
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_δq
+    - grid_δt
+    - grid_liquid_water_content
+    - grid_precip
+
+"""
 function Lscale_Cond!(
     vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data, 

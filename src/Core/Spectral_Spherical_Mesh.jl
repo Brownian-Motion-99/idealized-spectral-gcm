@@ -13,62 +13,58 @@ Apply_Laplacian!, Compute_Gradient_Cos_Init, Compute_Gradient_Cos!, Add_Horizont
 mutable struct Spectral_Spherical_Mesh
     num_fourier::Int64
     num_spherical::Int64
+    
     nλ::Int64
     nθ::Int64
     nd::Int64
+    radius::Float64
     
-    radius::Float64  # radius
+    sinθ::Array{Float64, 1}
+    cosθ::Array{Float64, 1}
+    wts::Array{Float64, 1}
     
+    λc::Array{Float64, 1}
+    θc::Array{Float64, 1}
+
+    qnm::Array{Float64, 3}
+    dqnm::Array{Float64, 3}
+    qwg::Array{Float64, 3}
     
-    
-    sinθ::Array{Float64,1}   # θ coordinates
-    cosθ::Array{Float64,1}   # θ coordinates
-    wts::Array{Float64,1}
-    
-    
-    λc::Array{Float64,1}
-    θc::Array{Float64,1}
-    qnm::Array{Float64,3}   # λ coordinates
-    dqnm::Array{Float64,3}
-    qwg::Array{Float64,3}
-    
-    
-    λe::Array{Float64,1}   #cell boundary 
-    θe::Array{Float64,1}   #cell boundary 
-    
+    λe::Array{Float64, 1}    #cell boundary 
+    θe::Array{Float64, 1}    #cell boundary 
     
     # for derivatives
-    epsilon::Array{Float64,2}
-    coef_alp_a::Array{Float64,3} 
-    coef_alp_b::Array{Float64,3} 
+    epsilon::Array{Float64, 2}
+    coef_alp_a::Array{Float64, 3} 
+    coef_alp_b::Array{Float64, 3} 
     
-    coef_uvm::Array{Float64,2} 
-    coef_uvc::Array{Float64,2} 
-    coef_uvp::Array{Float64,2}
+    coef_uvm::Array{Float64, 2} 
+    coef_uvc::Array{Float64, 2} 
+    coef_uvp::Array{Float64, 2}
     
-    coef_dλ::Array{Float64,2}  
-    coef_dθm::Array{Float64,2}  
-    coef_dθp::Array{Float64,2} 
+    coef_dλ::Array{Float64, 2}  
+    coef_dθm::Array{Float64, 2}  
+    coef_dθp::Array{Float64, 2} 
     
     # for Laplacian
-    laplacian_eig::Array{Float64,2} 
+    laplacian_eig::Array{Float64, 2} 
     wave_numbers::Array{Int64, 2}
     
     # wrapper 
-    fourier_d1::Array{ComplexF64,3}
-    fourier_d2::Array{ComplexF64,3}
-    fourier_ds1::Array{ComplexF64,3}
-    fourier_ds2::Array{ComplexF64,3}
+    fourier_d1::Array{ComplexF64, 3}
+    fourier_d2::Array{ComplexF64, 3}
+    fourier_ds1::Array{ComplexF64, 3}
+    fourier_ds2::Array{ComplexF64, 3}
     
-    grid_d1::Array{Float64,3}
-    grid_d2::Array{Float64,3}
-    grid_ds1::Array{Float64,3}
-    grid_ds2::Array{Float64,3}
+    grid_d1::Array{Float64, 3}
+    grid_d2::Array{Float64, 3}
+    grid_ds1::Array{Float64, 3}
+    grid_ds2::Array{Float64, 3}
     
-    spherical_d1::Array{ComplexF64,3}
-    spherical_d2::Array{ComplexF64,3}
-    spherical_ds1::Array{ComplexF64,3}
-    spherical_ds2::Array{ComplexF64,3}
+    spherical_d1::Array{ComplexF64, 3}
+    spherical_d2::Array{ComplexF64, 3}
+    spherical_ds1::Array{ComplexF64, 3}
+    spherical_ds2::Array{ComplexF64, 3}
 
     # Plans & Thread Local Memory
     fft_plan::FFTW.cFFTWPlan
@@ -88,62 +84,92 @@ end
 
 
 
+"""
+    Spectral_Spherical_Mesh(num_fourier, num_spherical, nλ, nθ, nd, radius)
+
+Constructs a new `Spectral_Spherical_Mesh` object, initializing all grid geometry, 
+spectral basis functions, operator coefficients, and workspace buffers.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+    - nλ: Longitudinal grid size.
+    - nθ: Latitudinal grid size.
+    - nd: Number of vertical levels.
+    - radius: Radius of the planet.
+
+### Returns
+    - Spectral_Spherical_Mesh: A fully initialized data struct.
+
+"""
 function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, radius::Float64)
     
+    # Gaussian latitudes and quadrature weights
     sinθ, wts = Compute_Gaussian(nθ)
+
+    # Associated Legendre polynomials and their derivatives
     qnm, dqnm = Compute_Legendre(num_fourier, num_spherical, sinθ, nθ)
     
-    cosθ = sqrt.(1 .- sinθ.^2)
+    # Physical grid coordinates
+    cosθ = sqrt.(1 .- sinθ.^2)    
     
-    
-    λc = Array(LinRange(0, 2π, nλ + 1)[1:nλ])
+    λc = Array(LinRange(0, 2π, nλ+1)[1:nλ])
     θc = asin.(sinθ)
     
-    
     Δλ = 2π/nλ 
-    λe = (Array(LinRange(-0.5, nλ-0.5, nλ + 1)))*Δλ
+    λe = (Array(LinRange(-0.5, nλ-0.5, nλ+1)))*Δλ
     
-    θe = zeros(Float64, nθ+1)
-    θe[1]    = -0.5*pi
+    θe      = zeros(Float64, nθ+1)
+    θe[1]   = -0.5 * pi
     sum_wts = 0.0
-    for j=1:nθ
+    for j = 1:nθ
         sum_wts = sum_wts + wts[j]
         θe[j+1] = asin(sum_wts - 1.0)
     end 
-    θe[nθ+1] =  0.5*pi
+    θe[nθ+1] =  0.5 * pi
     
-    
-    
-    qwg = zeros(Float64, num_fourier + 1, num_spherical + 1, nθ)
+    # Weighted Legendre polynomials
+    qwg = zeros(Float64, num_fourier+1, num_spherical+1, nθ)
     for i = 1:nθ
-        qwg[:,:,i] .=  qnm[:,:,i] * wts[i]
+        qwg[:, :, i] .=  qnm[:, :, i] * wts[i]
     end
     
-    epsilon = zeros(Float64, num_fourier + 1, num_spherical + 1) 
+    # Normalization factors
+    epsilon = zeros(Float64, num_fourier+1, num_spherical+1) 
     for m = 0:num_fourier 
         for n = m:num_spherical
             epsilon[m + 1, n + 1] = sqrt((n^2 - m^2) / (4.0*n^2 - 1.0))
         end
     end
     
+    # Pre-computed alpha operator
     coef_alp_a, coef_alp_b = Compute_Alpha_Operator_Init(num_fourier, num_spherical, cosθ, qnm, dqnm, wts) 
+
+    # Pre-computed wind reconstruction
     coef_uvm, coef_uvc, coef_uvp = Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier, num_spherical, radius, epsilon) 
     
-    coef_dλ, coef_dθm, coef_dθp  = Compute_Gradient_Cos_Init(num_fourier, num_spherical, radius, epsilon)
+    # Pre-computed gradients
+    coef_dλ, coef_dθm, coef_dθp = Compute_Gradient_Cos_Init(num_fourier, num_spherical, radius, epsilon)
     
+    # Pre-computed Laplacian eigenvalues
     laplacian_eig = Apply_Laplacian_Init(num_fourier, num_spherical, radius)
+    
+    # Pre-computed wavenumbers
     wave_numbers = Compute_Wave_Numbers(num_fourier, num_spherical, radius) 
     
-    fourier_d1 = zeros(Complex{Float64}, nλ, nθ, nd)
-    fourier_d2 = zeros(Complex{Float64}, nλ, nθ, nd)
+    # Reusable workspace memory
+    # For :PrimitiveEquation runs, d1 and d2 are used
+    # For :Barotropic and :Shallow_Water runs, ds1 and ds2 are used, s stands for surface
+    fourier_d1  = zeros(Complex{Float64}, nλ, nθ, nd)
+    fourier_d2  = zeros(Complex{Float64}, nλ, nθ, nd)
     fourier_ds1 = zeros(Complex{Float64}, nλ, nθ, 1)
     fourier_ds2 = zeros(Complex{Float64}, nλ, nθ, 1)
-    grid_d1 = zeros(Float64, nλ, nθ, nd)
-    grid_d2 = zeros(Float64, nλ, nθ, nd) 
+    grid_d1  = zeros(Float64, nλ, nθ, nd)
+    grid_d2  = zeros(Float64, nλ, nθ, nd) 
     grid_ds1 = zeros(Float64, nλ, nθ, 1)
     grid_ds2 = zeros(Float64, nλ, nθ, 1)
-    spherical_d1 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd) 
-    spherical_d2 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd) 
+    spherical_d1  = zeros(Float64, num_fourier + 1, num_spherical + 1, nd) 
+    spherical_d2  = zeros(Float64, num_fourier + 1, num_spherical + 1, nd) 
     spherical_ds1 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1) 
     spherical_ds2 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1)
 
@@ -153,10 +179,9 @@ function Spectral_Spherical_Mesh(num_fourier::Int64, num_spherical::Int64, nλ::
     ifft_plan   = plan_ifft(dummy_vec; flags = FFTW.PATIENT)
     fft_scratch = [zeros(ComplexF64, nλ) for _ in 1:nthreads()]
 
-    # Scratch Allocation
+    # Scratch Allocation (for threaded loops)
     rows = max(num_spherical+1, div(nθ, 2))
     cols = max(nd, div(nθ, 2))
-    
     leg_scratch = [
         (zeros(Float64, rows, cols), zeros(Float64, rows, cols), 
          zeros(Float64, rows, cols), zeros(Float64, rows, cols),
@@ -181,33 +206,24 @@ end
 
 
 
-function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::AbstractArray{ComplexF64,3},  pfield::AbstractArray{Float64,3})
-    """
-    With F_{m,n} = (-1)^m F_{-m,n}*   
-    P_{m,n} = (-1)^m P_{-m,n}
-    
-    F(λ, η) = ∑_{m= -N}^{N} ∑_{n=|m|}^{N} F_{m,n} P_{m,n}(η) e^{imλ}
-    = ∑_{m= 0}^{N} ∑_{n=m}^{N} F_{m,n} P_{m,n} e^{imλ} + ∑_{m= 1}^{N} ∑_{n=m}^{N} F_{-m,n} P_{-m,n} e^{-imλ}
-    
-    Here η = sinθ, N = num_fourier, and denote
-    ! extra coeffients in snm n > N are not used.
-    
-    ∑_{n=m}^{N} F_{m,n} P_{m,n}     = g_{m}(η) m = 1, ... N
-    ∑_{n=m}^{N} F_{m,n} P_{m,n}/2.0 = g_{m}(η) m = 0
-    
-    We have     
-    
-    F(λ, η) = ∑_{m= 0}^{N} g_{m}(η) e^{imλ} + ∑_{m= 0}^{N} g_{m}(η)* e^{-imλ}
-    = 2real{ ∑_{m= 0}^{N} g_{m}(η) e^{imλ} }
-    
-    snm = F_{m,n}         # Complex{Float64} [num_fourier+1, num_spherical+1]
-    qnm = P_{m,n,η}         # Float64[num_fourier+1, num_spherical+1, nθ]
-    fourier_g = g_{m, η} # Complex{Float64} nλ×nθ with padded 0s fourier_g[num_fourier+2, :] == 0.0
-    pfiled = F(λ, η)      # Float64[nλ, nθ]
-    
-    ! use all spherical harmonic modes
-    
-    """
+"""
+    Trans_Spherical_To_Grid!(mesh, snm, pfiled)
+
+Performs the Inverse Spectral Transform (Synthesis) to convert spectral coefficients back to physical grid values.
+
+### Parameters
+    - mesh: The mesh structure containing resolution parameters [num_fourier, nλ, nθ], pre-computed Legendre polynomials (qnm), and workspace buffers.
+    - snm: Spectral coefficients F_{m, n}, or Spherical Harmonic modes [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - pfield: Physical field values F(λ, θ) on the Gaussian grid.
+    - mesh
+
+"""
+function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::AbstractArray{ComplexF64,3}, pfield::AbstractArray{Float64,3})
     
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
     nλ, nθ, nd                 = mesh.nλ, mesh.nθ, mesh.nd
@@ -222,6 +238,30 @@ function Trans_Spherical_To_Grid!(mesh::Spectral_Spherical_Mesh, snm::AbstractAr
     fourier_s .= 0.0
     
     nθ_half = div(nθ, 2)
+
+    # snm       = F_{m, n}       # ComplexF64[num_fourier+1, num_spherical+1]
+    # qnm       = P_{m, n, η}    # Float64[num_fourier+1, num_spherical+1, nθ]
+    # fourier_g = g_{m, η}       # ComplexF64 nλ×nθ with padded 0s fourier_g[num_fourier+2, :] == 0.0
+    # pfiled    = F(λ, η)        # Float64[nλ, nθ]
+
+    # F_{m, n} = (-1)^m F_{-m, n}*
+    # P_{m, n} = (-1)^m P_{-m, n}
+    
+    # Therefore
+
+    # F(λ, η) = ∑_{m=-N}^{N} ∑_{n=|m|}^{N} F_{m, n} P_{m, n}(η) e^{imλ}
+    #         = ∑_{m=0}^{N} ∑_{n=m}^{N} F_{m, n} P_{m, n} e^{imλ} + ∑_{m=1}^{N} ∑_{n=m}^{N} F_{-m, n} P_{-m, n} e^{-imλ}
+    
+    # Here η = sinθ, N = num_fourier, and denote
+    # ! extra coeffients in snm n > N are not used.
+    
+    # ∑_{n=m}^{N} F_{m, n} P_{m, n}       = g_{m}(η) m = 1, ... N
+    # ∑_{n=m}^{N} F_{m, n} P_{m, n} / 2.0 = g_{m}(η) m = 0
+    
+    # We have     
+    
+    # F(λ, η) = ∑_{m=0}^{N} g_{m}(η) e^{imλ} + ∑_{m= 0}^{N} g_{m}(η)* e^{-imλ}
+    #         = 2real{ ∑_{m=0}^{N} g_{m}(η) e^{imλ} }
 
     # --- Inverse Legendre Transform --- #
     @threads for m = 1:num_fourier+1
@@ -326,35 +366,25 @@ end
 
 
 
-function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64,3}, snm::AbstractArray{ComplexF64,3})
+"""
+    Trans_Grid_To_Spherical!(mesh, pfield, snm)
+
+Performs the Forward Spectral Transform (Analysis) to project physical grid values onto spherical harmonic modes.
     
-    """
-    With F_{m,n} = (-1)^m F_{-m,n}*   
-    P_{m,n} = (-1)^m P_{-m,n}
-    
-    F(λ, η) = ∑_{m= -N}^{N} ∑_{n=|m|}^{N} F_{m,n} P_{m,n}(η) e^{imλ}
-    
-    The inverse is 
-    F_{m,n} = 1/4π∫_{-1}^{1} ∫_0^{2π} F(λ, η) P_{m,n} e^{-imλ} dλdη
-    !This holds only when nλ >= 2num_fourier+1 
-    
-    g_{m, η} = 1/2π ∫_0^{2π} F(λ, η) e^{-imλ} dλ
-    = 1/2π ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  2π/nλ
-    = ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  /nλ
-    
-    F_{m,n} = 1/2∫_{-1}^{1} g_{m, η} P_{m,n} dη
-    = 1/2 ∑_{i=1}^{nθ} g_{m, η_i} P_{m,n}(η_i) w_i
-    
-    
-    Here η = sinθ, N = num_fourier
-    
-    snm = F_{m,n}         # Complex{Float64}[num_fourier+1, num_spherical+1]
-    qwg = P_{m,n}(η)w(η)  # Float64[num_fourier+1, num_spherical+1, nθ]
-    fourier_g = g_{m, nθ} # Complex{Float64} nλ×nθ 
-    pfiled = F(λ, η)      # Float64[nλ, nθ]
-    
-    !triangular trunction, set to zero even the extra spherical mode
-    """
+### Parameters
+    - mesh: The mesh structure containing resolution parameters, pre-computed Legendre weights (qwg), and workspace buffers.
+    - pfield: Physical field values F(λ, θ) on the Gaussian grid [nλ, nθ, nd].
+    - snm: Buffer to store the resulting spectral coefficients F_{m, n} [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - snm
+    - mesh
+
+"""
+function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64, 3}, snm::AbstractArray{ComplexF64, 3})
     
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
     nλ, nθ, nd                 = mesh.nλ, mesh.nθ, mesh.nd
@@ -366,6 +396,30 @@ function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::Abstrac
     fourier_g = use_3d ? mesh.fourier_d1 : mesh.fourier_ds1
     
     snm .= 0.0
+
+    # snm       = F_{m, n}           # ComplexF64[num_fourier+1, num_spherical+1]
+    # qwg       = P_{m, n}(η)w(η)    # Float64[num_fourier+1, num_spherical+1, nθ]
+    # fourier_g = g_{m, nθ}          # ComplexF64 nλ×nθ 
+    # pfiled    = F(λ, η)            # Float64[nλ, nθ]
+
+    # F_{m, n} = (-1)^m F_{-m, n}*
+    # P_{m, n} = (-1)^m P_{-m, n}
+    
+    # Therefore
+
+    # F(λ, η) = ∑_{m=-N}^{N} ∑_{n=|m|}^{N} F_{m, n} P_{m, n}(η) e^{imλ}
+    
+    # The inverse is 
+    # F_{m, n} = 1/4π ∫_{-1}^{1} ∫_0^{2π} F(λ, η) P_{m, n} e^{-imλ} dλdη
+    
+    # g_{m, η} = 1/2π ∫_0^{2π} F(λ, η) e^{-imλ} dλ
+    #          = 1/2π ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  2π/nλ
+    #          = ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  /nλ
+    
+    # F_{m, n} = 1/2 ∫_{-1}^{1} g_{m, η} P_{m,n} dη
+    #          = 1/2 ∑_{i=1}^{nθ} g_{m, η_i} P_{m, n}(η_i) w_i
+    
+    # Here η = sinθ, N = num_fourier
 
     # --- Forward FFT --- #
     fft_p = mesh.fft_plan
@@ -392,6 +446,7 @@ function Trans_Grid_To_Spherical!(mesh::Spectral_Spherical_Mesh, pfield::Abstrac
     @assert(nθ%2 == 0)
     nθ_half = div(nθ, 2)
     
+    # --- Forward Legendre Transform --- #
     @threads for m = 1:num_fourier + 1
         tid = threadid()
         Sr, Si, Dr, Di, Qr, Tmp = leg_scratch[tid]
@@ -463,36 +518,48 @@ end
 
 
 
-function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64,3}, fourier_g::AbstractArray{ComplexF64,3})
+"""
+    Trans_Grid_To_Fourier!(mesh, pfield, fourier_g)
+
+Performs the zonal Fourier transform (Grid -> Fourier) on the physical field, 
+decomposing the data into zonal wavenumbers without performing the meridional Legendre transform.
+
+### Parameters
+    - mesh: The mesh structure providing grid dimensions.
+    - pfield: Physical field values F(λ, θ) on the Gaussian grid [nλ, nθ, nd].
+    - fourier_g: Buffer to store the intermediate Fourier coefficients g_m(θ) [nλ, nθ, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - fourier_g
+
+"""
+function Trans_Grid_To_Fourier!(mesh::Spectral_Spherical_Mesh, pfield::AbstractArray{Float64, 3}, fourier_g::AbstractArray{ComplexF64, 3})
     
-    """
-    With F_{m,n} = (-1)^m F_{-m,n}*   
-    P_{m,n} = (-1)^m P_{-m,n}
-    
-    F(λ, η) = ∑_{m= -N}^{N} ∑_{n=|m|}^{N} F_{m,n} P_{m,n}(η) e^{imλ}
-    
-    The inverse is 
-    F_{m,n} = 1/4π∫_{-1}^{1} ∫_0^{2π} F(λ, η) P_{m,n} e^{-imλ} dλdη
-    !This holds only when nλ >= 2num_fourier+1 
-    
-    g_{m, η} = 1/2π ∫_0^{2π} F(λ, η) e^{-imλ} dλ
-    = 1/2π ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  2π/nλ
-    = ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  /nλ
-    
-    F_{m,n} = 1/2∫_{-1}^{1} g_{m, η} P_{m,n} dη
-    = 1/2 ∑_{i=1}^{nθ} g_{m, η_i} P_{m,n}(η_i) w_i
-    
-    
-    Here η = sinθ, N = num_fourier
-    
-    snm = F_{m,n}         # Complex{Float64}[num_fourier+1, num_spherical+1]
-    qwg = P_{m,n}(η)w(η)  # Float64[num_fourier+1, num_spherical+1, nθ]
-    fourier_g = g_{m, nθ} # Complex{Float64} nλ×nθ 
-    pfiled = F(λ, η)      # Float64[nλ, nθ]
-    """
     nλ, nθ      = mesh.nλ, mesh.nθ
     fft_p       = mesh.fft_plan
     fft_scratch = mesh.fft_scratch
+
+    # snm       = F_{m, n}           # Complex{Float64}[num_fourier+1, num_spherical+1]
+    # qwg       = P_{m, n}(η)w(η)    # Float64[num_fourier+1, num_spherical+1, nθ]
+    # fourier_g = g_{m, nθ}          # Complex{Float64} nλ×nθ 
+    # pfiled    = F(λ, η)            # Float64[nλ, nθ]
+
+    # F(λ, η) = ∑_{m=-N}^{N} ∑_{n=|m|}^{N} F_{m, n} P_{m, n}(η) e^{imλ}
+    
+    # The inverse is 
+    # F_{m, n} = 1/4π ∫_{-1}^{1} ∫_0^{2π} F(λ, η) P_{m, n} e^{-imλ} dλdη
+    
+    # g_{m, η} = 1/2π ∫_0^{2π} F(λ, η) e^{-imλ} dλ
+    #          = 1/2π ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  2π/nλ
+    #          = ∑_{i=0}^{nλ-1} F(λ_i, η) e^{-imλ_i}  /nλ
+    
+    # F_{m, n} = 1/2 ∫_{-1}^{1} g_{m, η} P_{m, n} dη
+    #          = 1/2 ∑_{i=1}^{nθ} g_{m, η_i} P_{m, n}(η_i) w_i
+    
+    # Here η = sinθ, N = num_fourier
     
     @threads for j = 1:nθ
         # Private buffer for the thread
@@ -513,7 +580,7 @@ end
 
 
 
-function Divide_By_Cos!(cosθ::Array{Float64,1}, grid_d::AbstractArray{Float64,3})
+function Divide_By_Cos!(cosθ::Array{Float64, 1}, grid_d::AbstractArray{Float64, 3})
     nd = size(grid_d)[3]
     for k = 1:nd
         v = @view grid_d[:, :, k]
@@ -523,7 +590,7 @@ end
 
 
 
-function Multiply_By_Cos!(cosθ::Array{Float64,1}, grid_d::AbstractArray{Float64,3}, grid_d_cos::AbstractArray{Float64,3})
+function Multiply_By_Cos!(cosθ::Array{Float64, 1}, grid_d::AbstractArray{Float64, 3}, grid_d_cos::AbstractArray{Float64, 3})
     nd = size(grid_d)[3]
     for k = 1:nd
         v_in  = @view grid_d[:, :, k]
@@ -534,29 +601,42 @@ end
 
 
 
+"""
+    Vor_Div_From_Grid_UV!(
+        mesh, 
+        grid_u, grid_v,
+        vor, div
+    )
+
+Computes the spectral coefficients of Relative Vorticity and Divergence directly from the physical grid wind components (u, v). 
+
+### Parameters
+    - mesh: The mesh structure providing geometry, operators, and workspace buffers.
+
+    - grid_u: Zonal wind component (u) on the physical Gaussian grid [nλ, nθ, nd].
+    - grid_v: Meridional wind component (v) on the physical Gaussian grid [nλ, nθ, nd].
+
+    - vor: Buffer to store the resulting spectral coefficients of Vorticity [num_fourier+1, num_spherical+1, nd].
+    - div: Buffer to store the resulting spectral coefficients of Divergence [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - vor
+    - div
+    - mesh
+
+"""
 function Vor_Div_From_Grid_UV!(
-    mesh::Spectral_Spherical_Mesh, grid_u::Array{Float64,3}, grid_v::Array{Float64,3}, 
-    vor::Array{ComplexF64,3}, div::Array{ComplexF64,3}
+    mesh::Spectral_Spherical_Mesh, 
+    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, 
+    vor::Array{ComplexF64, 3}, div::Array{ComplexF64, 3}
 )
-    """
-    Step 1. compute the spherical coordinates of U = ucosθ, V = vcosθ
-    
-    div = 1/rcosθ^2 [∂(U)/∂λ + cosθ ∂(V)/∂θ]
-    vor = 1/rcosθ^2 [∂(V)/∂λ - cosθ ∂(U)/∂θ]
-    
-    U(λ,θ) = ∑_{m=-N}^{N} U_m(θ) e^{imλ} 
-    
-    Step 2. compute the spherical coordinates of div, vor with Compute_Alpha_Operator!, 
-    Compute_Alpha_Operator!(mesh, A, B, isign, output) computes the spherical coordinates
-    
-    A = ucosθ, B = vcosθ
-    output = 1/rcosθ^2 [∂(A)/∂λ + cosθ ∂(B)/∂θ * isign] 
-    
-    ! all spherical modes are accurate, triangular trunction, set to zero the extra spherical mode
-    """
-    cosθ, nd = mesh.cosθ, mesh.nd
+
+    cosθ, nd                   = mesh.cosθ, mesh.nd
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
-    # avoid allocating new memery
+    
     @assert(size(grid_u)[3] == nd || size(grid_u)[3] == 1)  
     if size(grid_u)[3] == nd  
         fourier_ucosθ, fourier_vcosθ = mesh.fourier_d1, mesh.fourier_d2
@@ -567,46 +647,68 @@ function Vor_Div_From_Grid_UV!(
         grid_ucosθ, grid_vcosθ = mesh.grid_ds1, mesh.grid_ds2
     end
     
-    
+    # U = ucosθ, V = vcosθ
+    # div = 1/rcosθ^2 [∂(U)/∂λ + cosθ ∂(V)/∂θ]
+    # vor = 1/rcosθ^2 [∂(V)/∂λ - cosθ ∂(U)/∂θ]
+    # U(λ, θ) = ∑_{m=-N}^{N} U_m(θ) e^{imλ} 
     Multiply_By_Cos!(cosθ, grid_u, grid_ucosθ)
     Trans_Grid_To_Fourier!(mesh, grid_ucosθ, fourier_ucosθ)
-    
     Multiply_By_Cos!(cosθ, grid_v, grid_vcosθ)
     Trans_Grid_To_Fourier!(mesh, grid_vcosθ, fourier_vcosθ)
     
+    # A = ucosθ, B = vcosθ
+    # output = 1/rcosθ^2 [∂(A)/∂λ + cosθ ∂(B)/∂θ * isign] 
     Compute_Alpha_Operator!(mesh, fourier_vcosθ, fourier_ucosθ, -1.0, vor) 
     Compute_Alpha_Operator!(mesh, fourier_ucosθ, fourier_vcosθ,  1.0, div) 
     
-    #todo wrong
-    vor[:,num_spherical+1,:] .= 0.0
-    div[:,num_spherical+1,:] .= 0.0
+    vor[:, num_spherical+1, :] .= 0.0
+    div[:, num_spherical+1, :] .= 0.0
+
 end
 
 
 
+"""
+    Compute_Alpha_Operator_Init(
+        num_fourier, num_spherical,
+        cosθ,
+        qnm, dqnm, wts
+    )
+
+Pre-computes the auxiliary arrays for the spectral alpha operator, which is used to calculate Divergence and Vorticity from wind components.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+
+    - cosθ (nθ): Cosine values of Gassian latitudes.
+
+    - qnm: Associated Legendre Polynomials P_n^m(μ).
+    - dqnm: Derivative of Legendre Polynomials with respect to latitude.
+    - wts: Gaussian quadrature weights.
+
+### Returns
+    - coef_alp_a: Pre-computed coefficients for the zonal derivative term (contains m/cos^2).
+    - coef_alp_b: Pre-computed coefficients for the meridional derivative term.
+    
+### Modified
+    - nothing
+
+"""
 function Compute_Alpha_Operator_Init(
     num_fourier::Int64, num_spherical::Int64, 
-    cosθ::Array{Float64,1},
-    qnm::Array{Float64,3}, dqnm::Array{Float64,3}, 
-    wts::Array{Float64,1}
+    cosθ::Array{Float64, 1},
+    qnm::Array{Float64, 3}, dqnm::Array{Float64, 3}, wts::Array{Float64, 1}
 ) 
-    """
-    See Compute_Alpha_Operator!
-    
-    
-    coef_alp_a[m,n,μ] = m/(1 - μ^2) P_n^m(μ) w(μ)
-    coef_alp_b = -∂(P_n^m)/∂μ(μ) w(μ) 
-    
-    """
     
     nθ = length(cosθ)
     coef_alp_a = zeros(Float64, num_fourier + 1, num_spherical + 1, nθ) 
     coef_alp_b = zeros(Float64, num_fourier + 1, num_spherical + 1, nθ) 
     
     @threads for m = 0:num_fourier
-        for n = m:num_spherical #todo wrong should not have +1
-            coef_alp_a[m + 1,n + 1,:] .=  wts .* qnm[m + 1,n + 1,:] ./ cosθ.^2 * m
-            coef_alp_b[m + 1,n + 1,:] .= -wts .* dqnm[m + 1,n + 1,:]
+        for n = m:num_spherical
+            coef_alp_a[m+1, n+1, :] .=  wts .* qnm[m+1, n+1, :] ./ cosθ.^2 * m
+            coef_alp_b[m+1, n+1, :] .= -wts .* dqnm[m+1, n+1, :]
         end
     end
     
@@ -615,31 +717,61 @@ end
 
 
 
+"""
+    Compute_Alpha_Operator!(
+        mesh,
+        fourier_a, fourier_b,
+        isign, alpha
+    )
+
+Computes the spherical harmonic coefficients of Divergence or Vorticity from the intermediate Fourier coefficients of the wind images.
+
+This function implements the spectral derivative operator (Alpha Operator) by 
+projecting the Fourier coefficients onto the Legendre basis using integration by parts. It computes:
+alpha = 1/(r*cos^2) * [ ∂A/∂λ + isign * cos * ∂B/∂θ ]
+
+### Parameters
+    - mesh: The mesh structure containing pre-computed derivative coefficients (coef_alp_a, coef_alp_b) and geometry.
+
+    - fourier_a: Fourier coefficients of the first wind component (Ucos or Vcos) [nλ, nθ, nd].
+    - fourier_b: Fourier coefficients of the second wind component (Vcos or Ucos) [nλ, nθ, nd].
+
+    - isign: Sign switch for the meridional derivative term. +1.0 for Divergence, -1.0 for Vorticity.
+    - alpha: Buffer to store the resulting spectral coefficients (Div or Vor) (num_fourier+1, num_spherical+1, nd).
+
+### Returns
+    - nothing
+
+### Modified
+    - alpha
+
+"""
 function Compute_Alpha_Operator!(
-    mesh::Spectral_Spherical_Mesh, fourier_a::Array{ComplexF64,3}, fourier_b::Array{ComplexF64,3}, 
-    isign::Float64, alpha::Array{ComplexF64,3}
+    mesh::Spectral_Spherical_Mesh, 
+    fourier_a::Array{ComplexF64, 3}, fourier_b::Array{ComplexF64, 3}, 
+    isign::Float64, alpha::Array{ComplexF64, 3}
 ) 
-    """
-    given the fourier coordinates of A and B, 
-    A(λ,θ) = ∑_{m=-N}^{N} A_m(θ) e^{imλ}      B(λ,θ) = ∑_{m=-N}^{N} B_m(θ) e^{imλ}  (we save A_0, A_1 .... A_{nλ-1})
-    compute the spherical coordinates:
+    # Given the fourier coordinates of A and B, 
+    # A(λ,θ) = ∑_{m=-N}^{N} A_m(θ) e^{imλ}
+    # B(λ,θ) = ∑_{m=-N}^{N} B_m(θ) e^{imλ}  (we save A_0, A_1 .... A_{nλ-1})
     
-    alpha = 1/rcosθ^2 [∂(A)/∂λ + cosθ ∂(B)/∂θ * isign]
-    = 1/rcosθ^2 [∑_{m=-N}^{N} A_m(θ) e^{imλ} im + cosθ ∑_{m=-N}^{N} e^{imλ} ∂(B_m(θ))/∂θ * isign]
+    # Compute the spherical coordinates:
     
-    alpha_n^m = 1/4π∫∫ alpha dλdμ
-    = 1/4π∫∫ 1/rcosθ^2 [∑_{m=-N}^{N} A_m(θ) e^{imλ} im + cosθ ∑_{m=-N}^{N} e^{imλ} ∂(B_m(θ))/∂θ * isign] * P_n^m e^{-imλ}dλdμ
-    = 1/2∫ 1/rcosθ^2 [A_m(θ) im + cosθ ∂(B_m(θ))/∂θ * isign] * P_n^m dμ
-    = 1/2r∫ 1/cosθ^2 A_m(μ) im  P_n^m - B_m(μ) ∂(P_n^m)/∂μ * isign dμ
-    quadrature rule is applied
-    alpha_n^m = 1/2r∫ A_m(μ) im/(1 - μ^2)   - B_m(μ) ∂(P_n^m)/∂μ * isign dμ
-    = 1/2r * (coef_alp_a[m, n, :]  A[m, :] i + coef_alp_b[m, n, :] B[m, :] * isign)
+    # alpha = 1/rcosθ^2 [∂(A)/∂λ + cosθ ∂(B)/∂θ * isign]
+    #       = 1/rcosθ^2 [∑_{m=-N}^{N} A_m(θ) e^{imλ} im + cosθ ∑_{m=-N}^{N} e^{imλ} ∂(B_m(θ))/∂θ * isign]
     
-    Both coefs are Float64 array
-    coef_alp_a[m,n,μ] =  m/(1 - μ^2) P_n^m(μ) w(μ)
-    coef_alp_b = -∂(P_n^m)/∂μ(μ) w(μ) 
+    # alpha_n^m = 1/4π ∫∫ alpha dλdμ
+    #           = 1/4π ∫∫ 1/rcosθ^2 [∑_{m=-N}^{N} A_m(θ) e^{imλ} im + cosθ ∑_{m=-N}^{N} e^{imλ} ∂(B_m(θ))/∂θ * isign] * P_n^m e^{-imλ}dλdμ
+    #           = 1/2  ∫  1/rcosθ^2 [A_m(θ) im + cosθ ∂(B_m(θ))/∂θ * isign] * P_n^m dμ
+    #           = 1/2r ∫  1/cosθ^2 A_m(μ) im  P_n^m - B_m(μ) ∂(P_n^m)/∂μ * isign dμ
+    # quadrature rule is applied
+    # alpha_n^m = 1/2r ∫  A_m(μ) im/(1 - μ^2) - B_m(μ) ∂(P_n^m)/∂μ * isign dμ
+    #           = 1/2r * (coef_alp_a[m, n, :] A[m, :] i + coef_alp_b[m, n, :] B[m, :] * isign)
     
-    """
+    # Both coefs are Float64 array
+    # coef_alp_a[m,n,μ] =  m/(1 - μ^2) P_n^m(μ) w(μ)
+    # coef_alp_b = -∂(P_n^m)/∂μ(μ) w(μ) 
+    
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
     nθ, nd                     = mesh.nθ, mesh.nd
     radius                     = mesh.radius
@@ -688,16 +820,48 @@ end
 
 
 
-function UV_Grid_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3},  div::Array{ComplexF64,3}, 
-    grid_u::Array{Float64,3}, grid_v::Array{Float64,3})
-    
+"""
+    UV_Grid_From_Vor_Div!(
+        mesh,
+        vor, div,
+        grid_u, grid_v
+    )
+
+Reconstructs the physical grid wind components (u, v) from the spectral coefficients of Relative Vorticity and Divergence.
+
+### Parameters
+    - mesh: The mesh structure providing operators and workspace buffers.
+
+    - vor: Spectral coefficients of Relative Vorticity [num_fourier+1, num_spherical+1, nd].
+    - div: Spectral coefficients of Divergence [num_fourier+1, num_spherical+1, nd].
+
+    - grid_u: Buffer to store the reconstructed zonal wind component (u) [nλ, nθ, nd].
+    - grid_v: Buffer to store the reconstructed meridional wind component (v) [nλ, nθ, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_u
+    - grid_v
+    - mesh
+
+"""
+function UV_Grid_From_Vor_Div!(
+    mesh::Spectral_Spherical_Mesh, 
+    vor::Array{ComplexF64, 3}, div::Array{ComplexF64, 3}, 
+    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}
+)
+
     nd = mesh.nd
+
     @assert(size(vor)[3] == nd || size(vor)[3] == 1)
     if (size(vor)[3] == nd)
         spherical_ucos, spherical_vcos = mesh.spherical_d1, mesh.spherical_d2  
     else
         spherical_ucos, spherical_vcos = mesh.spherical_ds1, mesh.spherical_ds2 
     end  
+
     Compute_Ucos_Vcos_From_Vor_Div!(mesh, vor, div, spherical_ucos, spherical_vcos)
     
     Trans_Spherical_To_Grid!(mesh, spherical_ucos, grid_u)
@@ -711,32 +875,56 @@ end
 
 
 
-function Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64, epsilon::Array{Float64, 2}) 
-    """
-    See Compute_Ucos_Vcos_From_Vor_Div!
-    """
+"""
+    Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier, num_spherical, radius, epsilon)
+
+Pre-computes the coefficients used to reconstruct spectral wind images (Ucosθ, Vcosθ) from spectral Vorticity and Divergence.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+    - radius: Planetary radius.
+    - epsilon: Pre-computed recurrence coefficients ε_n^m [num_fourier+1, num_spherical+1].
+
+### Returns
+    - coef_uvm [num_fourier+1, num_spherical+1]
+        Meridional "Minus" coefficient. Projects energy from mode (n-1) to n.
+
+    - coef_uvc [num_fourier+1, num_spherical+1]
+        Zonal "Center" coefficient. Scales mode n (contains m/n(n+1)).
+
+    - coef_uvp [num_fourier+1, num_spherical+1]
+        Meridional "Plus" coefficient. Projects energy from mode (n+1) to n.
     
-    coef_uvm = zeros(Float64, num_fourier + 1, num_spherical + 1)
-    coef_uvc = zeros(Float64, num_fourier + 1, num_spherical + 1)
-    coef_uvp = zeros(Float64, num_fourier + 1, num_spherical + 1)
+### Modified
+    - nothing
+
+"""
+function Compute_Ucos_Vcos_From_Vor_Div_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64, epsilon::Array{Float64, 2}) 
+    
+    coef_uvm = zeros(Float64, num_fourier+1, num_spherical+1)
+    coef_uvc = zeros(Float64, num_fourier+1, num_spherical+1)
+    coef_uvp = zeros(Float64, num_fourier+1, num_spherical+1)
     
     for m = 0:num_fourier
         for n = m:num_spherical
             if n > 0 # !coef_uvc[:, 1] = 0
-                coef_uvc[m + 1, n + 1] = -radius * m / (n * (n + 1))
+                coef_uvc[m+1, n+1] = -radius * m / (n * (n + 1))
             end
         end
     end
+
     for m = 0:num_fourier
         for n = m:num_spherical
             if n > 0 # !coef_uvm[:, 1] = 0
-                coef_uvm[m + 1, n + 1] = radius * epsilon[m + 1,n + 1] / n
+                coef_uvm[m+1, n+1] = radius * epsilon[m+1, n+1] / n
             end
         end
     end
+    
     for m = 0:num_fourier
         for n = m:num_spherical - 1 # does not include the last spherical update coefficients 
-            coef_uvp[m + 1, n + 1] =  -radius * epsilon[m + 1,n + 2] / (n + 1)
+            coef_uvp[m+1, n+1] =  -radius * epsilon[m+1, n+2] / (n + 1)
         end
     end
     
@@ -745,52 +933,79 @@ end
 
 
 
-function Compute_Ucos_Vcos_From_Vor_Div!(mesh::Spectral_Spherical_Mesh, vor::Array{ComplexF64,3}, div::Array{ComplexF64,3}, 
-    spherical_ucos::Array{ComplexF64,3}, spherical_vcos::Array{ComplexF64,3})
+"""
+    Compute_Ucos_Vcos_From_Vor_Div!(
+        mesh,
+        vor, div,
+        spherical_ucos, spherical_vcos
+    )
+
+Computes the spectral coefficients of the "wind images" (Ucosθ, Vcosθ) directly from the spectral coefficients of Relative Vorticity and Divergence.
+
+### Parameters
+    - mesh: The mesh structure containing pre-computed recurrence coefficients (coef_uvc, coef_uvm, coef_uvp).
+
+    - vor: Spectral coefficients of Relative Vorticity [num_fourier+1, num_spherical+1, nd].
+    - div: Spectral coefficients of Divergence [num_fourier+1, num_spherical+1, nd].
+
+    - spherical_ucos: Buffer to store the resulting spectral coefficients of the zonal wind image [num_fourier+1, num_spherical+1, nd].
+    - spherical_vcos: Buffer to store the resulting spectral coefficients of the meridional wind image [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - spherical_ucos
+    - spherical_vcos
+
+"""
+function Compute_Ucos_Vcos_From_Vor_Div!(
+    mesh::Spectral_Spherical_Mesh, 
+    vor::Array{ComplexF64, 3}, div::Array{ComplexF64, 3}, 
+    spherical_ucos::Array{ComplexF64, 3}, spherical_vcos::Array{ComplexF64, 3}
+)
     
-    """
-    Compute the spherical coordinates of ucosθ, vcosθ for the spherical coordinates vorticity and divergence fields
-    !require the vor[:, end], vor[:, end] to update  spherical_ucos[:, end-1], spherical_vcos[:, end-1]
-    !spherical_ucos[:, end], spherical_vcos[:, end] are not accurate, due to the recursion relation
+    # Compute the spherical coordinates of ucosθ, vcosθ for the spherical coordinates vorticity and divergence fields
+    # ! spherical_ucos[:, end], spherical_vcos[:, end] are not accurate, due to the recursion relation
     
-    Algorithm:
-    Base on Helmholtz decomposition of the velocity profile into streamfunction S and velocity potential function P
-    v = e_r × ∇⋅S + ∇⋅P
+    # Algorithm:
+    # Base on Helmholtz decomposition of the velocity profile into streamfunction S and velocity potential function P
+    # v = e_r × ∇⋅S + ∇⋅P
     
-    The streamfunction and the velocity potential function can be solved from the following Laplacian equations
-    div = div v  = ∇^2⋅P
-    vor = curl v = ∇^2⋅S
+    # The streamfunction and the velocity potential function can be solved from the following Laplacian equations
+    # div = div v  = ∇^2⋅P
+    # vor = curl v = ∇^2⋅S
     
-    Therefore, we have 
-    -n(n+1)/r^2 P_n^m = div_n^m   and -n(n+1)/r^2 S_n^m = vor_n^m
+    # Therefore, we have 
+    # -n(n+1)/r^2 P_n^m = div_n^m   and -n(n+1)/r^2 S_n^m = vor_n^m
     
-    ∇f = 1/rcosθ ∂f/∂λ e_λ + 1/r ∂f/∂θ e_θ
+    # ∇f = 1/rcosθ ∂f/∂λ e_λ + 1/r ∂f/∂θ e_θ
     
-    v_λ cosθ =  -cosθ/r ∂S/∂θ    +  1/r ∂P/∂λ
-    v_θ cosθ =   1/r ∂S/∂λ       +  cosθ/r ∂P/∂θ 
+    # v_λ cosθ =  -cosθ/r ∂S/∂θ    +  1/r ∂P/∂λ
+    # v_θ cosθ =   1/r ∂S/∂λ       +  cosθ/r ∂P/∂θ 
     
-    Without loss of generality, we focus on computing the spherical coordinates of 1/r ∂S/∂λ  and -cosθ/r ∂S/∂θ
+    # Without loss of generality, we focus on computing the spherical coordinates of 1/r ∂S/∂λ  and -cosθ/r ∂S/∂θ
     
-    [1/r ∂S/∂λ]_n^m = S_n^m m i/r = -am/(n(n+1)) vor_n^m i = -am/(n(n+1)) (-imag(vor_n^m) + real(vor_n^m))
-    coef_uvc[m, n] := -am/(n(n+1))
+    # [1/r ∂S/∂λ]_n^m = S_n^m m i/r = -am/(n(n+1)) vor_n^m i = -am/(n(n+1)) (-imag(vor_n^m) + real(vor_n^m))
+    # coef_uvc[m, n] := -am/(n(n+1))
     
-    cosθ/r ∂S/∂θ =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} cosθ/r S_n^m ∂(P_n^m(sinθ))/∂θ e^{imλ}
-    with cosθ ∂(P_n^m(sinθ))/∂θ = -nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m
-    =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} 1/r  (-nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m) S_n^m e^{imλ}
-    =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} 1/r  (-nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m) S_n^m e^{imλ}
+    # cosθ/r ∂S/∂θ =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} cosθ/r S_n^m ∂(P_n^m(sinθ))/∂θ e^{imλ}
+    # with cosθ ∂(P_n^m(sinθ))/∂θ = -nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m
+    # =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} 1/r  (-nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m) S_n^m e^{imλ}
+    # =  ∑_{m=-∞}^{∞} ∑_{n=|m|}^{∞} 1/r  (-nε_{n+1}^m P_{n+1}^m + (n+1)ε_n^m P_{n-1}^m) S_n^m e^{imλ}
     
-    [cosθ/r ∂S/∂θ]_n^m = -1/r (n-1)ε_{n}^m S_{n-1}^m  + 1/r (n+2) ε_{n+1}^m S_{n+1}^m
-    = r ε_{n}^m/n vor_{n-1}^m  - r ε_{n+1}^m/(n+1) vor_{n+1}^m
-    := a-_{n}^m  vor_{n-1}^m + a+_{n}^m vor_{n+1}^m
-    with the definition 
-    a-_{n}^m := r ε_{n}^m/n   and a+_{n}^m := - r ε_{n+1}^m/(n+1)
+    # [cosθ/r ∂S/∂θ]_n^m = -1/r (n-1)ε_{n}^m S_{n-1}^m  + 1/r (n+2) ε_{n+1}^m S_{n+1}^m
+    # = r ε_{n}^m/n vor_{n-1}^m  - r ε_{n+1}^m/(n+1) vor_{n+1}^m
+    # := a-_{n}^m  vor_{n-1}^m + a+_{n}^m vor_{n+1}^m
+    # with the definition 
+    # a-_{n}^m := r ε_{n}^m/n   and a+_{n}^m := - r ε_{n+1}^m/(n+1)
     
     
-    [v_λ cosθ]_n^m =  coef_uvc[m, n] (-imag(div_n^m) + real(div_n^m)) - (a-_{n}^m vor_{n-1}^m + a+_{n}^m vor_{n+1}^m)  
-    [v_θ cosθ]_n^m =  coef_uvc[m, n] (-imag(vor_n^m) + real(vor_n^m)) + (a-_{n}^m div_{n-1}^m + a+_{n}^m div_{n+1}^m)  
+    # [v_λ cosθ]_n^m =  coef_uvc[m, n] (-imag(div_n^m) + real(div_n^m)) - (a-_{n}^m vor_{n-1}^m + a+_{n}^m vor_{n+1}^m)  
+    # [v_θ cosθ]_n^m =  coef_uvc[m, n] (-imag(vor_n^m) + real(vor_n^m)) + (a-_{n}^m div_{n-1}^m + a+_{n}^m div_{n+1}^m)  
     
-    ! have all modes, including the extra spherical mode
-    """
+    # ! have all modes, including the extra spherical mode
+    
     nd                           = mesh.nd
     num_fourier, num_spherical   = mesh.num_fourier, mesh.num_spherical
     coef_uvc, coef_uvm, coef_uvp = mesh.coef_uvc, mesh.coef_uvm, mesh.coef_uvp 
@@ -817,15 +1032,33 @@ end
 
 
 
+"""
+    Compute_Wave_Numbers(num_fourier, num_spherical)
+
+Generates a lookup table storing the total wavenumber (n) for each spectral mode.
+
+This array is typically used for scale-dependent operations such as hyper-diffusion damping or filtering, 
+where the operation depends only on the total wavenumber n.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+    - radius: Planetary radius.
+
+### Returns
+    - wave_numbers [num_fourier+1, num_spherical+1]
+    
+### Modified
+    - nothing
+
+"""
 function Compute_Wave_Numbers(num_fourier::Int64, num_spherical::Int64, radius::Float64) 
-    """
-    See wave_numers[i,j] saves the wave number of this basis
-    """
+    
     wave_numbers = zeros(Int64, num_fourier + 1, num_spherical + 1)
     
     for m = 0:num_fourier
         for n = m:num_spherical
-            wave_numbers[m + 1, n + 1] = n
+            wave_numbers[m+1, n+1] = n
         end
     end
     
@@ -835,15 +1068,30 @@ end
 
 
 
+"""
+    Apply_Laplacian_Init(num_fourier, num_spherical, radius)
+
+Pre-computes the eigenvalues of the Laplacian operator for Spherical Harmonics.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+    - radius: Planetary radius.
+
+### Returns
+    - laplacian_eig [num_fourier+1, num_spherical+1]
+    
+### Modified
+    - nothing    
+
+"""
 function Apply_Laplacian_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64) 
-    """
-    See Compute_Laplacian!
-    """
+    
     laplacian_eig = zeros(Float64, num_fourier + 1, num_spherical + 1)
     
     for m = 0:num_fourier
         for n = m:num_spherical
-            laplacian_eig[m + 1, n + 1] = -n * (n + 1) / radius^2
+            laplacian_eig[m+1, n+1] = -n * (n + 1) / radius^2
         end
     end
     
@@ -853,10 +1101,25 @@ end
 
 
 
-function Apply_Laplacian!(mesh::Spectral_Spherical_Mesh, spherical_u::Array{ComplexF64,3}) 
-    """
-    [∇^2 u]_{n}^m  = -n(n+1)/r^2 [u]_{n}^m
-    """
+"""
+    Apply_Laplacian!(mesh, spherical_u)
+
+Applies the Laplacian operator (∇²) to a field in spectral space.
+
+### Parameters
+    - mesh: The mesh structure containing the pre-computed eigenvalues (laplacian_eig).
+    - spherical_u: The spectral coefficients of the input field [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - spherical_u
+
+"""
+function Apply_Laplacian!(mesh::Spectral_Spherical_Mesh, spherical_u::Array{ComplexF64, 3}) 
+    
+    # [∇^2 u]_{n}^m  = -n(n+1)/r^2 [u]_{n}^m
     eig = mesh.laplacian_eig
     spherical_u .= eig .* spherical_u
     
@@ -864,29 +1127,55 @@ end
 
 
 
-function Compute_Gradient_Cos_Init(num_fourier::Int64, num_spherical::Int64, 
-    radius::Float64, epsilon::Array{Float64, 2})
-    """
-    [coef_dλ]_n^m := 1/r m
+"""
+    Compute_Gradient_Cos_Init(num_fourier, num_spherical, radius, epsilon)
+
+Pre-computes the coefficients required to calculate the horizontal gradient ∇f of a scalar field f in spectral space.
+
+### Parameters
+    - num_fourier: Maximum zonal wavenumber.
+    - num_spherical: Maximum total wavenumber.
+    - radius: Planetary radius.
+    - epsilon: Pre-computed recurrence coefficients ε_n^m [num_fourier+1, num_spherical+1].
+
+### Returns
+    - coef_dλ [num_fourier+1, num_spherical+1]
+        Coefficient for the zonal gradient term (1/r ∂/∂λ). Stores m/r.
+
+    - coef_dθm [num_fourier+1, num_spherical+1]
+        Coefficient for the meridional gradient "Minus" term. Projects energy from mode (n-1) to n.
+
+    - coef_dθp [num_fourier+1, num_spherical+1]
+        Coefficient for the meridional gradient "Plus" term. Projects energy from mode (n+1) to n.
+
+### Modified
+    - nothing
+
+"""
+function Compute_Gradient_Cos_Init(num_fourier::Int64, num_spherical::Int64, radius::Float64, epsilon::Array{Float64, 2})
     
+    # ∇f = 1/(r*cosθ) ∂f/∂λ e_λ + 1/r ∂f/∂θ e_θ
+
+    # Multiply by cosθ:
+    # cosθ ∇f = 1/r ∂f/∂λ e_λ + cosθ/r ∂f/∂θ e_θ
+
+    # [coef_dλ]_n^m := m/r
+    # [coef_dθ]_n^m involves projection from neighbors (n-1) and (n+1).
     
-    [spe_cos_dθ_hs]_n^m = -(n-1)ε_n^m h_{n-1}^m + (n+2)ε_{n+1}^m h_{n+1}^m
-    := coef_dθm_n^m h_{n-1}^m + coef_dθp_{n}^m h_{n+1}^m
-    """
-    coef_dλ  = zeros(Float64, num_fourier + 1, num_spherical + 1) 
-    coef_dθm = zeros(Float64, num_fourier + 1, num_spherical + 1)
-    coef_dθp = zeros(Float64, num_fourier + 1, num_spherical + 1) 
+    coef_dλ  = zeros(Float64, num_fourier+1, num_spherical+1) 
+    coef_dθm = zeros(Float64, num_fourier+1, num_spherical+1)
+    coef_dθp = zeros(Float64, num_fourier+1, num_spherical+1) 
     
     for m = 0:num_fourier
         for n = m:num_spherical
-            coef_dλ[m + 1,n + 1] =  m/radius
-            coef_dθm[m + 1,n + 1] = -(n-1)*epsilon[m+1, n+1]/radius
+            coef_dλ[m+1, n+1]  = m / radius
+            coef_dθm[m+1, n+1] = -(n-1) * epsilon[m+1, n+1] / radius
         end
     end
     
     for m = 0:num_fourier
         for n = m:num_spherical-1 # does not include the last spherical update coefficients 
-            coef_dθp[m + 1,n + 1] =  (n+2)*epsilon[m+1, n+2]/radius
+            coef_dθp[m+1, n+1] = (n+2) * epsilon[m+1, n+2] / radius
         end
     end
     
@@ -895,26 +1184,45 @@ end
 
 
 
-function Compute_Gradient_Cos!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64,3}, 
-    spe_cos_dλ_hs::Array{ComplexF64,3}, spe_cos_dθ_hs::Array{ComplexF64,3})
-    """
-    cosθ∇hs = 1/r ∂hs/∂λ e_λ +  1/r cosθ∂hs/∂θ e_θ
+"""
+    Compute_Gradient_Cos!(
+        mesh,
+        spe_hs,
+        spe_cos_dλ_hs, spe_cos_dθ_hs
+    )
+
+Computes the spectral coefficients of the horizontal gradient of a scalar field, multiplied by the cosine of latitude.
+
+### Parameters
+    - mesh: The mesh structure containing pre-computed gradient coefficients (coef_dλ, coef_dθm, coef_dθp).
+
+    - spe_hs: Spectral coefficients of the input scalar field (e.g., Geopotential Height) [num_fourier+1, num_spherical+1, nd].
+
+    - spe_cos_dλ_hs: Buffer to store the Zonal gradient component (1/r * ∂h/∂λ) [num_fourier+1, num_spherical+1, nd].
+    - spe_cos_dθ_hs: Buffer to store the Meridional gradient component (cosθ/r * ∂h/∂θ) [num_fourier+1, num_spherical+1, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - spe_cos_dλ_hs
+    - spe_cos_dθ_hs
+
+"""
+function Compute_Gradient_Cos!(
+    mesh::Spectral_Spherical_Mesh, 
+    spe_hs::AbstractArray{ComplexF64, 3}, 
+    spe_cos_dλ_hs::Array{ComplexF64, 3}, spe_cos_dθ_hs::Array{ComplexF64, 3}
+)
     
-    spe_cos_dλ_hs = 1/r ∂hs/∂λ
-    [spe_cos_dλ_hs]_n^m = 1/r [hs]_n^m im
+    # all modes are computed, including the extra spherical mode
     
-    [coef_dλ]_n^m := 1/r m
-    
-    spe_cos_dθ_hs = 1/r cosθ∂hs/∂θ
-    [spe_cos_dθ_hs]_n^m = 1/r (-(n-1)ε_n^m h_{n-1}^m + (n+2)ε_{n+1}^m h_{n+1}^m)
-    := coef_dθm_n^m h_{n-1}^m + coef_dθp_{n}^m h_{n+1}^m
-    
-    all modes are computed, including the extra spherical mode
-    """
     num_fourier, num_spherical  = mesh.num_fourier, mesh.num_spherical
     coef_dλ, coef_dθm, coef_dθp = mesh.coef_dλ, mesh.coef_dθm, mesh.coef_dθp
 
-    # 1. Zonal Derivative (d/dλ)
+    # cosθ∇hs = 1/r ∂hs/∂λ e_λ +  1/r cosθ∂hs/∂θ e_θ
+
+    # Zonal Derivative (d/dλ)
     # Formula: im * m * S_nm
     @threads for m = 1:num_fourier+1
         for n = m:num_spherical+1
@@ -938,19 +1246,44 @@ end
 
 
 
-function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64,3},
-    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_δhs::AbstractArray{Float64, 3})
+"""
+    Add_Horizontal_Advection!(
+        mesh,
+        spe_hs,
+        grid_u, grid_v, grid_δhs
+    )
+
+Computes the horizontal advection tendency -(u⋅∇h) and accumulates it into the output tendency field.
+
+### Parameters
+    - mesh: The mesh structure providing workspace buffers.
+
+    - spe_hs: Spectral coefficients of the scalar field being advected (e.g., T, lnPs) [num_fourier+1, num_spherical+1, nd].
+
+    - grid_u: Zonal wind component (u) on the physical grid [nλ, nθ, nd].
+    - grid_v: Meridional wind component (v) on the physical grid [nλ, nθ, nd].
+    - grid_δhs: The tendency accumulator field [nλ, nθ, nd].
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_δhs
+    - mesh
+
+"""
+function Add_Horizontal_Advection!(
+    mesh::Spectral_Spherical_Mesh, 
+    spe_hs::AbstractArray{ComplexF64,3},
+    grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_δhs::AbstractArray{Float64, 3}
+)
     
-    """
-    grid_δh -= (u e_λ + v e_θ)⋅∇hs
-    
-    ∇hs = 1/rcosθ ∂hs/∂λ e_λ +  1/r ∂hs/∂θ e_θ
-    
-    cosθ∇hs = 1/r ∂hs/∂λ e_λ +  1/r cosθ∂hs/∂θ e_θ
-    
-    """
+    # grid_δh -= (u e_λ + v e_θ) ⋅ ∇hs
+    # ∇hs      = 1/rcosθ ∂hs/∂λ e_λ + 1/r ∂hs/∂θ e_θ
+    # cosθ∇hs  = 1/r ∂hs/∂λ e_λ + 1/r cosθ∂hs/∂θ e_θ
     
     nd = mesh.nd
+
     @assert(size(spe_hs)[3] == nd || size(spe_hs)[3] == 1)
     if size(spe_hs)[3] == nd
         grid_dλ_hs, grid_dθ_hs = mesh.grid_d1, mesh.grid_d2
@@ -960,15 +1293,46 @@ function Add_Horizontal_Advection!(mesh::Spectral_Spherical_Mesh, spe_hs::Abstra
     
     Compute_Gradients!(mesh, spe_hs, grid_dλ_hs, grid_dθ_hs)
     
-    grid_δhs .-= (grid_u.*grid_dλ_hs + grid_v.*grid_dθ_hs)
+    @. grid_δhs -= (grid_u * grid_dλ_hs + grid_v * grid_dθ_hs)
     
 end
 
 
 
-function Compute_Gradients!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray{ComplexF64, 3}, 
-    grid_dλ_hs::Array{Float64, 3}, grid_dθ_hs::Array{Float64, 3})
-    #todo 
+"""
+    Compute_Gradients!(
+        mesh,
+        spe_hs,
+        grid_dλ_hs, grid_dθ_hs
+    )
+
+Computes the physical gradient components (1/rcosθ ∂h/∂λ, 1/r ∂h/∂θ) on the Gaussian grid from the spectral coefficients of a scalar field.
+
+### Parameters
+    - mesh: The mesh structure providing operators and workspace buffers.
+
+    - spe_hs: Spectral coefficients of the input scalar field [num_fourier+1, num_spherical+1, nd or 1].
+    
+    - grid_dλ_hs: Buffer to store the Zonal gradient component (1/rcosθ * ∂h/∂λ) [nλ, nθ, nd or 1].
+    - grid_dθ_hs: Buffer to store the Meridional gradient component (1/r * ∂h/∂θ) [nλ, nθ, nd or 1].
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_dλ_hs
+    - grid_dθ_hs
+    - mesh
+
+"""
+function Compute_Gradients!(
+    mesh::Spectral_Spherical_Mesh, 
+    spe_hs::AbstractArray{ComplexF64, 3}, 
+    grid_dλ_hs::Array{Float64, 3}, grid_dθ_hs::Array{Float64, 3}
+)
+    
+    cosθ = mesh.cosθ
+
     @assert(size(spe_hs)[3] == mesh.nd || size(spe_hs)[3] == 1)
     if (size(spe_hs)[3] == mesh.nd)
         spe_cos_dλ_hs, spe_cos_dθ_hs = mesh.spherical_d1, mesh.spherical_d2
@@ -981,8 +1345,6 @@ function Compute_Gradients!(mesh::Spectral_Spherical_Mesh, spe_hs::AbstractArray
     Trans_Spherical_To_Grid!(mesh, spe_cos_dλ_hs, grid_dλ_hs)
     Trans_Spherical_To_Grid!(mesh, spe_cos_dθ_hs, grid_dθ_hs)
     
-    cosθ = mesh.cosθ
-    
     Divide_By_Cos!(cosθ, grid_dλ_hs)
     Divide_By_Cos!(cosθ, grid_dθ_hs)
     
@@ -990,23 +1352,32 @@ end
 
 
 
+"""
+    Area_Weighted_Global_Mean(mesh, grid_datas)
 
-function Area_Weighted_Global_Mean(mesh::Spectral_Spherical_Mesh, grid_datas::AbstractArray{Float64,3})
-    """
-    ∫_0^2π ∫_-π/2^π/2 f(φ, θ) cosθ dφ dθ /4π
-    = ∫_0^2π ∫_-1^1 f(φ, η) dφ dη /4π
-    = ∫_0^2π  f(φ, η_j) w_j dφ /4π
-    = ∑_i=1^nλ ∑_j f(φ_i, η_j) w_j 2π/nλ /4π
-    = ∑_i=1^nλ ∑_j f(φ_i, η_j) w_j /2nλ 
-    """
+Computes the area-weighted global mean of a physical grid field.
+
+### Parameters
+    - mesh: The mesh structure containing the Gaussian quadrature weights (wts) and grid dimensions.
+    - grid_datas: The physical grid field to be averaged [nλ, nθ, nd].
+
+### Returns
+    - area_weighted_global_mean: The computed scalar global mean value for the first vertical level.
+
+### Modified
+    - nothing
+
+"""
+function Area_Weighted_Global_Mean(mesh::Spectral_Spherical_Mesh, grid_datas::AbstractArray{Float64, 3})
     
+    # Mean = (1/4π) * ∫∫ f(λ,θ) cosθ dλ dθ
+    #      ≈ (1/2nλ) * ∑_i ∑_j f(λ_i, θ_j) * w_j
+
     wts = mesh.wts
-    nλ = mesh.nλ
-    area_weighted_global_mean = sum(grid_datas[:,:,1] * wts)/(2.0*nλ)
+    nλ  = mesh.nλ
+    area_weighted_global_mean = sum(grid_datas[:, :, 1] * wts) / (2.0 * nλ)
     
     return area_weighted_global_mean
 end 
-
-
 
 end        

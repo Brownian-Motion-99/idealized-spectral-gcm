@@ -2,6 +2,48 @@ using Base.Threads
 using ...Atmo_Data_Module
 
 
+
+"""
+HS_Forcing!(
+        atmo_data, Δt, day_to_sec, sinθ,
+        grid_u, grid_v,
+        grid_p_half, grid_p_full, grid_t, 
+        grid_δu, grid_δv,
+        grid_t_eq, grid_δt, physics_params
+    )
+
+Applies the Held-Suarez forcing terms to the prognostic variables. This includes 
+Newtonian thermal relaxation towards a zonally symmetric equilibrium state and 
+Rayleigh damping of low-level winds to represent surface friction.
+
+### Parameters
+    - atmo_data: Atmospheric constants (cₚ, κ).
+    - Δt: Time step size (seconds).
+    - day_to_sec: Conversion factor from days to seconds (86400).
+    - sinθ: Pre-computed sine of latitude [nθ].
+
+    - grid_u, grid_v: Horizontal wind components [nλ, nθ, nd].
+    
+    - grid_p_half: Pressure at interfaces (used for surface pressure pₛ).
+    - grid_p_full: Pressure at layer centers.
+    - grid_t: Temperature field.
+    
+    - grid_δu, grid_δv: Momentum tendencies. Modified in-place.
+    
+    - grid_t_eq: Diagnostic array for equilibrium temperature [nλ, nθ, nd]. Modified in-place.
+    - grid_δt: Temperature tendency. Modified in-place.
+    - physics_params: Dictionary containing HS parameters:
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_δu
+    - grid_δv
+    - grid_δt
+    - grid_t_eq (diagnostic)
+
+"""
 function HS_Forcing!(
     atmo_data::Atmo_Data, Δt::Int64, day_to_sec::Int64, sinθ::Array{Float64, 1},
     grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3},

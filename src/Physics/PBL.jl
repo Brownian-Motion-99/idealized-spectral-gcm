@@ -3,6 +3,38 @@ using ...Atmo_Data_Module
 using ...Dyn_Data_Module
 using ...Spectral_Spherical_Mesh_Module
 
+
+
+"""
+    Calculate_V_c_za_rho(
+        atmo_data,
+        grid_p_half, grid_p_full, grid_ps,
+        grid_u, grid_v,
+        grid_t, grid_q
+    )
+
+Calculates the surface wind speed (V_c), the height of the lowest model layer (za), 
+and the air density profile (ρ) needed for bulk aerodynamic flux calculations and 
+vertical diffusion.
+
+### Parameters
+    - atmo_data: Structure containing physical constants (R_d, g).
+    
+    - grid_p_half: Pressure at layer interfaces [nλ, nθ, nd+1].
+    - grid_p_full: Pressure at layer centers [nλ, nθ, nd].
+    - grid_ps: Surface pressure [nλ, nθ, 1].
+    
+    - grid_u, grid_v: Zonal and meridional wind components [nλ, nθ, nd].
+    
+    - grid_t: Temperature [nλ, nθ, nd].
+    - grid_q: Specific humidity [nλ, nθ, nd].
+
+### Returns
+    - V_c: Magnitude of the horizontal wind at the lowest model level [nλ, nθ].
+    - za: Geometric height of the lowest model level (anemometer height proxy) [nλ, nθ].
+    - rho: Air density at layer centers [nλ, nθ, nd].
+
+"""
 function Calculate_V_c_za_rho(
     atmo_data::Atmo_Data,
     grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_ps::Array{Float64, 3},
@@ -58,7 +90,42 @@ end
 
 
 
-"""heating directly operates on `grid_t`"""
+"""
+    Sensible_Heating!(
+        mesh, atmo_data,
+        grid_t, grid_shflx,
+        V_c, za, rho,
+        Δt, 
+        C_H
+    )
+
+Computes the exchange of sensible heat between the surface and the lowest atmospheric 
+layer. The implementation uses a backward-implicit update to solve for the new 
+temperature, ensuring stability without restricting the model time step.
+
+### Parameters
+    - mesh: Spectral mesh properties (provides latitude θc for Held-Suarez forcing).
+    - atmo_data: Atmospheric constants (cₚ, nλ, nθ).
+    
+    - grid_t: Temperature field [nλ, nθ, nd]. Modified in-place (lowest level updated).
+    - grid_shflx: Output sensible heat flux [nλ, nθ, 1] in W/m². Modified in-place.
+    
+    - V_c: Surface wind speed magnitude [nλ, nθ].
+    - za: Height of the lowest model level [nλ, nθ].
+    - rho: Air density at the lowest model level [nλ, nθ, nd].
+    
+    - Δt: Physics time step.
+    
+    - C_H: Bulk aerodynamic transfer coefficient for heat (Stanton number). Default 0.0044.
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_t (at index k=nd)
+    - grid_shflx
+
+"""
 function Sensible_Heating!(
     mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     grid_t::Array{Float64, 3}, grid_shflx::Array{Float64, 3},
@@ -106,7 +173,45 @@ end
 
 
 
-"""evaporation directly operates on `grid_q`"""
+"""
+    Surface_Evaporation!(
+        mesh, atmo_data,
+        grid_ps,
+        grid_q, grid_lhflx,
+        V_c, za, rho,
+        Δt, 
+        C_E
+    )
+
+Computes the vertical transport of water vapor from the surface to the lowest atmospheric 
+layer. The scheme employs a backward-implicit time integration to ensure numerical stability 
+and enforces a "no-dew" condition (evaporation only).
+
+### Parameters
+    - mesh: Spectral mesh properties (provides latitude θc).
+    - atmo_data: Atmospheric constants (Lᵥ, Rᵥ, etc.).
+    
+    - grid_ps: Surface pressure [nλ, nθ, 1].
+    
+    - grid_q: Specific humidity field [nλ, nθ, nd]. Modified in-place (lowest level updated).
+    - grid_lhflx: Output latent heat flux [nλ, nθ, 1] in W/m². Modified in-place.
+    
+    - V_c: Surface wind speed magnitude [nλ, nθ].
+    - za: Height of the lowest model level [nλ, nθ].
+    - rho: Air density at the lowest model level [nλ, nθ, nd].
+    
+    - Δt: Physics time step.
+    
+    - C_E: Bulk aerodynamic transfer coefficient for moisture (Dalton number). Default 0.0044.
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_q (at index k=nd)
+    - grid_lhflx
+
+"""
 function Surface_Evaporation!(
     mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
     grid_ps::Array{Float64, 3},
@@ -194,7 +299,45 @@ PBL_Top_Symbol(::ModelLevelBasedPBLTop)    = :ModelLevel
 
 
 """
-    Implicit Boundary Layer Mixing Scheme
+    Implicit_PBL_Mixing!(
+        atmo_data,
+        grid_p_full, grid_p_half, 
+        grid_t, grid_q,
+        K_E, 
+        V_c, za, rho,
+        physics_params,
+        Δt, 
+        C_D
+    )
+
+### Parameters
+    - atmo_data: Atmospheric constants (R, cₚ, g).
+    
+    - grid_p_full: Pressure at layer centers.
+    - grid_p_half: Pressure at layer interfaces.
+    
+    - grid_t: Temperature field [nλ, nθ, nd]. Modified in-place.
+    - grid_q: Specific humidity field [nλ, nθ, nd]. Modified in-place.
+    
+    - K_E: Turbulent diffusivity array [nλ, nθ, nd+1]. Modified in-place (diagnostic).
+    
+    - V_c: Surface wind speed magnitude.
+    - za: Height of the lowest model level.
+    - rho: Air density profile.
+    
+    - physics_params: Dictionary defining the PBL top definition (:PressureLevel or :ModelLevel).
+    
+    - Δt: Physics time step.
+    
+    - C_D: Drag coefficient for momentum/heat. Default 0.0044.
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_t
+    - grid_q
+    - K_E
 
 This function includes:
     1. Calculating turbulent diffusivity (K_E)

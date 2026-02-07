@@ -30,11 +30,11 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     # 3. Vertical Coordinate
     # -------------------------------------------------------
-    # Options: "even_sigma", "uneven_sigma", "hybrid"
+    # Options: "even_sigma", "uneven_sigma", "hybrid", "simmons_and_burridge", "mcm", "v197"
     vert_coord_option::Any    
-    # Options: "simmons_and_burridge", etc.
+    # Options: "simmons_and_burridge".
     vert_difference_option::Any 
-    # Options: "second_centered_wts", etc.
+    # Options: "second_centered_wts", "second_centered".
     vert_ref_level_option::Any  
 
     # -------------------------------------------------------

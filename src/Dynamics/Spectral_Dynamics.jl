@@ -17,6 +17,49 @@ using Statistics
 using Interpolations
 export Compute_Corrections_Init, Compute_Corrections!, Four_In_One!, Spectral_Dynamics!, Get_Topography!, Spectral_Initialize_Fields!, Spectral_Dynamics_Physics!, Atmosphere_Update!
 
+
+
+"""
+    Compute_Corrections_Init(
+        mesh, vert_coord, atmo_data,
+        grid_ps_p,
+        grid_energy_temp, 
+        grid_u_p, grid_v_p, grid_t_p, 
+        grid_δu, grid_δv, grid_δt,  
+        grid_q_p, grid_δq,
+        Δt
+    )
+
+Calculates the global integrals of mass, total energy, and moisture to serve as 
+conservation targets. These values are computed using the state at (t-1) projected 
+forward by the explicit tendencies to ensure that the subsequent semi-implicit 
+update and filtering steps do not violate global conservation laws.
+
+### Parameters
+    - mesh: Spectral spherical mesh properties.
+    - vert_coord: Vertical coordinate definitions.
+    - atmo_data: Atmospheric physical constants and flags (do_mass_correction, etc.).
+
+    - grid_ps_p: Surface pressure at the previous time step (t-1) [nλ, nθ, 1].
+    
+    - grid_energy_temp: Temporary work array for energy calculation [nλ, nθ, nd].
+    
+    - grid_u_p, grid_v_p: Horizontal wind components at (t-1).
+    - grid_t_p: Temperature at (t-1).
+    
+    - grid_δu, grid_δv, grid_δt: Explicit time tendencies for winds and temperature.
+    
+    - grid_q_p: Specific humidity at (t-1).
+    - grid_δq: Explicit time tendency for specific humidity.
+    
+    - Δt: Time step size (integer).
+
+### Returns
+    - mean_ps_p: Global mean surface pressure (Mass target).
+    - mean_energy_p: Global integral of total energy (Enthalpy + Kinetic).
+    - mean_moisture_p: Global integral of specific humidity.
+
+"""
 function Compute_Corrections_Init(
     mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
     atmo_data::Atmo_Data,
@@ -47,6 +90,49 @@ end
 
 
 
+"""
+    Compute_Corrections!(
+        mesh, vert_coord, atmo_data,
+        mean_ps_p, grid_ps_n, spe_lnps_n, 
+        mean_energy_p, grid_energy_temp, 
+        grid_u_n, grid_v_n, grid_t_n, spe_t_n,
+        mean_moisture_p, grid_q_n
+    )
+
+Adjusts the updated atmospheric state fields (grid_*_n) to strictly enforce global 
+conservation laws for mass, energy, and water vapor. The correction is applied 
+multiplicatively for mass and moisture, and additively for temperature (energy).
+
+### Parameters
+    - mesh: Spectral spherical mesh properties.
+    - vert_coord: Vertical coordinate definitions.
+    - atmo_data: Atmospheric physical constants.
+
+    - mean_ps_p: Target global mean surface pressure (computed in `Compute_Corrections_Init`).
+    - grid_ps_n: Updated surface pressure field at (t+Δt). Modified in-place.
+    - spe_lnps_n: Spectral coefficient of log-surface pressure (0,0 mode modified).
+    
+    - mean_energy_p: Target global total energy integral.
+    - grid_energy_temp: Temporary work array.
+    
+    - grid_u_n, grid_v_n: Updated horizontal wind components at (t+Δt).
+    - grid_t_n: Updated temperature field at (t+Δt). Modified in-place.
+    - spe_t_n: Spectral coefficients of temperature. Modified in-place.
+    
+    - mean_moisture_p: Target global moisture integral.
+    - grid_q_n: Updated specific humidity field at (t+Δt). Modified in-place.
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_ps_n
+    - spe_lnps_n
+    - grid_t_n
+    - spe_t_n
+    - grid_q_n
+
+"""
 function Compute_Corrections!(
     mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
     atmo_data::Atmo_Data,
@@ -86,17 +172,78 @@ end
 
 
 """
-compute vertical mass flux and velocity 
-grid_M_half[:,:,k+1] = downward mass flux/per unit area across the K+1/2
-grid_w_full[:,:,k]   = dp/dt vertical velocity 
+    Four_In_One!(
+        vert_coord, atmo_data, 
+        grid_div, grid_u, grid_v, 
+        grid_ps, grid_Δp, grid_lnp_half, grid_lnp_full, grid_p_full,
+        grid_dλ_ps, grid_dθ_ps, 
+        grid_t, 
+        grid_M_half, grid_w_full, 
+        grid_δu, grid_δv, grid_δps, grid_δt, grid_δq
+    )
 
-update residuals
-grid_δps[:,:,k]  += -∑_{r=1}^nd Dr = -∑_{r=1}^nd ∇(vrΔp_r)
-grid_δt[:,:,k]   += κTw/p 
-(grid_δu[:,:,k], grid_δv[:,:,k]) -= RT ∇p/p 
+Simultaneously computes the vertical mass flux (M), pressure vertical velocity (ω), 
+and updates the tendencies for temperature, momentum, and surface pressure based 
+on the adiabatic primitive equations.
 
-!  cell boundary. This is the "vertical velocity" in the hybrid coordinate system.
-!  When vertical coordinate is pure sigma: grid_M_half = grid_ps*d(sigma)/dt
+### Parameters
+    - vert_coord: Vertical discretization parameters.
+    - atmo_data: Physical constants.
+
+    - grid_div: Divergence field [nλ, nθ, nd].
+    - grid_u, grid_v: Zonal and meridional wind components.
+    
+    - grid_ps: Surface pressure.
+    - grid_Δp: Pressure thickness of layers.
+    - grid_lnp_half, grid_lnp_full: Log-pressure at interfaces and layer centers.
+    - grid_p_full: Pressure at layer centers.
+    
+    - grid_dλ_ps, grid_dθ_ps: Zonal and meridional gradients of surface pressure.
+    
+    - grid_t: Temperature field.
+    
+    - grid_M_half: Output vertical mass flux at interfaces [nλ, nθ, nd+1].
+    - grid_w_full: Output vertical velocity (ω = dp/dt) at layer centers [nλ, nθ, nd].
+    
+    - grid_δu, grid_δv: Momentum tendencies. Modified in-place (pressure gradient force subtracted).
+    - grid_δps: Surface pressure tendency. Modified in-place (continuity equation).
+    - grid_δt: Temperature tendency. Modified in-place (energy conversion added).
+    - grid_δq: Moisture tendency (passed but currently unused in this kernel).
+
+### Returns
+    - nothing
+
+### Modified
+    - grid_M_half
+    - grid_w_full
+    - grid_δu, grid_δv
+    - grid_δps
+    - grid_δt
+
+### Notes
+    - **Continuity Equation (Surface Pressure):**
+    ∂pₛ/∂t = -∑ₖ ∇⋅(𝐯ₖ Δpₖ)
+    The function accumulates the divergence of mass flux (`dmean`) down the column 
+    to find the total surface pressure tendency (`dmean_tot`).
+
+    - **Vertical Mass Flux (M):**
+    Represents the vertical mass flux relative to the hybrid coordinate surfaces:
+    Mₖ₊½ = -∑_{r=1}ᵏ ∇⋅(𝐯ᵣ Δpᵣ) - Bₖ₊½ (∂pₛ/∂t)
+
+    - **Pressure Gradient Force (Momentum):**
+    Updates the momentum tendencies by subtracting the gradient of geopotential/pressure:
+    δu -= RT ⋅ ∇lnp
+    The gradient ∇lnp is computed locally using the chain rule on surface pressure 
+    gradients and vertical coordinate coefficients.
+
+    - **Energy Conversion (Temperature):**
+    Updates the temperature tendency with the adiabatic expansion/compression term:
+    δT += κ T ω / p
+    
+    - **Vertical Velocity (ω):**
+    Computed as the total derivative of pressure:
+    ω = dp/dt = ∂p/∂t + 𝐯⋅∇p + M ∂p/∂σ
+
 """
 function Four_In_One!(
     vert_coord::Vert_Coordinate, atmo_data::Atmo_Data, 
@@ -165,12 +312,13 @@ function Four_In_One!(
                     # grid_δt += κT w/p
                     grid_δt[i, j, k] += kappa * grid_t[i, j, k] * x5
                     
-                    # grid_w_full = w
+                    # grid_w_full[:,:,k] = dp/dt vertical velocity 
                     grid_w_full[i, j, k] = x5 * grid_p_full[i, j, k]
                     
                     # update dmean_tot to ∑_{r=1}^k ∇⋅(v_r * Δp_r)
                     dmean_tot += dmean
                     
+                    # grid_M_half[:,:,k+1] = downward mass flux/per unit area across the K+1/2
                     # M_{k+1/2} = -∑_{r=1}^k ∇(vrΔp_r) - B_{k+1/2}∂ps/∂t
                     grid_M_half[i, j, k+1] = -dmean_tot
 
@@ -199,11 +347,49 @@ end
 
 
 """
+    Spectral_Dynamics!(
+        config,
+        mesh, vert_coord, 
+        atmo_data, dyn_data, 
+        semi_implicit
+    )
+
+Performs one full time step of the primitive equations using a spectral transform method 
+combined with a semi-implicit semi-Lagrangian (or Eulerian) time integration scheme.
+
+### Parameters
+    - config: Model configuration struct (physics switches, options).
+    - mesh: Spectral spherical mesh properties (transforms, wavenumbers).
+    - vert_coord: Vertical grid coordinates (hybrid sigma-pressure).
+    - atmo_data: Atmospheric constants and parameters.
+    - dyn_data: The main data container holding state variables for previous (p), current (c), and next (n) time steps.
+    - semi_implicit: Solver structure for the implicit gravity wave correction.
+
+### Returns
+    - nothing
+
+### Modified
+    - dyn_data
+
+### Notes
+    - **Algorithm Sequence:**
+    1. **Conservation Check:** Computes global mass/energy integrals of the previous state.
+    2. **Grid-Point Physics:** Updates pressure variables and computes gradients ∇pₛ.
+    3. **Adiabatic Tendencies:** Calls `Four_In_One!` to compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
+    4. **Vertical Advection:** Explicitly computes vertical advection for u, v, T, and tracers.
+    5. **Horizontal Advection:** Computes non-linear advection terms.
+    6. **Vector Invariant Formulation:** Computes vorticity and divergence tendencies (ηv, ηu) and kinetic energy (E = Φ + ½(u² + v²)).
+    7. **Semi-Implicit Solve:** Inverts the Helmholtz equation in spectral space to stabilize gravity waves (`Implicit_Correction!`).
+    8. **Spectral Damping:** Applies ∇²ⁿ hyper-diffusion to dampen small-scale noise.
+    9. **Time Integration:** Advances the state using `Filtered_Leapfrog!` (Robert-Asselin-Williams filter).
+    10. **Conservation Fixer:** Corrects the final predicted state to match global integrals.
+    11. **Time Advance:** Rotates time indices (p ← c, c ← n).
+
 The governing equations are
-∂div/∂t = ∇ × (A, B) - ∇^2E := f^d                    
-∂lnps/∂t= (-∑_k div_k Δp_k + v_k ∇ Δp_k)/ps := f^p    
-∂T/∂t = -(u,v)∇T - dσ∂T∂σ + κTw/p + J:= f^t           
-Φ = f^Φ                                               
+∂div/∂t  = ∇ × (A, B) - ∇^2E := f^d                    
+∂lnps/∂t = (-∑_k div_k Δp_k + v_k ∇ Δp_k)/ps := f^p    
+∂T/∂t    = -(u,v)∇T - dσ∂T∂σ + κTw/p + J:= f^t           
+Φ        = f^Φ                                               
 
 implicit part: -∇^2Φ - ∇(RT∇lnp) ≈ I^d = -∇^2(γT + H2 ps_ref lnps) - ∇^2 H1 ps_ref lnps, here RT∇lnp ≈  H1 ps_ref ∇lnps
 implicit part:  f^p              ≈ I^p = -ν div / ps_ref
@@ -426,6 +612,56 @@ end
 
 
 
+"""
+    Spectral_Initialize_Fields!(
+        config,
+        mesh, vert_coord, 
+        atmo_data, dyn_data,
+        sea_level_ps_ref, init_t, grid_geopots
+    )
+
+Initializes the prognostic variables (u, v, T, ln(pₛ)) for the start of the simulation. 
+It sets up a balanced initial state (often a zonal jet or a state of rest) perturbed 
+by small-amplitude noise in the vorticity field to initiate baroclinic wave growth.
+
+### Parameters
+    - config: Model configuration struct.
+    - mesh: Spectral spherical mesh properties.
+    - vert_coord: Vertical coordinate definitions.
+    - atmo_data: Atmospheric constants.
+    - dyn_data: Data container for state variables. Modified in-place.
+    - sea_level_ps_ref: Reference sea-level pressure (Pa).
+    - init_t: Initial isothermal temperature (K) used for the basic state.
+    - grid_geopots: Surface geopotential (topography) [nλ, nθ, 1].
+
+### Returns
+    - nothing
+
+### Modified
+    - dyn_data
+
+### Notes
+    - **Surface Pressure Initialization:**
+    Derived hydrostatically from the surface geopotential (`grid_geopots`) and the 
+    reference sea-level pressure, assuming an isothermal atmosphere at `init_t`:
+    ln(pₛ) = ln(pₛ_ref) - Φ_surf / (R_d ⋅ T_init)
+
+    - **Perturbation:**
+    Adds a small Gaussian noise or specific spectral mode perturbation to the 
+    vorticity field (`spe_vor_c`) to break symmetry and allow baroclinic instability 
+    to develop. The perturbation magnitude is scaled by `1.0e-7/sqrt(2.0)`.
+
+    - **Consistency:**
+    After setting the spectral vorticity and divergence, it calls `UV_Grid_From_Vor_Div!` 
+    and `Pressure_Variables!` to ensure that the grid-point winds (u, v) and 
+    diagnostic pressure variables (p_half, Δp, etc.) are fully consistent with 
+    the spectral state.
+    
+    - **Moisture:**
+    If `config.moisture_processes` is enabled, it calls `Initialize_Analytic_Moisture!` 
+    to set up an idealized specific humidity profile.
+
+"""
 function Spectral_Initialize_Fields!(
     config::Model_Config,
     mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate, 
@@ -514,9 +750,51 @@ end
 
 
 
-function Initialize_Analytic_Moisture!(
-    mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, dyn_data::Dyn_Data
-)
+"""
+    Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data)
+
+Initializes the specific humidity field (q) with an idealized, analytically defined 
+profile. This function sets up a symmetric moisture distribution centered at the 
+equator and the surface, which decays with both latitude and height.
+
+### Parameters
+    - mesh: Spectral spherical mesh properties (nλ, nθ).
+    - atmo_data: Atmospheric constants (constants used in profile definition).
+    - dyn_data: The main data container. Modified in-place to store the moisture fields.
+
+### Returns
+    - nothing
+
+### Modified
+    - dyn_data.grid_q_c
+    - dyn_data.spe_q_c
+    - dyn_data.grid_q_p
+    - dyn_data.spe_q_p
+
+### Notes
+    - **Profile Definition:**
+    The moisture field is defined by:
+    q(λ, θ, p) = qv₀ ⋅ exp( -((p/pₛ - 1) ⋅ (p₀/p_hw))² ) ⋅ exp( -(θ/φ_hw)⁴ )
+
+    Where:
+    - qv₀ = 0.018 kg/kg (Maximum surface specific humidity at equator)
+    - p_hw = 30000 Pa (Vertical decay scale parameter)
+    - φ_hw ≈ 40° (Meridional decay scale parameter)
+    - p₀ = 100000 Pa (Reference pressure)
+    - θ_c = latitude
+
+    - **Spectral Consistency:**
+    After computing the analytic values on the grid, the function performs a forward 
+    transform (`Trans_Grid_To_Spherical!`) followed by a backward transform 
+    (`Trans_Spherical_To_Grid!`). This ensures the initial field is consistent with 
+    the spectral truncation of the model, removing sub-grid scale features that 
+    cannot be represented.
+
+    - **Boundary Condition:**
+    Moisture at the model top (level k=1) is explicitly forced to 0.0.
+
+"""
+function Initialize_Analytic_Moisture!(mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data, dyn_data::Dyn_Data)
     
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
 

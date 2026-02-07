@@ -82,17 +82,14 @@ mutable struct Dyn_Data
     grid_vor::Array{Float64, 3}
     grid_δvor::Array{Float64, 3}
     
-    
     # div
     spe_δdiv::Array{ComplexF64, 3}
     grid_div::Array{Float64, 3}
     grid_δdiv::Array{Float64, 3}
     
-
     # w-e velocity tendency
     spec_δu::Array{ComplexF64, 3}
     grid_δu::Array{Float64, 3}
-    
     
     # n-s velocity tendency
     spec_δv::Array{ComplexF64, 3}
@@ -103,14 +100,13 @@ mutable struct Dyn_Data
     grid_lnps::Array{Float64, 3}
     grid_δlnps::Array{Float64, 3}
     
-
     grid_δps::Array{Float64, 3}
 
-    grid_p_full::Array{Float64, 3} # pressure at full level
-    grid_p_half::Array{Float64, 3} # pressure at half level
-    grid_lnp_full::Array{Float64, 3} # ln pressure at full level
-    grid_lnp_half::Array{Float64, 3} # ln pressure at half level
-    grid_Δp::Array{Float64, 3}       # pressure difference at each level
+    grid_p_full::Array{Float64, 3}      # pressure at full level
+    grid_p_half::Array{Float64, 3}      # pressure at half level
+    grid_lnp_full::Array{Float64, 3}    # ln pressure at full level
+    grid_lnp_half::Array{Float64, 3}    # ln pressure at half level
+    grid_Δp::Array{Float64, 3}          # pressure difference at each level
 
     # pressure gradient
     grid_dλ_ps::Array{Float64, 3} 
@@ -174,7 +170,54 @@ mutable struct Dyn_Data
 
 end
 
-function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, num_tracers::Int64=1)
+
+
+"""
+    Dyn_Data(name, num_fourier, num_spherical, nλ, nθ, nd, num_tracers)
+
+Initializes the monolithic data structure `Dyn_Data` for the spectral dynamical core. This function
+allocates contiguous memory for all prognostic state variables, diagnostic fields, time tendencies,
+and vertical coordinate metrics required for the numerical simulation.
+
+The structure is designed to support a three-time-level integration scheme (e.g., Leapfrog),
+maintaining distinct storage for Previous (p), Current (c), and Next (n) states. It manages the
+dual-representation of the atmospheric state in both spectral space (Spherical Harmonics) and
+physical grid space.
+
+Memory Allocation Strategy:
+1. Spectral Variables:
+Allocated as 3D Complex arrays of size (num_fourier+1, num_spherical+1, nd).
+Represents coefficients Aₙᵐ for the expansion:
+ψ(λ, μ, η) = ∑_{m=-M}^{M} ∑_{n=|m|}^{N} Aₙᵐ(η) Yₙᵐ(λ, μ)
+
+2. Grid Variables:
+Allocated as 3D Real arrays of size (nλ, nθ, nd).
+Represents physical values on the Gaussian grid (Longitude × Latitude × Level).
+
+3. Vertical Geometry:
+Allocated for both full levels (layer centers, index k) and half levels (interfaces, index
+k+½). Supports hybrid σ-p or similar vertical coordinates.
+
+4. Work Arrays:
+Pre-allocates temporary containers (e.g., `spe_d1`, `grid_d_full1`) to minimize garbage
+collection overhead during high-frequency time stepping.
+
+### Parameters
+    - name: Simulation name.
+    - num_fourier: Maximum Fourier wavenumber.
+    - num_spherical: Maximum spherical wavenumber.
+    - nλ: Longitudinal grid size.
+    - nθ: Latitudinal grid size.
+    - num_tracers: Number of passive tracers.
+
+### Returns
+    - Dyn_Data: A fully initialized data struct.
+
+### Modified
+    - nothing
+
+"""
+function Dyn_Data(name::String, num_fourier::Int64, num_spherical::Int64, nλ::Int64, nθ::Int64, nd::Int64, num_tracers::Int64 = 1)
     # specral vor 
     spe_vor_n = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
     spe_vor_c = zeros(ComplexF64, num_fourier+1, num_spherical+1, nd)
@@ -363,6 +406,23 @@ end
 
 
 
+"""
+    Time_Advance!(dyn_data)
+
+Performs the temporal cycling of the prognostic state variables to advance the simulation clock.
+This function shifts the time window of the model state by updating the storage buffers for the
+Three-Time-Level integration scheme (e.g., Leapfrog).
+
+### Parameters
+    - dyn_data: `Dyn_Data` struct.
+
+### Returns
+    - nothing
+
+### Modified
+    - dyn_data
+
+"""
 function Time_Advance!(dyn_data::Dyn_Data)
     # update spectral variables
     dyn_data.spe_vor_p .= dyn_data.spe_vor_c
@@ -380,6 +440,10 @@ function Time_Advance!(dyn_data::Dyn_Data)
     dyn_data.spe_q_p .= dyn_data.spe_q_c
     dyn_data.spe_q_c .= dyn_data.spe_q_n
 
+    if dyn_data.num_tracers > 0
+        dyn_data.spe_tracers_p .= dyn_data.spe_tracers_c
+        dyn_data.spe_tracers_c .= dyn_data.spe_tracers_n
+    end
 
     # update grid variables
     dyn_data.grid_u_p .= dyn_data.grid_u_c
@@ -396,6 +460,11 @@ function Time_Advance!(dyn_data::Dyn_Data)
     
     dyn_data.grid_q_p .= dyn_data.grid_q_c
     dyn_data.grid_q_c .= dyn_data.grid_q_n
+
+    if dyn_data.num_tracers > 0
+        dyn_data.grid_tracers_p .= dyn_data.grid_tracers_c
+        dyn_data.grid_tracers_c .= dyn_data.grid_tracers_n
+    end
     
 end
 

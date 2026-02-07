@@ -38,49 +38,50 @@ Mathematical Formulation:
 """
 function Compute_Legendre(num_fourier, num_spherical, sinθ, nθ)
 
+    # Associated Legendre polynomials and their derivatives
     qnm  = zeros(Float64, num_fourier+1, num_spherical+2, nθ)
     dqnm = zeros(Float64, num_fourier+1, num_spherical+1, nθ)
-
+    
     cosθ = sqrt.(1 .- sinθ.^2)
-    ε = zeros(Float64, num_fourier+1, num_spherical+2)
+    ε    = zeros(Float64, num_fourier+1, num_spherical+2)
 
+    # The diagonal recurrence (l == m)
     qnm[1, 1, :] .= 1.0
     for m = 1:num_fourier
-        qnm[m+1, m+1, :] = sqrt((2m+1)/(2m)) .* cosθ .* qnm[m, m,:]
+        qnm[m+1, m+1, :] = sqrt((2m+1)/(2m)) .* cosθ .* qnm[m, m, :]
     end
     
+    # The semi-diagonal recurrence (l == m+1)
     for m = 1:num_fourier+1
-        qnm[m, m+1, :] = sqrt(2*m+1) * sinθ .* qnm[m,m, :] 
+        qnm[m, m+1, :] = sqrt(2*m+1) * sinθ .* qnm[m, m, :] 
     end
     
+    # Normalization factors
     for m = 0:num_fourier
         for l = m:num_spherical+1
-            #ε[m,l] = sqrt(((l-1)^2 - (m-1)^2) ./ (2*(l-1) + 1))
-            ε[m+1,l+1] = sqrt((l^2 - m^2) ./ (4*l^2 - 1))
+            ε[m+1, l+1] = sqrt((l^2 - m^2) ./ (4*l^2 - 1))
         end
     end
 
+    # The main loop (l > m+1)
     for m = 0:num_fourier
         for l = m+2:num_spherical+1
-            #m=0, l=2
-            #qnm[m+1,l+1,:] = sqrt(2*l-1) /ε[m+1,l+1] * (sinθ .* qnm[m+1,l,:] -  ε[m+1,l]/sqrt(2*l-3)*qnm[m+1,l-1,:])
-            qnm[m+1,l+1,:] = (sinθ .* qnm[m+1,l,:] -  ε[m+1,l]*qnm[m+1,l-1,:])/ε[m+1,l+1]
+            qnm[m+1, l+1, :] = (sinθ .* qnm[m+1, l, :] -  ε[m+1, l] * qnm[m+1, l-1, :]) / ε[m+1, l+1]
         end
     end
 
+    # Derivatives
     for m = 0:num_fourier
         for l = m:num_spherical
             if l == m
-                dqnm[m+1,l+1,:] = (-l*ε[m+1, l+2]*qnm[m+1,l+2,:])./(cosθ.^2)
+                dqnm[m+1, l+1, :] = (-l * ε[m+1, l+2] * qnm[m+1, l+2, :]) ./ (cosθ.^2)
             else
-                dqnm[m+1,l+1,:] = (-l*ε[m+1, l+2]*qnm[m+1,l+2,:] + (l+1)*ε[m+1,l+1]*qnm[m+1,l,:])./(cosθ.^2)
+                dqnm[m+1, l+1, :] = (-l * ε[m+1, l+2] * qnm[m+1, l+2, :] + (l+1) * ε[m+1, l+1] * qnm[m+1, l, :]) ./ (cosθ.^2)
             end
-
         end
     end
 
-    return qnm[:,1:num_spherical+1,:], dqnm
-    # d P_{m,l}/dμ = -nε[m,l+1]P_{m,l+1} + (l+1)ε_{m,l}P_{m,l-1}     
+    return qnm[:, 1:num_spherical+1, :], dqnm
 end
     
 
@@ -114,28 +115,30 @@ Mathematical Formulation:
 function Compute_Gaussian(n)
     
     itermax = 10000
-    tol = 1.0e-15
+    tol     = 1.0e-15
 
     sinθ = zeros(Float64, n)
-    wts = zeros(Float64, n)
+    wts  = zeros(Float64, n)
 
     n_half = Int64(n/2)
-    for i=1:n_half
+    for i = 1:n_half
         dp = 0.0
         z = cos(pi*(i - 0.25)/(n + 0.5))
-        for iter=1:itermax
+        
+        for iter = 1:itermax
             p2 = 0.0
             p1 = 1.0
             
-            for j=1:n
+            for j = 1:n
                 p3 = p2 # Pj-2
                 p2 = p1 # Pj-1
                 p1 = ((2.0*j - 1.0)*z*p2 - (j - 1.0)*p3)/j  #Pj
             end
+
             # P'_n
-            dp = n*(z*p1 - p2)/(z*z - 1.0)
+            dp = n * (z * p1 - p2) / (z * z - 1.0)
             z1 = z
-            z  = z1 - p1/dp
+            z  = z1 - p1 / dp
             if(abs(z - z1) <= tol)
                 break;
             end
@@ -144,8 +147,8 @@ function Compute_Gaussian(n)
             end
         end
         
-        sinθ[i], sinθ[n-i+1],  = -z, z
-        wts[i] = wts[n-i+1]  = 2.0/((1.0 - z*z)*dp*dp)
+        sinθ[i], sinθ[n-i+1] = -z, z
+        wts[i] = wts[n-i+1]  = 2.0 / ((1.0 - z * z) * dp * dp)
     end
 
     return sinθ, wts
