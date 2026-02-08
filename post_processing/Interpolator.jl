@@ -164,7 +164,7 @@ function Interpolate_File(
 end
 
 # CLI Entry Point
-# Usage: julia --project= post_processing/Interpolator.jl $INPUT_FILE $OUTPUT_FILE
+# Usage: julia --project= post_processing/Interpolator.jl $INPUT_FILE $OUTPUT_FILE [levels...]
 if abspath(PROGRAM_FILE) == @__FILE__
     if length(ARGS) < 2
         println("Usage: julia --project post_processing/Interpolator.jl <input.nc> <output.nc> [levels...]")
