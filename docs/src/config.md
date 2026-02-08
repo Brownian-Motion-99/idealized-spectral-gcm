@@ -17,6 +17,31 @@ These flags enable global multiplicative correctors to enforce conservation laws
 | `"do_water_correction"` | `Bool` | `true` | Rescales specific humidity to conserve total moisture. |
 | `"use_virtual_temperature"` | `Bool` | `true` | Uses virtual temperature ($T_v$) in hydrostatic balance and density calculations. |
 
+### Large-scale Condensation
+
+This is the configuration of `Lscale_Cond.jl`, controlling grid scale condensation.
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `"do_Lscale_Cond"` | `Bool` | `true` | Master switch for the module. |
+| `"L"` | `Float64` | `0.2` | Latent heating efficiency (ranges from 0.0 to 1.0). |
+
+### Planetary Boundary Layer Processes
+
+Configuration of `PBL.jl`, handling PBL-related processes, including surface sensible heat fluxes, surface latent heat fluxes, and PBL mixing for sensible/latent heat.
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `"do_Sensible_Heating"` | `Bool` | `true` | Toggle of surface sensible heat fluxes. |
+| `"C_H"` | `Float64` | `0.0044` | Sensible heat flux coefficient. |
+| `"do_Surface_Evaporation"` | `Bool` | `true` | Toggle of surface evaporation (latent heat fluxes). |
+| `"C_E"` | `Float64` | `0.0044` | Latent heat flux (evaporation) coefficient. |
+| `"do_Implicit_PBL_Scheme"` | `Bool` | `true` | Toggle of PBL mixing. |
+| `"C_D"` | `Float64` | `0.0044` | Drag coefficient. |
+| `"PBL_Top_Mode"` | `Symbol` | `:PressureLevel` | PBL top mode (`:PressureLevel` or `:ModelLevel`). |
+| `"PBL_Top_Value"` | `Any` | `85000.0` | PBL top value (`Float64` or `int`, `Float64` for `:PressureLevel`, `int` for `:ModelLevel`). |
+
+
 ### Held-Suarez Forcing Parameters
 
 Controlled by `HS_Forcing.jl`. These parameters define the relaxation toward the zonally symmetric equilibrium state.
@@ -189,29 +214,108 @@ Variables for the purely barotropic vorticity equation.
 
 ### Example Configuration Script
 
+
 ```julia
-# 1. Physics
+using JGCM
+
+# 1. Physics Configuration
 physics_params = Dict{String, Any}(
-    "do_mass_correction" => true,
-    "do_HS_Forcing"      => true,
-    "σ_b"                => 0.7
+    
+    # Corrections    
+    "do_mass_correction"      => true,
+    "do_energy_correction"    => true,
+    "do_water_correction"     => true,
+    "use_virtual_temperature" => true,
+
+    # Grid scale condensation
+    "do_Lscale_Cond" => true,
+    "L"              => 0.2,
+
+    # PBL fluxes
+    "do_Sensible_Heating"    => true,
+    "C_H"                    => 0.0044,
+    "do_Surface_Evaporation" => true,
+    "C_E"                    => 0.0044,
+    "do_Implicit_PBL_Scheme" => true,
+    "C_D"                    => 0.0044,
+    
+    "PBL_Top_Mode"  => :PressureLevel,
+    "PBL_Top_Value" => 85000.0,
+
+    # Held-Suarez
+    "do_HS_Forcing" => true,
+    "σ_b"           => 0.7,
+    "k_a"           => 1.0/(40.0),
+    "k_s"           => 1.0/(4.0),
+    "k_f"           => 1.0/(1.0),
+    "ΔT_y"          => 60.0, 
+    "Δθ_z"          => 10.0
 )
 
-# 2. Config
+# 2. Define Output Paths *Before* Configuration
+experiment_name  = "HSt42"
+output_path_base = joinpath("exp", experiment_name) 
+mkpath(output_path_base)
+
+# 3. Model Configuration
 config = Model_Config(
-    name        = "HSt21",
-    model_type  = :PrimitiveEquation,
-    num_fourier = 21, nθ = 32, nd = 20,
-    vert_coord_option = "simmons_and_burridge",
+
+    name = "HS_Moist_T42",
+    model_type = :PrimitiveEquation,
     
-    Δt = 600, end_time = 86400 * 10,
+    # Resolution
+    num_fourier = 42, 
+    nθ          = 64, 
+    nd          = 20, 
     
-    is_restart   = false,
-    output_path  = "exp/HSt21",
+    # Vertical Coordinate
+    vert_coord_option      = "even_sigma", 
+    vert_difference_option = "simmons_and_burridge", 
+    vert_ref_level_option  = "second_centered_wts",
+    
+    # Planet Settings
+    radius     = 6371.0e3, 
+    omega      = 7.292e-5, 
+    grav       = 9.80,
+    day_to_sec = 86400,
+    
+    # Time Integration
+    Δt         = 600,
+    end_time   = 86400 * 4,
+    spinup_day = 0.0,
+    
+    # Numerics
+    damping_order = 4, 
+    damping_coef  = 1.15741e-4, 
+    robert_coef   = 0.04, 
+    implicit_coef = 0.5,
+    
+    # Restart
+    is_restart        = false,
+    restart_file      = "",
+    restart_frequency = 0,    # disable saving restarts
+
+    # Cold start
+    initial_condition = :Moist_Spinup,
+
+    # Physics
+    moisture_processes = true,
+    num_tracers = 1,
+    
+    # IO
+    output_path     = output_path_base,
+    output_filename = joinpath(output_path_base, "output.nc"),
+    logger          = joinpath(output_path_base, "logger.log"),
+
+    do_raw_output   = true,
+    pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
+    vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
+    output_interval = 86400,
+    
+    # Physics
     physics_params = physics_params
 )
 
-# 3. Run
+# 4. Run Simulation
 JGCM_Simulate(config)
-
 ```
