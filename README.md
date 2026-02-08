@@ -11,9 +11,20 @@ This is a modern refactor of the spectral dynamical core originally developed by
 ## Features
 * **Pure Julia:** High-performance, hackable codebase.
 * **Spectral Dynamics:** Accurate T21/T42... spectral transforms.
-* **Modular Physics:** Plug-and-play parameterizations (Held-Suarez, Large Scale Condensation).
+* **Modular Physics:** Plug-and-play parameterizations (Held-Suarez, Large Scale Condensation, etc.).
 
 ## Installation
 ```shell
 git clone https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git
+```
+
+## Quick Start
+T21 dry Held-Suarez run
+```shell
+julia --project=. exp/HSt21/HS.jl
+```
+
+T42 moist Held-Suarez run
+```shell
+julia --project=. exp/HSt42/HS.jl
 ```
