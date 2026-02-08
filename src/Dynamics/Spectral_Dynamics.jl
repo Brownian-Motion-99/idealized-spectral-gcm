@@ -278,11 +278,11 @@ function Four_In_One!(
                     Δlnp_m = grid_lnp_full[i, j, k]   - grid_lnp_half[i, j, k]
                     Δlnp   = grid_lnp_half[i, j, k+1] - grid_lnp_half[i, j, k]
 
-                    # Solenoidal
+                    # Pressure gradient force
                     # ∇p_k/p = [(lnp_k - lnp_{k-1/2}) * ∇p_{k-1/2} + (lnp_{k+1/2} - lnp_k) * ∇p_{k+1/2}] / Δpk
                     #        = [(lnp_k - lnp_{k-1/2}) * b_{k-1/2} + (lnp_{k+1/2} - lnp_k) * b_{k+1/2}] / Δpk * ∇ps
                     #        = x1 * ∇ps
-                    x1      = (bk[k] * Δlnp_m + bk[k+1] * Δlnp_p) / Δp
+                    x1      = (bk[k] * Δlnp_m + bk[k+1] * Δlnp_p) / Δp    # Pressure gradient mapper
                     dlnp_dλ = x1 * grid_dλ_ps[i, j, 1]
                     dlnp_dθ = x1 * grid_dθ_ps[i, j, 1]
 
@@ -296,17 +296,17 @@ function Four_In_One!(
 
                     # energy conservation for temperature
                     # w/p = dlnp/dt = ∂lnp/∂t + ∂lnp/∂σ dσ + v⋅∇lnp
-                    # ∂ξ_k/∂σ dσ = [M_{k+1/2}(ξ_k+1/2 - ξ_k) + M_{k-1/2}(ξ_k - ξ_k-1/2)]/Δp_k
+                    # ∂ξ_k/∂σ dσ = [M_{k+1/2}(ξ_k+1/2 - ξ_k) + M_{k-1/2}(ξ_k - ξ_k-1/2)]/Δp_k, where ξ is a dummy variable
                     # weight the same way
                     # vertical advection operator (M is the downward speed)
                     # ∂lnp_k/∂σ dσ = [M_{k+1/2} (lnp_k+1/2 - lnp_k) + M_{k-1/2} (lnp_k - lnp_k-1/2)] / Δp_k
                     # ∂lnp/∂t = 1/p ∂p/∂t = [∂p/∂t_{k+1/2} (lnp_k+1/2 - lnp_k) + ∂p/∂t_{k-1/2} (lnp_k - lnp_k-1/2)] / Δp_k
                     # As we know
                     # ∂p/∂t_{k+1/2} = -∑_{r=1}^k Dr - M_{k+1/2}
-                    
+                    # Therefore
                     # ∂lnp/∂t + dσ ∂lnp/∂σ =  [(-∑_{r=1}^k Dr)(lnp_k+1/2 - lnp_k) + (-∑_{r=1}^{k-1} Dr)(lnp_k - lnp_k-1/2)]/Δp_k
                     #                      = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k
-                    
+                    # w/p = x5 = -[(∑_{r=1}^{k-1} Dr)(lnp_k+1/2 - lnp_k-1/2) + D_k(lnp_k+1/2 - lnp_k)]/Δp_k + v⋅∇lnp
                     x5 = -(dmean_tot * Δlnp + dmean * Δlnp_p) / Δp + grid_u[i, j, k] * dlnp_dλ + grid_v[i, j, k] * dlnp_dθ
                     
                     # grid_δt += κT w/p
@@ -442,7 +442,6 @@ function Spectral_Dynamics!(
 
     grid_z_full       = dyn_data.grid_z_full
     grid_z_half       = dyn_data.grid_z_half
-    grid_δq     = dyn_data.grid_δq 
 
     K_E               = dyn_data.K_E
     # pressure difference
