@@ -4,7 +4,9 @@
 *.log
 *.ipynb
 .DS_Store
+docs/Manifest.toml
 
 *.ipynb_checkpoints/
 .vscode/
 *restart/
+docs/build/
