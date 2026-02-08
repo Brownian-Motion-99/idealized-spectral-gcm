@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Output_Manager, Update_Output!, Finalize_Output!
 export Lat_Lon_Pcolormesh, Zonal_Mean, Sigma_Zonal_Mean_Pcolormesh, Sigma_Zonal_Mean_Contourf
                              

@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Barotropic_Dynamics!
 function Barotropic_Dynamics!(mesh::Spectral_Spherical_Mesh, 
                               atmo_data::Atmo_Data, dyn_data::Dyn_Data, 

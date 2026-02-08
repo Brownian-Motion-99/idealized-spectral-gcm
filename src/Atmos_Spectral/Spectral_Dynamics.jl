@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Compute_Corrections_Init, Compute_Corrections!, Four_In_One!, Spectral_Dynamics!, Get_Topography!, Spectral_Initialize_Fields!, Spectral_Dynamics_Physics!, Atmosphere_Update!
 
 

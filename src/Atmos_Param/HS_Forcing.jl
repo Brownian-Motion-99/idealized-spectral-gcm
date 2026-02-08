@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 function HS_Forcing!(atmo_data::Atmo_Data, Δt::Int64, sinθ::Array{Float64, 1}, grid_u::Array{Float64, 3}, grid_v::Array{Float64, 3}, grid_p_half::Array{Float64, 3}, grid_p_full::Array{Float64, 3}, grid_t::Array{Float64, 3}, 
   grid_δu::Array{Float64, 3}, grid_δv::Array{Float64, 3}, grid_t_eq::Array{Float64, 3}, grid_δt::Array{Float64, 3}, physcis_params::Dict{String, Float64})
   # reset grid_δu, grid_δv, grid_t_eq, grid_δt

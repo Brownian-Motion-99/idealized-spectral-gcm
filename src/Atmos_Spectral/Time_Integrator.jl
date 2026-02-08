@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Filtered_Leapfrog, Update_Init_Step!, Get_Δt, Get_ξ, Compute_Spectral_Damping!, Filtered_Leapfrog!
 mutable struct Filtered_Leapfrog
     robert_coef::Float64

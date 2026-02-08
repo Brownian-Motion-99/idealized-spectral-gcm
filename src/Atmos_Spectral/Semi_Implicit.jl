@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Semi_Implicit_Solver, Build_Implicit_Matrices, Build_Wave_Matrices, Update_Init_Step!, Linear_Press_Gradient_δps, Linear_Geopot_δt!, 
 Linear_Geopot_δps, Linear_Ps_T_δdiv!, Adjust_δlnps_δt_δdiv!, Implicit_Correction!
 

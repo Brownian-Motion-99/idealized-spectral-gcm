@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Compute_Pressures_And_Heights!, Half_Level_Pressures!, Pressure_Variables!, Compute_Geopotential!
 
 function Compute_Pressures_And_Heights!(atmo_data::Atmo_Data, vert_coord::Vert_Coordinate,     

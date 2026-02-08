@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Spectral_Spherical_Mesh, Trans_Spherical_To_Grid!, Trans_Grid_To_Spherical!,
 Trans_Grid_To_Fourier!, Divide_By_Cos!, Multiply_By_Cos!, Vor_Div_From_Grid_UV!, Compute_Alpha_Operator_Init, Compute_Alpha_Operator!, 
 UV_Grid_From_Vor_Div!, Compute_Ucos_Vcos_From_Vor_Div_Init, Compute_Ucos_Vcos_From_Vor_Div!, Compute_Wave_Numbers, Apply_Laplacian_Init, 

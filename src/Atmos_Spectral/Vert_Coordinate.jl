@@ -1,3 +1,9 @@
+#=
+Original code by Daniel Zhengyu Huang.
+Redistributed with permission under the MIT License.
+Refactored version available in vx.x.x branches.
+=#
+
 export Vert_Coordinate, Compute_Vert_Coord, Vert_Advection!, Mass_Weighted_Global_Integral
 
 """
