@@ -153,6 +153,9 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 | `:dv` | `dv_dt` | m/s² | Meridional Wind Tendency | 3D |
 | `:dt` | `dt_dt` | K/s | Temperature Tendency | 3D |
 | `:dps` | `dps_dt` | Pa/s | Surface Pressure Tendency | 2D |
+| `:dvor` | `dvor_dt` | 1/s² | Relative Vorticity Tendency | 3D |
+| `:ddiv` | `ddiv_dt` | 1/s² | Divergence Tendency | 3D |
+| `:dq` | `dq_dt` | kg/kg/s | Specific Humidity Tendency | 3D |
 | **Tracers** |  |  |  |  |
 | `:tr1` ... `:tr10` | `tr#` | kg/kg | Passive Tracers 1-10 | 3D |
 
