@@ -1,7 +1,7 @@
 # idealized-spectral-gcm
 
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://Brownian-Motion-99.github.io/idealized-spectral-gcm/)
-[![Build Status](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions/workflows/CI.yml/badge.svg)](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions)
+[![Build Status](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions/workflows/CI.yml/badge.svg)](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions/workflows/CI.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **A light-weighted global circulation model (GCM) written in Julia.**
