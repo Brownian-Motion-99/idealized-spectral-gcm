@@ -14,7 +14,7 @@ $$\zeta(\lambda, \phi, t) = \sum_{m=-M}^{M} \sum_{n=|m|}^{N(m)} \zeta_n^m(t) Y_n
 Non-linear terms (like advection) are computed on a **Gaussian Grid** to avoid the cost of convolution sums, using the efficient transform provided by `Spectral_Spherical_Mesh.jl`.
 
 ### 2. Vertical Discretization
-The vertical column is discretized using **Finite Differences** on hybrid $\sigma$-coordinates.
+The vertical column is discretized using **Finite Differences** on hybrid $\sigma-p$ coordinates.
 
 ### 3. Time Integration
 Time stepping is handled via a **Semi-Implicit Leapfrog** scheme.
