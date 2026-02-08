@@ -379,7 +379,7 @@ combined with a semi-implicit semi-Lagrangian (or Eulerian) time integration sch
     4. **Vertical Advection:** Explicitly computes vertical advection for u, v, T, and tracers.
     5. **Horizontal Advection:** Computes non-linear advection terms.
     6. **Vector Invariant Formulation:** Computes vorticity and divergence tendencies (ηv, ηu) and kinetic energy (E = Φ + ½(u² + v²)).
-    7. **Semi-Implicit Solve:** Inverts the Helmholtz equation in spectral space to stabilize gravity waves (`Implicit_Correction!`).
+    7. **Implicit Correction:** Inverts the Helmholtz equation in spectral space to stabilize gravity waves (`Implicit_Correction!`).
     8. **Spectral Damping:** Applies ∇²ⁿ hyper-diffusion to dampen small-scale noise.
     9. **Time Integration:** Advances the state using `Filtered_Leapfrog!` (Robert-Asselin-Williams filter).
     10. **Conservation Fixer:** Corrects the final predicted state to match global integrals.
@@ -479,6 +479,7 @@ function Spectral_Dynamics!(
 
     # --- Adiabatic Tendencies --- #
     # Compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
+    # Pressure gradient forces are included here.
     Four_In_One!(vert_coord, atmo_data, grid_div, grid_u, grid_v, grid_ps, 
     grid_Δp, grid_lnp_half, grid_lnp_full, grid_p_full,
     grid_dλ_ps, grid_dθ_ps, 
@@ -495,7 +496,6 @@ function Spectral_Dynamics!(
     # --- Adiabatic Tendencies --- #
 
     # --- Advections --- #
-    # Explicitly computes vertical advection for u, v, T, and tracers.
     # Computes non-linear advection terms.
     Vert_Advection!(vert_coord, grid_u, grid_Δp, grid_M_half, Δt, vert_coord.vert_advect_scheme, grid_δQ)
     grid_δu  .+= grid_δQ
@@ -556,12 +556,12 @@ function Spectral_Dynamics!(
     spe_δdiv .-= spe_energy
     # --- Vector Invariant Formulation --- #
 
-    # --- Semi-Implicit Solve --- #
+    # --- Implicit Correction --- #
     # Inverts the Helmholtz equation in spectral space to stabilize gravity waves.
     Implicit_Correction!(semi_implicit, vert_coord, atmo_data,
     spe_div_c, spe_div_p, spe_lnps_c, spe_lnps_p, spe_t_c, spe_t_p, 
     spe_δdiv, spe_δlnps, spe_δt)
-    # --- Semi-Implicit Solve --- #
+    # --- Implicit Corrections --- #
     
     # --- Spectral Damping --- #
     # Applies ∇²ⁿ hyper-diffusion to dampen small-scale noise.
