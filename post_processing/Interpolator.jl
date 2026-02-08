@@ -3,6 +3,7 @@ using Base.Threads
 using Printf
 using JGCM 
 
+import JGCM.Atmo_Data_Module: Atmo_Data
 import JGCM.Vertical_Interpolation_Module: Interpolate_Field!
 
 """
@@ -42,9 +43,11 @@ function Interpolate_File(
     
     # 3. Setup Physics Context
     phys = Atmo_Data(
-        "PostProcess", 1, 1, 1, 
+        "PostProcess", 
+        1, 1, 1, 
         false, false, false, false, 
-        [0.0], 6371.0e3
+        [0.0]; 
+        radius = 6371.0e3
     )
 
     # 4. Prepare Output File
@@ -161,13 +164,10 @@ function Interpolate_File(
 end
 
 # CLI Entry Point
-"""
-Usage: julia --project= post_processing/Standalone_Interpolator.jl $INPUT_FILE $OUTPUT_FILE
-
-"""
+# Usage: julia --project= post_processing/Interpolator.jl $INPUT_FILE $OUTPUT_FILE
 if abspath(PROGRAM_FILE) == @__FILE__
     if length(ARGS) < 2
-        println("Usage: julia --project Post_Processing/Standalone_Interpolator.jl <input.nc> <output.nc> [levels...]")
+        println("Usage: julia --project post_processing/Interpolator.jl <input.nc> <output.nc> [levels...]")
         exit(1)
     end
 
