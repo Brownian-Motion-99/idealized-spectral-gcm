@@ -9,15 +9,15 @@ physics_params = Dict{String, Any}(
     "do_water_correction"  => true,
 
     # Grid scale condensation
-    "do_Lscale_Cond" => true,
+    "do_Lscale_Cond" => false,
     "L"              => 0.2,
 
     # PBL fluxes
-    "do_Sensible_Heating"    => true,
+    "do_Sensible_Heating"    => false,
     "C_H"                    => 0.0044,
-    "do_Surface_Evaporation" => true,
+    "do_Surface_Evaporation" => false,
     "C_E"                    => 0.0044,
-    "do_Implicit_PBL_Scheme" => true,
+    "do_Implicit_PBL_Scheme" => false,
     "C_D"                    => 0.0044,
     
     # "PBL_Top_Mode"  => :ModelLevel,
