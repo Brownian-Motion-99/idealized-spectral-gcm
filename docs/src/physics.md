@@ -90,6 +90,11 @@ $$\frac{\partial T}{\partial t} = -k_T (\phi, \sigma) (T - T_{eq})$$
     
 $$\frac{\partial \mathbf{v}}{\partial t} = -k_v (\sigma) \mathbf{v}$$
 
+* **Frictional Heating**
+    The kinetic energy loss due to Rayleigh Damping is returned to the system as sensible heat.
+
+$$\frac{\partial T}{\partial t}_{fric} = -\frac{1}{c_p} (u \frac{\partial u}{\partial t}_{fric} + v \frac{\partial v}{\partial t}_{fric})$$
+
 ### Large-Scale Condensation (`Lscale_Cond.jl`)
 A simple saturation adjustment scheme ("Manabe bucket"). If specific humidity $q$ exceeds the saturation value $q_{sat}(T, p)$:
 
