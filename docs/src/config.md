@@ -11,18 +11,18 @@ The `physics_params` dictionary toggles physical processes and sets their coeffi
 These flags enable global multiplicative correctors to enforce conservation laws, compensating for numerical drift or filter dissipation.
 
 | Key | Type | Default | Description |
-| --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- |
 | `"do_mass_correction"` | `Bool` | `true` | Rescales surface pressure to conserve total dry air mass. |
 | `"do_energy_correction"` | `Bool` | `true` | Rescales global temperature to conserve total energy. |
 | `"do_water_correction"` | `Bool` | `true` | Rescales specific humidity to conserve total moisture. |
-| `"use_virtual_temperature"` | `Bool` | `true` | Uses virtual temperature () in hydrostatic balance and density calculations. |
+| `"use_virtual_temperature"` | `Bool` | `true` | Uses virtual temperature ($T_v$) in hydrostatic balance and density calculations. |
 
 ### Held-Suarez Forcing Parameters
 
 Controlled by `HS_Forcing.jl`. These parameters define the relaxation toward the zonally symmetric equilibrium state.
 
 | Key | Symbol | Default | Physical Meaning |
-| --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- |
 | `"do_HS_Forcing"` | - | `true` | Master switch for the module. |
 | `"σ_b"` |  | `0.7` | Top of the planetary boundary layer (sigma coordinate). |
 | `"k_f"` |  | `1.0` day$^{-1}$ | Surface friction damping rate. |
@@ -42,7 +42,7 @@ The `Model_Config` struct (defined in `Experiment_Configuration.jl`) controls th
 ### Resolution & Geometry
 
 | Parameter | Type | Description |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | `num_fourier` | `Int` | Spectral truncation limit ($M$). For T21, set to 21. |
 | `nθ` | `Int` | Number of Gaussian latitudes ($J$). **Constraint:** $J \geq (3M+1)/2$. |
 | `nd` | `Int` | Number of vertical levels. |
@@ -67,7 +67,7 @@ The `vert_coord_option` parameter selects the strategy for generating interface 
 ### Time Integration & Numerics
 
 | Parameter | Standard Value | Description |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | `Δt` | `600` | Time step in seconds. |
 | `end_time` | - | Total simulation duration in seconds. |
 | `damping_order` | `4` | Order of hyper-diffusion ($\nabla^4$). |
@@ -130,7 +130,7 @@ The following tables list the valid symbols available for the `vars_to_output` l
 These variables cover full 3D atmospheric states and 2D surface fluxes.
 
 | Symbol | NetCDF Name | Units | Description | Dimensions |
-| --- | --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- | :--- |
 | **State Variables** |  |  |  |  |
 | `:u` | `u` | m/s | Zonal Wind | 3D |
 | `:v` | `v` | m/s | Meridional Wind | 3D |
@@ -161,7 +161,7 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 Variables specific to the single-layer shallow water system.
 
 | Symbol | NetCDF Name | Units | Description |
-| --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- |
 | `:h` | `h` | m | Geopotential Height |
 | `:u` | `u` | m/s | Zonal Wind |
 | `:v` | `v` | m/s | Meridional Wind |
@@ -175,7 +175,7 @@ Variables specific to the single-layer shallow water system.
 Variables for the purely barotropic vorticity equation.
 
 | Symbol | NetCDF Name | Units | Description |
-| --- | --- | --- | --- |
+| :--- | :--- | :--- | :--- |
 | `:vor` | `vor` | 1/s | Relative Vorticity |
 | `:u` | `u` | m/s | Zonal Wind |
 | `:v` | `v` | m/s | Meridional Wind |
