@@ -4,6 +4,8 @@
 
 This package implements a spectral dynamical core solving the primitive equations on the sphere. It is designed for idealized atmospheric research, educational purposes, and algorithmic prototyping. It serves as a modern refactor of the legacy spectral core originally developed by Daniel Zhengyu Huang.
 
+![alt img](t42_HS_dry_u_zonal_mean.png)
+
 ## Numerical Methods
 
 ### 1. Horizontal Discretization
