@@ -114,7 +114,7 @@ where $L$ is latent heating efficiency, default is 0.2.
 ### Boundary Layer Mixing (`PBL.jl`)
 Vertical turbulent diffusion of heat, moisture, and momentum.
 
-* **Surface Fluxes:** Computed using bulk aerodynamic formulas.
+* **Surface Fluxes:** Implicitly computed using bulk aerodynamic formulas:
 
 ```math
 SH = \rho C_H |V_s| (T_{surf} - T_{air})
@@ -124,7 +124,7 @@ SH = \rho C_H |V_s| (T_{surf} - T_{air})
 LH = \rho C_E |V_s| (q_{surf} - q_{air})
 ```
     
-* **Vertical Diffusion:** Solved implicitly using a tridiagonal solver (Thomas Algorithm) to ensure stability:
+* **Vertical Diffusion:** Solved implicitly using a tridiagonal solver (Thomas Algorithm):
 
 ```math
 \frac{\partial \psi}{\partial t} = \frac{\partial}{\partial p} \left( g^2 \rho^2 K_E \frac{\partial \psi}{\partial p} \right)
