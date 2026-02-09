@@ -46,15 +46,15 @@ Configuration of `PBL.jl`, handling PBL-related processes, including surface sen
 
 Controlled by `HS_Forcing.jl`. These parameters define the relaxation toward the zonally symmetric equilibrium state.
 
-| Key | Symbol | Default | Physical Meaning |
+| Key | Type | Default | Physical Meaning |
 | :--- | :--- | :--- | :--- |
-| `"do_HS_Forcing"` | - | `true` | Master switch for the module. |
-| `"σ_b"` |  | `0.7` | Top of the planetary boundary layer (sigma coordinate). |
-| `"k_f"` |  | `1.0` day$^{-1}$ | Surface friction damping rate. |
-| `"k_a"` |  | `1/40` day$^{-1}$ | Thermal relaxation rate in the free atmosphere. |
-| `"k_s"` |  | `1/4` day$^{-1}$ | Thermal relaxation rate at the surface. |
-| `"ΔT_y"` |  | `60.0` K | Equator-to-pole temperature difference. |
-| `"Δθ_z"` |  | `10.0` K | Vertical potential temperature gradient. |
+| `"do_HS_Forcing"` | `Bool` | `true` | Master switch for the module. |
+| `"σ_b"` | `Float64` | `0.7` | Top of the planetary boundary layer (sigma coordinate). |
+| `"k_f"` | `Float64` | `1.0` day$^{-1}$ | Surface friction damping rate. |
+| `"k_a"` | `Float64` | `1/40` day$^{-1}$ | Thermal relaxation rate in the free atmosphere. |
+| `"k_s"` | `Float64` | `1/4` day$^{-1}$ | Thermal relaxation rate at the surface. |
+| `"ΔT_y"` | `Float64` | `60.0` K | Equator-to-pole temperature difference. |
+| `"Δθ_z"` | `Float64` | `10.0` K | Vertical potential temperature gradient. |
 
 > **Note on Energy Conservation:** The Held-Suarez module in this dycore explicitly calculates **frictional heating**. The kinetic energy dissipated by the Rayleigh damping term (`"k_f"`) is returned to the thermodynamic equation as sensible heat, ensuring closed energy budgets.
 
