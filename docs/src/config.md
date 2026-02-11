@@ -154,33 +154,33 @@ The following tables list the valid symbols available for the `vars_to_output` l
 
 These variables cover full 3D atmospheric states and 2D surface fluxes.
 
-| Symbol | NetCDF Name | Units | Description | Dimensions |
+| Symbol | NetCDF Name | Units | Standard Name (`std_name`) | Dimensions |
 | :--- | :--- | :--- | :--- | :--- |
-| **State Variables** |  |  |  |  |
-| `:u` | `u` | m/s | Zonal Wind | 3D |
-| `:v` | `v` | m/s | Meridional Wind | 3D |
-| `:w` | `w` | Pa/s | Vertical Pressure Velocity ($\omega$) | 3D |
-| `:t` | `t` | K | Temperature | 3D |
-| `:q` | `q` | kg/kg | Specific Humidity | 3D |
-| `:vor` | `vor` | 1/s | Relative Vorticity | 3D |
-| `:div` | `div` | 1/s | Divergence | 3D |
-| `:p` | `p` | Pa | Full Pressure (3D) | 3D |
-| `:z` | `z` | m²/s² | Geopotential Height | 3D |
-| `:t_eq` | `t_eq` | K | Equilibrium Temperature (HS Forcing) | 3D |
-| **Surface & Fluxes** |  |  |  |  |
-| `:ps` | `ps` | Pa | Surface Pressure | 2D |
-| `:lnps` | `lnps` | numeric | Log Surface Pressure | 2D |
-| `:shflx` | `shflx` | W/m² | Sensible Heat Flux | 2D |
-| `:lhflx` | `lhflx` | W/m² | Latent Heat Flux | 2D |
-| `:precip` | `precip` | mm | Pseudo-adiabatic Precipitation | 2D |
-| **Tendencies** |  |  |  |  |
-| `:du` | `du_dt` | m/s² | Zonal Wind Tendency | 3D |
-| `:dv` | `dv_dt` | m/s² | Meridional Wind Tendency | 3D |
-| `:dt` | `dt_dt` | K/s | Temperature Tendency | 3D |
-| `:dps` | `dps_dt` | Pa/s | Surface Pressure Tendency | 2D |
-| `:dvor` | `dvor_dt` | 1/s² | Relative Vorticity Tendency | 3D |
-| `:ddiv` | `ddiv_dt` | 1/s² | Divergence Tendency | 3D |
-| `:dq` | `dq_dt` | kg/kg/s | Specific Humidity Tendency | 3D |
+| **State Variables** | | | | |
+| `:u` | `ua` | m s-1 | `eastward_wind` | 3D |
+| `:v` | `va` | m s-1 | `northward_wind` | 3D |
+| `:w` | `wap` | Pa s-1 | `lagrangian_tendency_of_air_pressure` | 3D |
+| `:t` | `ta` | K | `air_temperature` | 3D |
+| `:q` | `hus` | 1 | `specific_humidity` | 3D |
+| `:vor` | `vor` | s-1 | `atmosphere_relative_vorticity` | 3D |
+| `:div` | `div` | s-1 | `divergence_of_wind` | 3D |
+| `:p` | `p` | Pa | `air_pressure` | 3D |
+| `:z` | `zg` | m2 s-2 | `geopotential` | 3D |
+| `:t_eq` | `teq` | K | `held_suarez_equilibrium_temperature` | 3D |
+| **Surface & Fluxes** | | | | |
+| `:ps` | `ps` | Pa | `surface_air_pressure` | 2D |
+| `:lnps` | `lnps` | 1 | `log_surface_air_pressure` | 2D |
+| `:shflx` | `hfss` | W m-2 | `surface_upward_sensible_heat_flux` | 2D |
+| `:lhflx` | `hfls` | W m-2 | `surface_upward_latent_heat_flux` | 2D |
+| `:precip` | `pr` | kg m-2 s-1 | `precipitation_flux` | 2D |
+| **Tendencies** | | | | |
+| `:du` | `dua_dt` | m s-2 | `tendency_of_eastward_wind` | 3D |
+| `:dv` | `dva_dt` | m s-2 | `tendency_of_northward_wind` | 3D |
+| `:dt` | `dta_dt` | K s-1 | `tendency_of_air_temperature` | 3D |
+| `:dps` | `dps_dt` | Pa s-1 | `tendency_of_surface_air_pressure` | 2D |
+| `:dvor` | `dvor_dt` | s-2 | `tendency_of_atmosphere_relative_vorticity` | 3D |
+| `:ddiv` | `ddiv_dt` | s-2 | `tendency_of_divergence_of_wind` | 3D |
+| `:dq` | `dq_dt` | s-1 | `tendency_of_specific_humidity` | 3D |
 | **Tracers** |  |  |  |  |
 | `:tr1` ... `:tr10` | `tr#` | kg/kg | Passive Tracers 1-10 | 3D |
 
@@ -188,27 +188,27 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 
 Variables specific to the single-layer shallow water system.
 
-| Symbol | NetCDF Name | Units | Description |
-| :--- | :--- | :--- | :--- |
-| `:h` | `h` | m | Geopotential Height |
-| `:u` | `u` | m/s | Zonal Wind |
-| `:v` | `v` | m/s | Meridional Wind |
-| `:vor` | `vor` | 1/s | Relative Vorticity |
-| `:div` | `div` | 1/s | Divergence |
-| `:pv` | `pv` | s/m | Potential Vorticity |
-| `:dh` | `dh_dt` | m/s | Height Tendency |
+| Symbol | NetCDF Name | Units | Standard Name (`std_name`) | Dimensions |
+| :--- | :--- | :--- | :--- | :--- |
+| `:h` | `height` | m | `geopotential_height` | 2D |
+| `:u` | `ua` | m s-1 | `eastward_wind` | 2D |
+| `:v` | `va` | m s-1 | `northward_wind` | 2D |
+| `:vor` | `vor` | s-1 | `atmosphere_relative_vorticity` | 2D |
+| `:div` | `div` | s-1 | `divergence_of_wind` | 2D |
+| `:pv` | `pv` | m-1 s-1 | `atmosphere_potential_vorticity` | 2D |
+| `:dh` | `dh_dt` | m s-1 | `tendency_of_geopotential_height` | 2D |
 
 #### Barotropic (`:Barotropic`)
 
 Variables for the purely barotropic vorticity equation.
 
-| Symbol | NetCDF Name | Units | Description |
-| :--- | :--- | :--- | :--- |
-| `:vor` | `vor` | 1/s | Relative Vorticity |
-| `:u` | `u` | m/s | Zonal Wind |
-| `:v` | `v` | m/s | Meridional Wind |
-| `:ke` | `ke` | m²/s² | Kinetic Energy |
-| `:dvor` | `dvor` | 1/s² | Vorticity Tendency |
+| Symbol | NetCDF Name | Units | Standard Name (`std_name`) | Dimensions |
+| :--- | :--- | :--- | :--- | :--- |
+| `:vor` | `vor` | s-1 | `atmosphere_relative_vorticity` | 2D |
+| `:u` | `ua` | m s-1 | `eastward_wind` | 2D |
+| `:v` | `va` | m s-1 | `northward_wind` | 2D |
+| `:ke` | `ke` | m2 s-2 | `specific_kinetic_energy` | 2D |
+| `:dvor` | `dvor` | s-2 | `tendency_of_atmosphere_relative_vorticity` | 2D |
 
 ---
 
