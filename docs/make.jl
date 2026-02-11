@@ -40,5 +40,5 @@ deploydocs(;
     devbranch = "v0.2.0",
     target = "build",
     push_preview = true,
-    versions = ["v#.#.#"]
+    versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"]
 )
