@@ -190,7 +190,9 @@ function JGCM_Simulate(config::Model_Config)
         output_interval = config.output_interval,
         day_to_sec = config.day_to_sec,
         spinup_day = config.spinup_day,
-        model_mode = om_mode
+        model_mode = om_mode,
+        institute = config.institution,
+        experiment_id = config.name
     )
 
     # Output Initial State

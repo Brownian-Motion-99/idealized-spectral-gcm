@@ -48,6 +48,7 @@ mkpath(output_path_base)
 config = Model_Config(
 
     name = "HS_Moist_T42",
+    institution = "Group of Chaos and Predictability, Department of Atmospheric Sciences, National Taiwan University",
     model_type = :PrimitiveEquation,
     
     # Resolution
@@ -101,7 +102,7 @@ config = Model_Config(
     do_raw_output   = true,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
     vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
-    output_interval = 600,
+    output_interval = 1200,
     
     # Physics
     physics_params = physics_params

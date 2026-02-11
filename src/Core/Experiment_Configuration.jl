@@ -13,6 +13,7 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     # 1. Experiment Identity
     # -------------------------------------------------------
+    institution::String = "Unknown Institution"
     name::String
     model_type::Symbol  # :Barotropic, :Shallow_Water, :PrimitiveEquation
 

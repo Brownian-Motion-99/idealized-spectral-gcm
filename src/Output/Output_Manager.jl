@@ -1,6 +1,8 @@
 module Output_Manager_Module
 
+using Infiltrator
 using Base
+using Dates
 using NCDatasets
 using Statistics
 
@@ -95,60 +97,89 @@ end
 function _Init_Single_File(
     filename, mesh, var_info_map, 
     requested_vars, file_type::Symbol, target_levels=Float64[];
-    vert_coord=nothing
+    vert_coord=nothing,
+    global_meta::Dict{String, String}=Dict{String, String}()
 )
     if isfile(filename); rm(filename); end
     ds = NCDataset(filename, "c")
 
-    # Dimensions
+    # --- Global Attributes (CF-1.11 Compliance) --- #
+    for (key, val) in global_meta
+        ds.attrib[key] = val
+    end
+    ds.attrib["Conventions"] = "CF-1.11"
+    ds.attrib["history"]     = "Created $(Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"))"
+    ds.attrib["source"]      = "idealized-spectral-gcm"
+    # --- Global Attributes (CF-1.11 Compliance) --- #
+
+    # --- Dimensions --- #
     defDim(ds, "lon",  mesh.nλ)
     defDim(ds, "lat",  mesh.nθ)
     defDim(ds, "time", Inf)
+    # --- Dimensions --- #
+
+    # --- Coordinate Variables & Vertical Metadata --- #
+    # Longitude
+    v_lon = defVar(ds, "lon", Float64, ("lon",), 
+                   attrib=Dict("units"=>"degrees_east", "standard_name"=>"longitude"))
+    v_lon[:] = mesh.λc * 180/pi
+
+    # Latitude
+    v_lat = defVar(ds, "lat", Float64, ("lat",), 
+                   attrib=Dict("units"=>"degrees_north", "standard_name"=>"latitude"))
+    v_lat[:] = mesh.θc * 180/pi
+
+    # Time
+    v_time = defVar(ds, "time", Float64, ("time",), 
+                    attrib=Dict("units"=>"days since 2000-01-01 00:00:00", "calendar"=>"proleptic_gregorian"))
 
     if file_type == :plev
         defDim(ds, "plev", length(target_levels))
-        v_lev = defVar(ds, "plev", Float64, ("plev",))
+        v_lev = defVar(ds, "plev", Float64, ("plev",), 
+                       attrib=Dict("units"=>"Pa", "standard_name"=>"air_pressure", "positive"=>"down"))
         v_lev[:] = target_levels
-        v_lev.attrib["units"] = "Pa"
         
-    elseif file_type == :raw
-        # Only write Hybrid Coeffs if vert_coord is provided (3D case)
+    elseif file_type == :raw && vert_coord !== nothing
+        # Hybrid-Sigma coordinate definition
         defDim(ds, "lev", mesh.nd)
+        v_lev = defVar(ds, "lev", Float64, ("lev",))
+        v_lev[:] = collect(1:mesh.nd)
         
-        if vert_coord !== nothing
-            defDim(ds, "ilev", mesh.nd+1)
-            
-            # Calculate mid-point coefficients for metadata
-            ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
-            bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
-            
-            v_hyam = defVar(ds, "hyam", Float64, ("lev",))
-            v_hyam[:] = ak_m
-            v_hybm = defVar(ds, "hybm", Float64, ("lev",))
-            v_hybm[:] = bk_m
-        end
+        # Attributes that tell post-processors how to compute 3D Pressure
+        v_lev.attrib["standard_name"] = "atmosphere_hybrid_sigma_pressure_coordinate"
+        v_lev.attrib["formula_terms"] = "ap: hyam b: hybm ps: ps p0: p0"
+        v_lev.attrib["positive"]      = "down"
+
+        # Reference Pressure
+        v_p0 = defVar(ds, "p0", Float64, (), attrib=Dict("units"=>"Pa"))
+        v_p0[:] = vert_coord.p_ref
+
+        # Interface coefficients (Mid-points for data layers)
+        ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
+        bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
+
+        defVar(ds, "hyam", Float64, ("lev",), attrib=Dict("units"=>"Pa", "long_name"=>"hybrid A coefficient at layer midpoints"))[1:end] = ak_m
+        defVar(ds, "hybm", Float64, ("lev",), attrib=Dict("units"=>"1",  "long_name"=>"hybrid B coefficient at layer midpoints"))[1:end] = bk_m
     end
+    # --- Coordinate Variables & Vertical Metadata --- #
 
-    # Coords
-    v_lon = defVar(ds, "lon", Float64, ("lon",))
-    v_lon[:] = mesh.λc * 180/pi
-    v_lat = defVar(ds, "lat", Float64, ("lat",))
-    v_lat[:] = mesh.θc * 180/pi
-    v_time = defVar(ds, "time", Float64, ("time",))
-
-    # Variables
+    # --- Data Variables --- #
     for sym in requested_vars
-        if !haskey(var_info_map, sym); continue; end
-        nc_name, units, _, dim_code = var_info_map[sym]
+        haskey(var_info_map, sym) || continue
+        meta = var_info_map[sym] # Access via VarMeta struct
         
-        dims = if dim_code == 3
+        dims = if meta.dims == 3
             (file_type == :plev) ? ("lon", "lat", "plev", "time") : ("lon", "lat", "lev", "time")
         else
             ("lon", "lat", "time")
         end
         
-        defVar(ds, nc_name, Float64, dims, attrib=Dict("units"=>units))
+        v = defVar(ds, meta.nc_name, Float64, dims)
+        v.attrib["units"]         = meta.units
+        v.attrib["long_name"]     = meta.long_name
+        v.attrib["standard_name"] = meta.std_name
     end
+    # --- Data Variables --- #
 
     return ds
 end
@@ -157,33 +188,39 @@ end
 # 4. The Constructor
 # ==============================================================================
 function Output_Manager(
-    mesh, 
-    vert_coord, # Pass 'nothing' here for 2D runs in your driver script
-    atmo_data,
-    start_time, end_time,
-    requested_vars;
-    # Keywords
-    filename::String="output.nc",
-    do_raw_output::Bool=false,
-    pressure_levels::Vector{Float64}=[100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 20000.0, 10000.0, 5000.0, 1000.0],
-    day_to_sec::Int64=86400,
-    output_interval::Int64=86400,
-    spinup_day::Float64=0.0,
-    model_mode::Symbol=:PrimitiveEquation
+    mesh, vert_coord, atmo_data, 
+    start_time, end_time, requested_vars;
+    filename::String = "output.nc",
+    do_raw_output::Bool = true,
+    pressure_levels::Vector{Float64} = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 20000.0, 10000.0, 5000.0, 1000.0],
+    day_to_sec::Int64 = 86400,
+    output_interval::Int64 = 86400,
+    spinup_day::Float64 = 0.0,
+    model_mode::Symbol = :PrimitiveEquation,
+    institute::String = "My Research Lab",
+    experiment_id::String = "Simulation_v1"
 )
-    # A. Instantiate the Mode Type
-    mode_obj = Mode_Factory(model_mode)
-
-    nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
+    # --- Instantiate the Mode Type --- #
+    mode_obj    = Mode_Factory(model_mode)
+    nλ, nθ, nd  = mesh.nλ, mesh.nθ, mesh.nd
     spinup_time = start_time + Int64(spinup_day * day_to_sec)
+
+    # Global Metadata Dictionary for the NetCDF header
+    global_meta = Dict(
+        "title"       => "Output of idealized-spectral-gcm",
+        "institution" => institute,
+        "experiment"  => experiment_id,
+        "references"  => "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+    )
     
     # Define Buffers (Initialize as empty by default)
     p3d_buf    = zeros(Float64, 0, 0, 0)
     interp_buf = zeros(Float64, 0, 0, 0)
     ak_m       = Float64[]
     bk_m       = Float64[]
+    # --- Instantiate the Mode Type --- #
 
-    # B. 3D Specific Initialization
+    # --- 3D Specific Initialization --- #
     if isa(mode_obj, PrimitiveEquationMode)
         # Validation
         if !(:ps in requested_vars); push!(requested_vars, :ps); end
@@ -204,54 +241,47 @@ function Output_Manager(
 
     # Fetch variable info
     var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(mode_obj)))
+    # --- 3D Specific Initialization --- #
 
-    # C. Initialize Files
+    # --- Initialize Files --- #
     main_file_type = isa(mode_obj, PrimitiveEquationMode) ? :plev : :simple_2d
-    
-    # We pass vert_coord as a keyword now. If it's nothing (2D), it's ignored safely.
-    ds_plev = Base.invokelatest(_Init_Single_File, filename, mesh, 
-                                var_info_map, requested_vars, main_file_type, pressure_levels; 
-                                vert_coord=vert_coord)
+    ds_plev = Base.invokelatest(
+        _Init_Single_File, 
+        filename, mesh, 
+        var_info_map, requested_vars, main_file_type, pressure_levels; 
+        vert_coord=vert_coord, global_meta=global_meta
+    )
 
     ds_raw = nothing
     if do_raw_output && isa(mode_obj, PrimitiveEquationMode)
         raw_fn = replace(filename, ".nc" => "_raw.nc")
-        ds_raw = Base.invokelatest(_Init_Single_File, raw_fn, mesh, 
-                                   var_info_map, requested_vars, :raw; 
-                                   vert_coord=vert_coord)
+        ds_raw = Base.invokelatest(
+            _Init_Single_File, 
+            raw_fn, mesh, 
+            var_info_map, requested_vars, :raw; 
+            vert_coord=vert_coord, global_meta=global_meta
+        )
     end
+    # --- Initialize Files --- #
 
-    # D. Initialize Accumulators
+    # --- Initialize Accumulators --- #
     acc_main = Dict{Symbol, Array{Float64}}()
-    
     for sym in requested_vars
-        if !haskey(var_info_map, sym); continue; end
-        _, _, _, dim_code = var_info_map[sym]
-        
-        if dim_code == 3
-             # For 2D modes, this might create a 3D array if the user mistakenly requests a 3D var.
-             # However, typically 2D modes only request 2D vars (dim_code=2).
-             # If a 3D var is requested in 3D mode, we allocate (Nq, Nel, Nz).
-             # If a 3D var is requested in 2D mode (e.g. theoretical), we still allocate it 
-             # but the physics likely won't fill it.
-            acc_main[sym] = zeros(Float64, nλ, nθ, nd)
-        else
-            acc_main[sym] = zeros(Float64, nλ, nθ)
-        end
+        haskey(var_info_map, sym) || continue
+        meta = var_info_map[sym]
+        acc_main[sym] = (meta.dims == 3) ? zeros(Float64, nλ, nθ, nd) : zeros(Float64, nλ, nθ)
     end
 
     acc_raw  = deepcopy(acc_main)
     acc_plev = Dict{Symbol, Array{Float64}}() 
+    # --- Initialize Accumulators --- #
 
     return Output_Manager(
-        nλ, nθ, nd, 
-        atmo_data, mode_obj, 
+        nλ, nθ, nd, atmo_data, mode_obj, 
         do_raw_output, pressure_levels, log.(pressure_levels),
         p3d_buf, interp_buf, ak_m, bk_m,
         day_to_sec, start_time, start_time, spinup_time, output_interval, 0, 1,
-        ds_plev, ds_raw,
-        acc_plev, acc_main, acc_raw, 
-        requested_vars
+        ds_plev, ds_raw, acc_plev, acc_main, acc_raw, requested_vars
     )
 end
 
@@ -345,55 +375,27 @@ end
 # --- Writer: Primitive Equation (Includes Interpolation & Robust Dimension Check) ---
 function _write_core!(::PrimitiveEquationMode, mgr)
     t_idx = mgr.output_index
-    N     = Float64(mgr.sample_counter)
+    N            = Float64(mgr.sample_counter)
     var_info_map = Base.invokelatest(Get_Var_Info, Val(:PrimitiveEquation))
 
-    # 1. Pre-calculate Averaged Pressure Grid (for Interpolation)
-    ps_avg_2d = nothing
-    if haskey(mgr.acc_main, :ps)
-        ps_avg_2d = mgr.acc_main[:ps] ./ N
-        Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak_mid, mgr.vert_bk_mid, ps_avg_2d)
-    end
+    # Calculate Interpolation Grid
+    ps_avg_2d = mgr.acc_main[:ps] ./ N
+    Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak_mid, mgr.vert_bk_mid, ps_avg_2d)
 
-    # =========================================================================
-    # 2. Process Main Output (Interpolated)
-    # =========================================================================
     for sym in keys(mgr.acc_main)
-        if !haskey(var_info_map, sym); continue; end
-        nc_name = var_info_map[sym][1]
-        
-        # Robustly determine file variable dimensions
-        nc_var = mgr.ds_plev[nc_name]
-        file_ndim = ndims(nc_var) # e.g., 4 for (lon,lat,plev,time), 3 for (lon,lat,time)
-
+        haskey(var_info_map, sym) || continue
+        meta = var_info_map[sym]
+        nc_var = mgr.ds_plev[meta.nc_name]
         native_mean = mgr.acc_main[sym] ./ N
         
-        # A. If File Variable is 4D (Pressure Levels + Time)
-        if file_ndim == 4
-            if ndims(native_mean) == 3
-                t_ref = haskey(mgr.acc_main, :t) ? (mgr.acc_main[:t] ./ N) : nothing
-                
-                Interpolate_Field!(
-                    mgr.interp_buffer, native_mean, mgr.p3d_buffer, ps_avg_2d,
-                    mgr.log_targets, sym, mgr.atmo_data, t_ref
-                )
-                nc_var[:, :, :, t_idx] = mgr.interp_buffer
-            else
-                # Fallback: Trying to write 2D data to 4D var (rare warning case)
-                @warn "Output_Manager: Dimension mismatch for $sym (File: 4D, Data: 2D). Skipping."
-            end
-
-        # B. If File Variable is 3D (Surface/2D + Time)
-        elseif file_ndim == 3
-            if ndims(native_mean) == 3
-                # Flatten singleton if necessary (e.g. view(dat,:,:,1))
-                nc_var[:, :, t_idx] = view(native_mean, :, :, 1)
-            else
-                nc_var[:, :, t_idx] = native_mean
-            end
+        if ndims(nc_var) == 4 # (lon, lat, plev, time)
+            t_ref = haskey(mgr.acc_main, :t) ? (mgr.acc_main[:t] ./ N) : nothing
+            Interpolate_Field!(mgr.interp_buffer, native_mean, mgr.p3d_buffer, ps_avg_2d,
+                               mgr.log_targets, sym, mgr.atmo_data, t_ref)
+            nc_var[:, :, :, t_idx] = mgr.interp_buffer
+        else
+            nc_var[:, :, t_idx] = (ndims(native_mean) == 3) ? view(native_mean, :, :, 1) : native_mean
         end
-
-        # Reset Accumulator
         fill!(mgr.acc_main[sym], 0.0)
     end
     NCDatasets.sync(mgr.ds_plev)
@@ -405,10 +407,11 @@ function _write_core!(::PrimitiveEquationMode, mgr)
         for sym in keys(mgr.acc_raw)
             if !haskey(var_info_map, sym); continue; end # Safety check
             
-            nc_name = var_info_map[sym][1]
+            @infiltrate
+            nc_name = var_info_map[sym].nc_name
             nc_var  = mgr.ds_raw[nc_name]
             
-            # [FIX IS HERE] Check dimensionality before writing
+            # Check dimensionality before writing
             file_ndim = ndims(nc_var) 
             raw_mean  = mgr.acc_raw[sym] ./ N
 
@@ -437,7 +440,7 @@ function _write_core!(::AbstractModelMode, mgr)
 
     for sym in keys(mgr.acc_main)
         if !haskey(var_info_map, sym); continue; end
-        nc_name = var_info_map[sym][1]
+        nc_name = var_info_map[sym].nc_name
         
         # Direct write, no interpolation
         mgr.ds_plev[nc_name][:, :, t_idx] = mgr.acc_main[sym] ./ N

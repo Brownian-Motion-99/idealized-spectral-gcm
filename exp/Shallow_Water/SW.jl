@@ -23,6 +23,7 @@ mkpath(output_path_base)
 config = Model_Config(
     name = experiment_name,
     model_type = :Shallow_Water,
+    institution = "Group of Chaos and Predictability, Department of Atmospheric Sciences, National Taiwan University",
     
     # Resolution
     num_fourier = 85, nθ = 128, nd = 1,
@@ -49,7 +50,6 @@ config = Model_Config(
     restart_frequency = 86400,
 
     # Physics / Tracers
-    L = 0.0,
     moisture_processes = false,
     num_tracers = 1, # Kept as 1 for potential vorticity tracer if needed
 
