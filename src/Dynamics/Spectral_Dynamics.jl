@@ -68,7 +68,11 @@ function Compute_Corrections_Init(
     grid_q_p::Array{Float64, 3}, grid_δq::Array{Float64,3},
     Δt::Int64,
 )
-    
+
+    mean_ps_p       = 0.
+    mean_energy_p   = 0.
+    mean_moisture_p = 0.
+
     do_mass_correction, do_energy_correction, do_water_correction = atmo_data.do_mass_correction, atmo_data.do_energy_correction, atmo_data.do_water_correction
     cp_air = atmo_data.cp_air
 
