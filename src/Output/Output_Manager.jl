@@ -202,7 +202,7 @@ function Output_Manager(
     # --- Instantiate the Mode Type --- #
     mode_obj    = Mode_Factory(model_mode)
     nλ, nθ, nd  = mesh.nλ, mesh.nθ, mesh.nd
-    spinup_time = start_time + Int64(spinup_day * day_to_sec)
+    spinup_time = Int64(spinup_day * day_to_sec)
 
     # Global Metadata Dictionary for the NetCDF header
     global_meta = Dict(
@@ -302,8 +302,7 @@ function Update_Output!(manager::Output_Manager{M}, dyn_data, current_time::Int6
 
     manager.sample_counter += 1
 
-    time_elapsed = current_time - manager.start_time
-    if time_elapsed > 0 && (time_elapsed % manager.output_interval == 0)
+    if (current_time % manager.output_interval == 0)
         Flush_to_Disk!(manager)
     end
 end
