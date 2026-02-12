@@ -1,6 +1,5 @@
 module Output_Manager_Module
 
-using Infiltrator
 using Base
 using Dates
 using NCDatasets
@@ -406,8 +405,7 @@ function _write_core!(::PrimitiveEquationMode, mgr)
     if mgr.do_raw_output && mgr.ds_raw !== nothing
         for sym in keys(mgr.acc_raw)
             if !haskey(var_info_map, sym); continue; end # Safety check
-            
-            @infiltrate
+            s
             nc_name = var_info_map[sym].nc_name
             nc_var  = mgr.ds_raw[nc_name]
             
