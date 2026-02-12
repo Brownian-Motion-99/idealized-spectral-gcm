@@ -8,18 +8,18 @@ using ...Semi_Implicit_Module
 function Spectral_Physics!(
     config::Model_Config,
     mesh::Spectral_Spherical_Mesh, vert_coord::Vert_Coordinate,
-    atmo_data::Atmo_Data, dyn_data::Dyn_Data, 
-    semi_implicit::Semi_Implicit_Solver, 
+    atmo_data::Atmo_Data, dyn_data::Dyn_Data,
+    semi_implicit::Semi_Implicit_Solver,
     physics_params::Dict{String, Any}
 )
-    
+
     grid_δu, grid_δv, grid_δps, grid_δt = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δps, dyn_data.grid_δt
     grid_u_p, grid_v_p,  grid_t_p       = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_t_p
     grid_p_half, grid_p_full            = dyn_data.grid_p_half, dyn_data.grid_p_full
     grid_t_eq                           = dyn_data.grid_t_eq
 
-    grid_δq                       = dyn_data.grid_δq
-    spe_δq                        = dyn_data.spe_δq
+    grid_δq = dyn_data.grid_δq
+    spe_δq  = dyn_data.spe_δq
 
     # Initialize ps and q
     grid_δps .= 0.0
@@ -86,98 +86,94 @@ function Spectral_Physics!(
     grid_Δp = dyn_data.grid_Δp
     # temporary variables
     grid_δQ = dyn_data.grid_d_full1
-    
-    if config.moisture_processes
 
-        # Surface wind speed, surface geopotential, density
-        V_c, za, rho = Calculate_V_c_za_rho(
+    # Surface wind speed, surface geopotential, density
+    V_c, za, rho = Calculate_V_c_za_rho(
+        atmo_data,
+        grid_p_half, grid_p_full, grid_ps,
+        grid_u, grid_v,
+        grid_t_c, grid_q_c
+    )
+
+    # Grid scale condensation
+    # Modified: grid_q_c, grid_t_c, grid_δq, grid_δt, grid_precip
+    if physics_params["do_Lscale_Cond"] && config.moisture_processes
+        grid_precip .= 0.0
+
+        L = physics_params["L"]::Float64
+        Lscale_Cond!(
+            vert_coord,
             atmo_data,
-            grid_p_half, grid_p_full, grid_ps,
-            grid_u, grid_v,
-            grid_t_c, grid_q_c
+            grid_q_c, grid_δq, grid_liquid_water_content, grid_precip,
+            grid_t_c, grid_δt,
+            grid_p_full, grid_ps,
+            Δt,
+            L
         )
-        
-        # Grid scale condensation
-        # Modified: grid_q_c, grid_t_c, grid_δq, grid_δt, grid_precip
-        if physics_params["do_Lscale_Cond"]
-            grid_precip .= 0.0
-            
-            L = physics_params["L"]::Float64
-            Lscale_Cond!(
-                vert_coord,
-                atmo_data,
-                grid_q_c, grid_δq, grid_liquid_water_content, grid_precip,
-                grid_t_c, grid_δt,
-                grid_p_full, grid_ps,
-                Δt,
-                L
-            )
 
-            grid_q_c[grid_q_c .< 0] .= 0
-        
-            grid_q_c .= grid_q_c .- grid_δq .* (2*Δt)
-            grid_t_c .= grid_t_c .+ grid_δt .* (2*Δt)
-        
-            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-            
-            Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-            
-            grid_δq .= 0.
-            grid_δt .= 0.
-        end
+        grid_q_c[grid_q_c.<0] .= 0
 
-        # Surface sensible heat fluxes
-        if physics_params["do_Sensible_Heating"]
-            C_H = physics_params["C_H"]::Float64
-            Sensible_Heating!(
-                mesh, atmo_data,
-                grid_t_c, grid_shflx,
-                V_c, za, rho,
-                Δt,
-                C_H
-            )
-            Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-        end
+        grid_q_c .= grid_q_c .- grid_δq .* (2 * Δt)
+        grid_t_c .= grid_t_c .+ grid_δt .* (2 * Δt)
 
-        # Surface latent heat fluxes
-        if physics_params["do_Surface_Evaporation"]
-            C_E = physics_params["C_E"]::Float64
-            Surface_Evaporation!(
-                mesh, atmo_data,
-                grid_ps,
-                grid_q_c, grid_lhflx,
-                V_c, za, rho,
-                Δt,
-                C_E
-            )
-            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-        end
+        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
 
-        # PBL mixing for temperature and moisture
-        if physics_params["do_Implicit_PBL_Scheme"]
-            C_D = physics_params["C_D"]::Float64
-            Implicit_PBL_Mixing!(
-                atmo_data,
-                grid_p_full, grid_p_half,
-                grid_t_c, grid_q_c,
-                K_E,
-                V_c, za, rho,
-                physics_params,
-                Δt,
-                C_D
-            )
-        
-            Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-            Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-            
-            Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-            Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-        end
+        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
+        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
 
+        grid_δq .= 0.0
+        grid_δt .= 0.0
+    end
+
+    # Surface sensible heat fluxes
+    if physics_params["do_Sensible_Heating"]
+        C_H = physics_params["C_H"]::Float64
+        Sensible_Heating!(
+            mesh, atmo_data,
+            grid_t_c, grid_shflx,
+            V_c, za, rho,
+            Δt,
+            C_H
+        )
+        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
+        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
+    end
+
+    # Surface latent heat fluxes
+    if physics_params["do_Surface_Evaporation"] && config.moisture_processes
+        C_E = physics_params["C_E"]::Float64
+        Surface_Evaporation!(
+            mesh, atmo_data,
+            grid_ps,
+            grid_q_c, grid_lhflx,
+            V_c, za, rho,
+            Δt,
+            C_E
+        )
+        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
+    end
+
+    # PBL mixing for temperature and moisture
+    if physics_params["do_Implicit_PBL_Scheme"]
+        C_D = physics_params["C_D"]::Float64
+        Implicit_PBL_Mixing!(
+            atmo_data,
+            grid_p_full, grid_p_half,
+            grid_t_c, grid_q_c,
+            K_E,
+            V_c, za, rho,
+            physics_params,
+            Δt,
+            C_D
+        )
+
+        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
+        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
+
+        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
     end
 
     # Held-Suarez
@@ -187,7 +183,7 @@ function Spectral_Physics!(
             atmo_data, Δt, 86400, mesh.sinθ,
             grid_u_p, grid_v_p,
             grid_p_half, grid_p_full,
-            grid_t_c,
+            grid_t_p,
             grid_δu, grid_δv,
             grid_t_eq, grid_δt,
             physics_params
