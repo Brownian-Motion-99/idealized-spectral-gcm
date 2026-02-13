@@ -8,6 +8,10 @@
 
 This is a modern refactor of the spectral dynamical core originally developed by Daniel Zhengyu Huang. It solves the primitive equations on the sphere using the spectral transform method.
 
+> [!CAUTION]
+> ``Spectral_Physics!`` function was not implemented correctly, causing numerical instability for dry Held-Suarez run. Users should updated to ``v0.2.1``.
+
+
 ## Features
 * **Pure Julia:** High-performance, hackable codebase.
 * **Spectral Dynamics:** Accurate T21/T42... spectral transforms.
