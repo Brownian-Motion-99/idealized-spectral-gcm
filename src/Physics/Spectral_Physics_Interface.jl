@@ -100,7 +100,7 @@ function Spectral_Physics!(
     if physics_params["do_Lscale_Cond"] && config.moisture_processes
         grid_precip .= 0.0
 
-        L = physics_params["L"]::Float64
+        L = physics_params["L"]  # Float64 or AbstractArray{Float64,2}
         Lscale_Cond!(
             vert_coord,
             atmo_data,
