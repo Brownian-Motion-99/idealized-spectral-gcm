@@ -138,9 +138,15 @@ function JGCM_Simulate(config::Model_Config)
 
         # Load data AND get the time we left off
         saved_time = Load_Restart_File!(dyn_data, config.restart_file)
-        
+
         start_time = saved_time
         init_step  = false  # We are resuming, so we don't need the Euler start
+
+        # Sync integrator to the correct restart time (integrator was constructed
+        # before the restart file was loaded, so its time fields are still 0)
+        integrator.time       = start_time
+        integrator.start_time = start_time
+        integrator.init_step  = false
         
     else
         # --- PATH B: COLD START ---
