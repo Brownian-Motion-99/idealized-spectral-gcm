@@ -174,8 +174,12 @@ function Lscale_Cond!(
                 grid_liquid_water_content[i, j, k] = δq
 
                 # Pseudo-adiabatic precipitation
-                Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                grid_precip[i, j, 1] += δq * Δp
+                if L[i, j] != 0.
+                    Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
+                    grid_precip[i, j, 1] += δq * Δp
+                else
+                    grid_precip[i, j, 1]  = 0.
+                end
 
             end
         end
