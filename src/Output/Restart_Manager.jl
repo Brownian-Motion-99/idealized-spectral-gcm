@@ -9,7 +9,7 @@ export Restart_Manager, Write_Restart_File, Load_Restart_File!, Cleanup_Old_Rest
 struct Restart_Manager
     output_dir::String
     restart_frequency::Int64
-    
+
     function Restart_Manager(output_dir::String, frequency::Int64)
         if frequency > 0 && !isdir(output_dir)
             mkpath(output_dir)
@@ -23,21 +23,22 @@ end
 """
     Write_Restart_File(manager, dyn_data, current_time)
 """
-function Write_Restart_File(manager::Restart_Manager, dyn_data::Dyn_Data, current_time::Int64)
+function Write_Restart_File(
+    manager::Restart_Manager,
+    dyn_data::Dyn_Data,
+    current_time::Int64,
+)
     # Ensure directory exists right before writing (lazy creation)
     if !isdir(manager.output_dir)
         mkpath(manager.output_dir)
     end
-    
+
     filename = joinpath(manager.output_dir, "restart_t$(current_time).jld2")
     temp_filename = filename * ".tmp"
 
-    jldsave(temp_filename; 
-        dyn_data_state = dyn_data, 
-        saved_time = current_time
-    )
+    jldsave(temp_filename; dyn_data_state = dyn_data, saved_time = current_time)
 
-    mv(temp_filename, filename; force=true)
+    mv(temp_filename, filename; force = true)
     @info "Checkpoint saved: $filename"
 end
 
@@ -52,7 +53,7 @@ function Load_Restart_File!(dyn_data::Dyn_Data, filename::String)
     end
 
     @info "Loading warm start from: $filename"
-    
+
     loaded_file = load(filename)
     loaded_struct = loaded_file["dyn_data_state"]
     saved_time = loaded_file["saved_time"]
@@ -79,29 +80,33 @@ end
 Deletes older restart files, BUT ensures the file used to start the run 
 (protect_file) is never deleted.
 """
-function Cleanup_Old_Restarts(manager::Restart_Manager, keep_last_n::Int=3, protect_file::String="")
-    files = readdir(manager.output_dir, join=true)
+function Cleanup_Old_Restarts(
+    manager::Restart_Manager,
+    keep_last_n::Int = 3,
+    protect_file::String = "",
+)
+    files = readdir(manager.output_dir, join = true)
     restart_files = filter(f -> occursin("restart_t", f) && endswith(f, ".jld2"), files)
-    
+
     # Helper to extract time
     function get_time_step(f)
         m = match(r"restart_t(\d+).jld2", f)
         return isnothing(m) ? 0 : parse(Int64, m[1])
     end
-    
-    sort!(restart_files, by=get_time_step)
-    
+
+    sort!(restart_files, by = get_time_step)
+
     if length(restart_files) > keep_last_n
-        files_to_delete = restart_files[1 : end-keep_last_n]
-        
+        files_to_delete = restart_files[1:end-keep_last_n]
+
         for f in files_to_delete
             # SAFETY CHECK: Do not delete if it matches the start file
             if !isempty(protect_file) && abspath(f) == abspath(protect_file)
                 @info "Skipping cleanup for protected start file: $f"
                 continue
             end
-            
-            rm(f; force=true)
+
+            rm(f; force = true)
             @info "Disk cleanup: Deleted old checkpoint $f"
         end
     end

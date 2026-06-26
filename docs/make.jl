@@ -1,6 +1,6 @@
 using Documenter, JGCM
 
-DocMeta.setdocmeta!(JGCM, :DocTestSetup, :(using JGCM); recursive=true)
+DocMeta.setdocmeta!(JGCM, :DocTestSetup, :(using JGCM); recursive = true)
 
 const page_rename = Dict("developer.md" => "Developer docs")
 
@@ -16,7 +16,7 @@ makedocs(;
     modules = [JGCM],
     doctest = true,
     linkcheck = false,
-    checkdocs = :none, 
+    checkdocs = :none,
     warnonly = [:missing_docs, :cross_references],
     authors = "Hao Chang <chunhaoc777@gmail.com>",
     repo = "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git",
@@ -26,19 +26,19 @@ makedocs(;
         canonical = "https://Brownian-Motion-99.github.io/idealized-spectral-gcm",
         assets = String[],
     ),
-    pages=[
+    pages = [
         "Home" => "index.md",
         [
-            nice_name(file) => file for
-            file in readdir(joinpath(@__DIR__, "src")) if file != "index.md" && splitext(file)[2] == ".md"
-        ]... # Added splatting (...) to ensure the array is flattened into the pages list
+            nice_name(file) => file for file in readdir(joinpath(@__DIR__, "src")) if
+            file != "index.md" && splitext(file)[2] == ".md"
+        ]..., # Added splatting (...) to ensure the array is flattened into the pages list
     ],
 )
 
-deploydocs(; 
-    repo = "github.com/Brownian-Motion-99/idealized-spectral-gcm.git", 
+deploydocs(;
+    repo = "github.com/Brownian-Motion-99/idealized-spectral-gcm.git",
     devbranch = "v0.2.0",
     target = "build",
     push_preview = true,
-    versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"]
+    versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"],
 )
