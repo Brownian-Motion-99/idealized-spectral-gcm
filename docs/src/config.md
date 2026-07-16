@@ -138,6 +138,7 @@ The `Output_Manager` writes snapshots to a NetCDF file at `output_interval` (in 
 The driver prints a status summary to `logger.log` periodically.
 
 * **Monitoring:** It tracks the maximum absolute value of prognostic variables ($U, V, T, P_{surf}$) and their locations.
+* **Progress:** Each status summary reports the percentage complete, elapsed wall-clock time, and estimated time remaining (ETA). The ETA is based on the average time per completed step, so it becomes more accurate as the run progresses.
 * **Usage:** Use this log to detect numerical instability (exploding values) early in the run.
 
 ---

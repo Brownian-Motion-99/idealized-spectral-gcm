@@ -216,8 +216,12 @@ function JGCM_Simulate(config::Model_Config)
 
     msg_cleanup_old_restarts = "Only the last 5 restart files are kept to save space."
     @warn msg_cleanup_old_restarts
-    open(config.logger, "a") do log; println(log, msg_cleanup_old_restarts); end
-    
+    open(config.logger, "a") do log
+        println(log, msg_cleanup_old_restarts)
+    end
+
+    loop_start_ns = time_ns()
+
     # --- First Step (Euler / Init) ---
     Step_Dynamics!(
         config, mesh, atmo_data, dyn_data, 
@@ -263,9 +267,10 @@ function JGCM_Simulate(config::Model_Config)
             end
         end
 
-        # Simple Progress Log
+        # Simple progress indicator
         if i % (config.day_to_sec / config.Δt / 4) == 0
-            status_diagnostics(i, config, dyn_data, integrator)
+            elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
+            status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
     end
     
@@ -281,14 +286,36 @@ end
 # ==============================================================================
 # Helper: Status Diagnostics
 # ==============================================================================
-function status_diagnostics(step::Int64, config::Model_Config, dyn_data::Dyn_Data, integrator::Filtered_Leapfrog)
+function status_diagnostics(
+    step::Int64,
+    total_steps::Int64,
+    elapsed_seconds::Float64,
+    config::Model_Config,
+    dyn_data::Dyn_Data,
+    integrator::Filtered_Leapfrog,
+)
 
     day = integrator.time / config.day_to_sec
 
     msg_step_and_day = @sprintf("=== Step %d | Day %.2f ===", step, day)
     @info msg_step_and_day
-    open(config.logger, "a") do log; println(log, msg_step_and_day); end
-    
+    open(config.logger, "a") do log
+        println(log, msg_step_and_day)
+    end
+
+    progress = step / total_steps
+    eta_seconds = elapsed_seconds * (total_steps - step) / step
+    msg_progress = @sprintf(
+        "Progress: %.1f%% | Elapsed: %s | ETA: %s",
+        100 * progress,
+        format_duration(elapsed_seconds),
+        format_duration(eta_seconds),
+    )
+    @info msg_progress
+    open(config.logger, "a") do log
+        println(log, msg_progress)
+    end
+
     # Define variables to monitor
     # Using Views for tracers to avoid allocation
     diag_vars = [
@@ -335,6 +362,27 @@ function status_diagnostics(step::Int64, config::Model_Config, dyn_data::Dyn_Dat
     println("-"^40) # Separator line
     open(config.logger, "a") do log; println(log, "-"^40); end
 
+end
+
+
+"""
+Format a duration in a readable form for progress log.
+"""
+function format_duration(seconds::Real)
+    total_seconds = max(0, round(Int, seconds))
+    days, remainder = divrem(total_seconds, 86400)
+    hours, remainder = divrem(remainder, 3600)
+    minutes, seconds = divrem(remainder, 60)
+
+    if days > 0
+        return @sprintf("%dd %02dh %02dm %02ds", days, hours, minutes, seconds)
+    elseif hours > 0
+        return @sprintf("%dh %02dm %02ds", hours, minutes, seconds)
+    elseif minutes > 0
+        return @sprintf("%dm %02ds", minutes, seconds)
+    else
+        return @sprintf("%ds", seconds)
+    end
 end
 
 
