@@ -20,6 +20,7 @@ function Spectral_Physics!(
     grid_u_p, grid_v_p, grid_t_p = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_t_p
     grid_p_half, grid_p_full = dyn_data.grid_p_half, dyn_data.grid_p_full
     grid_t_eq = dyn_data.grid_t_eq
+    grid_lrf_tendency = dyn_data.grid_lrf_tendency
 
     grid_δq = dyn_data.grid_δq
     spe_δq = dyn_data.spe_δq
@@ -200,9 +201,15 @@ function Spectral_Physics!(
         Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
     end
 
+    # Initialize additive momentum and temperature tendencies independently of
+    # the enabled parameterizations.
+    grid_δu .= 0.0
+    grid_δv .= 0.0
+    grid_δt .= 0.0
+    grid_lrf_tendency .= 0.0
+
     # Held-Suarez
-    if physics_params["do_HS_Forcing"]
-        grid_δt .= 0.0
+    if get(physics_params, "do_HS_Forcing", false)
         HS_Forcing!(
             atmo_data,
             Δt,
@@ -219,6 +226,22 @@ function Spectral_Physics!(
             grid_δt,
             physics_params,
         )
+    end
+
+    # Water vapor linear-response forcing. Use the previous time level to match
+    # the Held-Suarez tendency convention.
+    if get(physics_params, "do_LRF", false)
+        config.moisture_processes || error("LRF requires moisture_processes = true")
+        haskey(physics_params, "LRF_state") ||
+            error("LRF_state was not initialized before time integration")
+
+        LRF!(
+            physics_params["LRF_state"]::LRF_State,
+            grid_q_p,
+            grid_lrf_tendency,
+            config.day_to_sec,
+        )
+        grid_δt .+= grid_lrf_tendency
     end
 
 end

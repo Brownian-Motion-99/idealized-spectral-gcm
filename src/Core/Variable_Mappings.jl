@@ -119,6 +119,7 @@ function Get_Dyn_Var_Map(dyn_data::Dyn_Data, ::Val{:PrimitiveEquation})
         :z => dyn_data.grid_geopot_full,
         :lnps => dyn_data.grid_lnps,
         :t_eq => dyn_data.grid_t_eq,
+        :lrf_dt => dyn_data.grid_lrf_tendency,
         :shflx => dyn_data.grid_shflx,
         :lhflx => dyn_data.grid_lhflx,
         :precip => dyn_data.grid_precip,

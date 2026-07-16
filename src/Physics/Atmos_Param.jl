@@ -7,10 +7,11 @@ using ..Semi_Implicit_Module
 using ..Time_Integrator_Module
 
 include("HS_Forcing.jl")
+include("LRF.jl")
 include("Lscale_Cond.jl")
 include("PBL.jl")
 include("Spectral_Physics_Interface.jl")
 
-export Spectral_Physics!
+export Spectral_Physics!, LRF_State, Load_LRF_State, LRF!
 
 end

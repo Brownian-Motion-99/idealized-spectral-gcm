@@ -11,6 +11,7 @@ using ..Experiment_Configuration
 using ..Initial_Conditions
 using ..Semi_Implicit_Module
 using ..Restart_Manager_Module
+using ..Atmos_Param_Module
 
 using ..Spectral_Dynamics_Module
 using ..Barotropic_Dynamics_Module
@@ -122,6 +123,17 @@ function JGCM_Simulate(config::Model_Config)
         config.nd,
         config.num_tracers,
     )
+
+    # Load static LRF data once, before the time loop. The retained state is
+    # stored in the existing physics configuration dictionary for now.
+    if get(config.physics_params, "do_LRF", false)
+        config.moisture_processes || error("LRF requires moisture_processes = true")
+        lrf_file = get(config.physics_params, "LRF_file", nothing)
+        lrf_file isa AbstractString ||
+            error("LRF requires physics_params[\"LRF_file\"]")
+        config.physics_params["LRF_state"] =
+            Load_LRF_State(lrf_file, nλ, config.nθ, config.nd)
+    end
 
     # Semi-Implicit Solver (Only for 3D)
     semi_implicit = nothing

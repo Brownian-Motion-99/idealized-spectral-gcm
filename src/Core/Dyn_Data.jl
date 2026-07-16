@@ -155,6 +155,9 @@ mutable struct Dyn_Data
     # equilibrium temperature in HS_Forcing
     grid_t_eq::Array{Float64,3}
 
+    # temperature tendency from the water vapor linear-response forcing
+    grid_lrf_tendency::Array{Float64,3}
+
     ## wrapper
     spe_d1::Array{ComplexF64,3}
     spe_d2::Array{ComplexF64,3}
@@ -365,6 +368,9 @@ function Dyn_Data(
 
     # equilibrium temperature
     grid_t_eq = zeros(Float64, nλ, nθ, nd)
+
+    # water vapor linear-response temperature tendency
+    grid_lrf_tendency = zeros(Float64, nλ, nθ, nd)
     ## wrapper
     spe_d1 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     spe_d2 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
@@ -466,6 +472,7 @@ function Dyn_Data(
         grid_z_full,
         grid_z_half,
         grid_t_eq,
+        grid_lrf_tendency,
         #########################################################################
         spe_d1,
         spe_d2,

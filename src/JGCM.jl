@@ -66,6 +66,9 @@ export Vert_Coordinate
 using .Dyn_Data_Module
 export Dyn_Data
 
+using .Atmos_Param_Module
+export LRF_State, Load_LRF_State, LRF!
+
 using .Variable_Mappings_Module
 export Get_Data_Pointer
 

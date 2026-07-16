@@ -5,6 +5,7 @@ using JGCM
 @testset "Math Kernels" begin
     include("test_Gauss_And_Legendre.jl")
     include("test_Spectral_Spherical_Mesh.jl")
+    include("test_LRF.jl")
 end
 
 # 2. Integration Tests (Optional: Run short simulations)

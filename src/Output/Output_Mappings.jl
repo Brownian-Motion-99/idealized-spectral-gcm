@@ -64,6 +64,13 @@ function Get_Var_Info(::Val{:PrimitiveEquation})
             "held_suarez_equilibrium_temperature",
             3,
         ),
+        :lrf_dt => VarMeta(
+            "lrf_dta_dt",
+            "K s-1",
+            "LRF Temperature Tendency",
+            "tendency_of_air_temperature_due_to_linear_response_forcing",
+            3,
+        ),
         :lnps => VarMeta(
             "lnps",
             "1",
