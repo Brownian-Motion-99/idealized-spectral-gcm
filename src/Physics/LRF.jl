@@ -4,9 +4,9 @@ using JLD2
 """
     LRF_State
 
-Static data used by the water vapor linear-response forcing. `LW_q` contains one
-`nd × nd` response matrix per latitude, and `ref_q` is the reference specific
-water vapor specific humidity on the model grid.
+Static data used by the moisture-radiative feedback inear response
+function. `LW_q` contains one `nd × nd` response matrix per latitude, 
+and `ref_q` is the reference specific humidity on the model grid.
 """
 struct LRF_State
     LW_q::Array{Float64,3}   # (nd, nd, nθ)
@@ -17,7 +17,9 @@ struct LRF_State
         nλ_ref, nθ_ref, nd_ref = size(ref_q)
 
         nd_out == nd_in || throw(
-            DimensionMismatch("LRF_LW_q must contain square vertical matrices; got $(size(LW_q))"),
+            DimensionMismatch(
+                "LRF_LW_q must contain square vertical matrices; got $(size(LW_q))",
+            ),
         )
         nθ == nθ_ref || throw(
             DimensionMismatch(
@@ -39,7 +41,7 @@ end
     Load_LRF_State(filepath, nλ, nθ, nd)
 
 Load and validate the time-independent LRF data once, before time integration.
-The legacy data layout is `(nd, nd, nθ)` for `LRF_LW_q` and `(nλ, nθ, nd)`
+The data layout is `(nd, nd, nθ)` for `LRF_LW_q` and `(nλ, nθ, nd)`
 for `ref_q`.
 """
 function Load_LRF_State(filepath::AbstractString, nλ::Int, nθ::Int, nd::Int)
@@ -53,15 +55,10 @@ function Load_LRF_State(filepath::AbstractString, nλ::Int, nθ::Int, nd::Int)
     ref_q = file["ref_q"]
 
     size(LW_q) == (nd, nd, nθ) || throw(
-        DimensionMismatch(
-            "expected LRF_LW_q size ($nd, $nd, $nθ), got $(size(LW_q))",
-        ),
+        DimensionMismatch("expected LRF_LW_q size ($nd, $nd, $nθ), got $(size(LW_q))"),
     )
-    size(ref_q) == (nλ, nθ, nd) || throw(
-        DimensionMismatch(
-            "expected ref_q size ($nλ, $nθ, $nd), got $(size(ref_q))",
-        ),
-    )
+    size(ref_q) == (nλ, nθ, nd) ||
+        throw(DimensionMismatch("expected ref_q size ($nλ, $nθ, $nd), got $(size(ref_q))"))
 
     return LRF_State(LW_q, ref_q)
 end
@@ -69,7 +66,7 @@ end
 """
     LRF!(state, grid_q, grid_lrf_tendency, day_to_sec)
 
-Calculate the columnwise temperature tendency caused by water vapor anomalies.
+Calculate the columnwise temperature tendency caused by moisture-radiative feedback.
 `grid_lrf_tendency` is overwritten in-place and returned in K s⁻¹.
 """
 function LRF!(
@@ -102,8 +99,7 @@ function LRF!(
                         state.LW_q[k_out, k_in, j] *
                         (grid_q[i, j, k_in] - state.ref_q[i, j, k_in])
                 end
-                @inbounds grid_lrf_tendency[i, j, k_out] =
-                    heating_rate * inv_day_to_sec
+                @inbounds grid_lrf_tendency[i, j, k_out] = heating_rate * inv_day_to_sec
             end
         end
     end

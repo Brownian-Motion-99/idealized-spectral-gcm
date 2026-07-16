@@ -228,8 +228,8 @@ function Spectral_Physics!(
         )
     end
 
-    # Water vapor linear-response forcing. Use the previous time level to match
-    # the Held-Suarez tendency convention.
+    # Linear response function for moisture-radiative feedback. 
+    # Use the previous time level to match the Held-Suarez tendency convention.
     if get(physics_params, "do_LRF", false)
         config.moisture_processes || error("LRF requires moisture_processes = true")
         haskey(physics_params, "LRF_state") ||

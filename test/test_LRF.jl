@@ -8,7 +8,7 @@ using JLD2
     LW_q[:, :, 1] .= [1.0 2.0; 3.0 4.0]
     LW_q[:, :, 2] .= [-1.0 0.5; 2.0 -2.0]
 
-    ref_q = reshape(collect(1.0:(nλ * nθ * nd)), nλ, nθ, nd) .* 1.0e-3
+    ref_q = reshape(collect(1.0:(nλ*nθ*nd)), nλ, nθ, nd) .* 1.0e-3
     q = copy(ref_q)
     q[1, 1, :] .+= [1.0e-3, 2.0e-3]
     q[2, 1, :] .+= [-1.0e-3, 3.0e-3]
@@ -24,7 +24,6 @@ using JLD2
     @test tendency[2, 2, :] == zeros(nd)
     @test all(isfinite, tendency)
 
-    # The output buffer is overwritten rather than accumulated internally.
     fill!(tendency, 42.0)
     LRF!(state, ref_q, tendency, day_to_sec)
     @test tendency == zeros(size(tendency))
@@ -50,10 +49,8 @@ end
     @test size(dyn_data.grid_lrf_tendency) == (4, 2, 2)
     @test all(iszero, dyn_data.grid_lrf_tendency)
 
-    live_data = JGCM.Variable_Mappings_Module.Get_Dyn_Var_Map(
-        dyn_data,
-        Val(:PrimitiveEquation),
-    )
+    live_data =
+        JGCM.Variable_Mappings_Module.Get_Dyn_Var_Map(dyn_data, Val(:PrimitiveEquation))
     @test live_data[:lrf_dt] === dyn_data.grid_lrf_tendency
 
     metadata = JGCM.Output_Mappings_Module.Get_Var_Info(Val(:PrimitiveEquation))[:lrf_dt]

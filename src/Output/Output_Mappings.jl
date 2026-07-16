@@ -68,7 +68,7 @@ function Get_Var_Info(::Val{:PrimitiveEquation})
             "lrf_dta_dt",
             "K s-1",
             "LRF Temperature Tendency",
-            "tendency_of_air_temperature_due_to_linear_response_forcing",
+            "tendency_of_air_temperature_due_to_linear_response_function_of_moisture_radiative_feedback",
             3,
         ),
         :lnps => VarMeta(

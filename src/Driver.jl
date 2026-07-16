@@ -129,8 +129,7 @@ function JGCM_Simulate(config::Model_Config)
     if get(config.physics_params, "do_LRF", false)
         config.moisture_processes || error("LRF requires moisture_processes = true")
         lrf_file = get(config.physics_params, "LRF_file", nothing)
-        lrf_file isa AbstractString ||
-            error("LRF requires physics_params[\"LRF_file\"]")
+        lrf_file isa AbstractString || error("LRF requires physics_params[\"LRF_file\"]")
         config.physics_params["LRF_state"] =
             Load_LRF_State(lrf_file, nλ, config.nθ, config.nd)
     end
