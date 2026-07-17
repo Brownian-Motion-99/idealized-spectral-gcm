@@ -7,7 +7,14 @@ using JGCM
     include("test_Spectral_Spherical_Mesh.jl")
 end
 
-# 2. Integration Tests (Optional: Run short simulations)
-@testset "Integration Tests" begin
+# 2. Driver Utility Tests
+@testset "Driver Utilities" begin
     include("test_Driver.jl")
+end
+
+# 3. Integration Tests (Optional: Run short simulations)
+@testset "Integration Tests" begin
+    # You could potentially include a very short Barotropic run here
+    # to ensure the full pipeline works without crashing.
+    # include("../exp/Barotropic/Barotropic.jl") 
 end
