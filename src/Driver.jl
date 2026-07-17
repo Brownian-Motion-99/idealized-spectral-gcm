@@ -19,6 +19,30 @@ using ..Shallow_Water_Dynamics_Module
 export JGCM_Simulate
 
 """
+    remaining_time_steps(start_time, end_time, Δt)
+
+Return the number of timesteps needed to advance from `start_time` to
+`end_time`. The interval must be nonnegative and exactly divisible by `Δt`.
+"""
+function remaining_time_steps(start_time::Integer, end_time::Integer, Δt::Integer)
+    Δt > 0 || throw(ArgumentError("Δt must be positive, got $Δt"))
+    end_time >= start_time || throw(
+        ArgumentError(
+            "end_time ($end_time) must not be earlier than start_time ($start_time)",
+        ),
+    )
+
+    remaining_time = end_time - start_time
+    remaining_time % Δt == 0 || throw(
+        ArgumentError(
+            "remaining simulation time ($remaining_time) must be evenly divisible by Δt ($Δt)",
+        ),
+    )
+
+    return Int64(div(remaining_time, Δt))
+end
+
+"""
     JGCM_Simulate(config::Model_Config)
 
 The main entry point for running any JGCM simulation.
@@ -171,6 +195,8 @@ function JGCM_Simulate(config::Model_Config)
         start_time = 0
         init_step  = true
     end
+
+    NT = remaining_time_steps(start_time, config.end_time, config.Δt)
     
     # =========================================================================
     # 3. Output Management
@@ -208,9 +234,7 @@ function JGCM_Simulate(config::Model_Config)
     # 4. Main Time Loop
     # =========================================================================
     
-    NT = Int64(config.end_time / config.Δt)
-
-    msg_start_loop = "Starting Time Loop: $NT steps"
+    msg_start_loop = "Starting Time Loop: $NT remaining steps"
     @info msg_start_loop
     open(config.logger, "a") do log; println(log, msg_start_loop); end
 
@@ -222,55 +246,57 @@ function JGCM_Simulate(config::Model_Config)
 
     loop_start_ns = time_ns()
 
-    # --- First Step (Euler / Init) ---
-    Step_Dynamics!(
-        config, mesh, atmo_data, dyn_data, 
-        integrator, semi_implicit, vert_coord, config.physics_params
-    )
-    
-    # If using Leapfrog, we need to correct the first step
-    if isa(integrator, Filtered_Leapfrog)
-        if isnothing(semi_implicit)
-            Time_Integrator_Module.Update_Init_Step!(integrator)
-        else
-            Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
-        end
-    end
-    
-    integrator.time += config.Δt
-    Update_Output!(op_man, dyn_data, integrator.time)
-
-    # --- Main Loop ---
-    for i = 2:NT
+    if NT > 0
+        # --- First Step (Euler / Init for a cold start) ---
         Step_Dynamics!(
-            config, mesh, atmo_data, dyn_data, 
+            config, mesh, atmo_data, dyn_data,
             integrator, semi_implicit, vert_coord, config.physics_params
         )
-        
-        integrator.time += config.Δt
-        Update_Output!(op_man, dyn_data, integrator.time)
 
-        # Restart
-        if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
-            Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
-
-            msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
-            @info msg_ckpt
-            open(config.logger, "a") do log; println(log, msg_ckpt); end
-
-            # Keep only the last 5 files to save space
-            # Keep the starting file
-            if config.is_restart
-                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5, config.restart_file)
+        # A warm restart has init_step = false and continues with leapfrog directly.
+        if integrator.init_step
+            if isnothing(semi_implicit)
+                Time_Integrator_Module.Update_Init_Step!(integrator)
             else
-                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5)
+                Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
             end
         end
 
-        # Simple progress indicator
-        if i % (config.day_to_sec / config.Δt / 4) == 0
-            elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
-            status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
+        integrator.time += config.Δt
+        Update_Output!(op_man, dyn_data, integrator.time)
+
+        # --- Main Loop ---
+        for i = 2:NT
+            Step_Dynamics!(
+                config, mesh, atmo_data, dyn_data,
+                integrator, semi_implicit, vert_coord, config.physics_params
+            )
+
+            integrator.time += config.Δt
+            Update_Output!(op_man, dyn_data, integrator.time)
+
+            # Restart
+            if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+                Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
+
+                msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
+                @info msg_ckpt
+                open(config.logger, "a") do log; println(log, msg_ckpt); end
+
+                # Keep only the last 5 files to save space
+                # Keep the starting file
+                if config.is_restart
+                    Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5, config.restart_file)
+                else
+                    Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5)
+                end
+            end
+
+            # Simple progress indicator
+            if i % (config.day_to_sec / config.Δt / 4) == 0
+                elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
+                status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
+            end
         end
     end
     
