@@ -158,6 +158,11 @@ mutable struct Dyn_Data
     # temperature tendency from the water vapor linear-response forcing
     grid_lrf_tendency::Array{Float64,3}
 
+    # Betts-Miller convective tendencies and precipitation rate
+    grid_bm_t_tendency::Array{Float64,3}
+    grid_bm_q_tendency::Array{Float64,3}
+    grid_bm_precip::Array{Float64,3}
+
     ## wrapper
     spe_d1::Array{ComplexF64,3}
     spe_d2::Array{ComplexF64,3}
@@ -371,6 +376,11 @@ function Dyn_Data(
 
     # water vapor linear-response temperature tendency
     grid_lrf_tendency = zeros(Float64, nλ, nθ, nd)
+
+    # Betts-Miller diagnostics
+    grid_bm_t_tendency = zeros(Float64, nλ, nθ, nd)
+    grid_bm_q_tendency = zeros(Float64, nλ, nθ, nd)
+    grid_bm_precip = zeros(Float64, nλ, nθ, 1)
     ## wrapper
     spe_d1 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     spe_d2 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
@@ -473,6 +483,9 @@ function Dyn_Data(
         grid_z_half,
         grid_t_eq,
         grid_lrf_tendency,
+        grid_bm_t_tendency,
+        grid_bm_q_tendency,
+        grid_bm_precip,
         #########################################################################
         spe_d1,
         spe_d2,

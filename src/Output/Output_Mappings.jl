@@ -71,6 +71,27 @@ function Get_Var_Info(::Val{:PrimitiveEquation})
             "tendency_of_air_temperature_due_to_linear_response_function_of_moisture_radiative_feedback",
             3,
         ),
+        :bm_dt => VarMeta(
+            "bm_dta_dt",
+            "K s-1",
+            "Betts-Miller Temperature Tendency",
+            "tendency_of_air_temperature_due_to_convection",
+            3,
+        ),
+        :bm_dq => VarMeta(
+            "bm_dhus_dt",
+            "s-1",
+            "Betts-Miller Specific Humidity Tendency",
+            "tendency_of_specific_humidity_due_to_convection",
+            3,
+        ),
+        :bm_precip => VarMeta(
+            "bm_pr",
+            "kg m-2 s-1",
+            "Betts-Miller Convective Precipitation Rate",
+            "convective_precipitation_flux",
+            2,
+        ),
         :lnps => VarMeta(
             "lnps",
             "1",

@@ -8,10 +8,13 @@ using ..Time_Integrator_Module
 
 include("HS_Forcing.jl")
 include("LRF.jl")
+include("Betts_Miller.jl")
 include("Lscale_Cond.jl")
 include("PBL.jl")
 include("Spectral_Physics_Interface.jl")
 
 export Spectral_Physics!, LRF_State, Load_LRF_State, LRF!
+export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
+export Betts_Miller_Saturation_Vapor_Pressure
 
 end

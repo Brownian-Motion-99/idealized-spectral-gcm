@@ -111,6 +111,31 @@ A simple saturation adjustment scheme ("Manabe bucket"). If specific humidity $q
 ```
 where $L$ is latent heating efficiency, default is 0.2.
 
+### Betts-Miller Convection (`Betts_Miller.jl`)
+
+For a column with positive contiguous CAPE, the scheme constructs a moist
+adiabatic parcel temperature profile and a reference humidity profile equal to
+the configured relative humidity times the parcel saturation mixing ratio. It
+returns the relaxation rates
+
+```math
+\dot T = \frac{T_{ref}-T}{\tau_{BM}}, \qquad
+\dot q = \frac{q_{ref}-q}{\tau_{BM}}.
+```
+
+The column energy correction lengthens whichever of the temperature or
+humidity adjustments supplies the larger precipitation-equivalent energy; it
+does not cap either tendency using the model time step. For explicit leapfrog
+integration the driver instead requires `2 * Δt <= bm_tau`, so applying the
+returned rate cannot overshoot its reference profile.
+
+Saturation vapor pressure follows the reference mixed-phase Smithsonian
+thermodynamics: ice below 253.16 K, liquid above 273.16 K, and a linear blend
+between them. The parcel calculation includes an initially saturated
+surface-parcel adjustment, an RK2 saturated ascent using the arithmetic
+midpoint pressure, and discrete contiguous LFC/LZB detection. Convection that
+remains buoyant through the model top uses the top full level as its LZB.
+
 ### Boundary Layer Mixing (`PBL.jl`)
 Vertical turbulent diffusion of heat, moisture, and momentum.
 

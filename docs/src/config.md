@@ -26,6 +26,24 @@ This is the configuration of `Lscale_Cond.jl`, controlling grid scale condensati
 | `"do_Lscale_Cond"` | `Bool` | `true` | Master switch for the module. |
 | `"L"` | `Float64` | `0.2` | Latent heating efficiency (ranges from 0.0 to 1.0). |
 
+### Betts-Miller scheme
+
+The Betts-Miller scheme diagnoses a convecting surface parcel and relaxes the
+temperature and specific humidity profiles toward parcel-based reference
+profiles. It returns additive rates and a precipitation flux.
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `"do_Betts_Miller"` | `Bool` | `false` | Master switch for Betts-Miller convection. |
+| `"bm_tau"` | `Float64` | `7200.0` | Relaxation time scale in seconds. The leapfrog effective step, `2 * Δt`, must not exceed this value. |
+| `"bm_relative_humidity"` | `Float64` | `0.8` | Relative humidity of the convective reference profile; must lie in `(0, 1]`. |
+
+Betts-Miller and `"do_Lscale_Cond"` cannot currently be enabled together,
+because large-scale condensation directly modifies the state while
+Betts-Miller supplies additive tendencies. A moist analytic initialization may
+set `"initial_humidity_floor"` to a small nonnegative value to prevent spectral
+ringing from producing invalid negative specific humidity.
+
 ### Planetary Boundary Layer Processes
 
 Configuration of `PBL.jl`, handling PBL-related processes, including surface sensible heat fluxes, surface latent heat fluxes, and PBL mixing for sensible/latent heat.

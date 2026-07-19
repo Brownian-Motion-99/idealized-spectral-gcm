@@ -63,6 +63,12 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
     if var_name == :dq
         return dyn_data.grid_δq
     end
+    if var_name == :bm_dt
+        return dyn_data.grid_bm_t_tendency
+    end
+    if var_name == :bm_dq
+        return dyn_data.grid_bm_q_tendency
+    end
 
     # Fluxes
     if var_name == :shflx
@@ -75,6 +81,9 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
     # Pseudo-adiabatic precipitation
     if var_name == :precip
         return dyn_data.grid_precip
+    end
+    if var_name == :bm_precip
+        return dyn_data.grid_bm_precip
     end
 
     # Handle :tr1, :tr2, etc.
@@ -120,6 +129,9 @@ function Get_Dyn_Var_Map(dyn_data::Dyn_Data, ::Val{:PrimitiveEquation})
         :lnps => dyn_data.grid_lnps,
         :t_eq => dyn_data.grid_t_eq,
         :lrf_dt => dyn_data.grid_lrf_tendency,
+        :bm_dt => dyn_data.grid_bm_t_tendency,
+        :bm_dq => dyn_data.grid_bm_q_tendency,
+        :bm_precip => dyn_data.grid_bm_precip,
         :shflx => dyn_data.grid_shflx,
         :lhflx => dyn_data.grid_lhflx,
         :precip => dyn_data.grid_precip,

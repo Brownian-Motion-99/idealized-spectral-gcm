@@ -21,14 +21,24 @@ function Spectral_Physics!(
     grid_p_half, grid_p_full = dyn_data.grid_p_half, dyn_data.grid_p_full
     grid_t_eq = dyn_data.grid_t_eq
     grid_lrf_tendency = dyn_data.grid_lrf_tendency
+    grid_bm_t_tendency = dyn_data.grid_bm_t_tendency
+    grid_bm_q_tendency = dyn_data.grid_bm_q_tendency
+    grid_bm_precip = dyn_data.grid_bm_precip
 
     grid_δq = dyn_data.grid_δq
     spe_δq = dyn_data.spe_δq
 
-    # Initialize ps and q
+    # Initialize all additive physics tendencies and diagnostics once per call.
+    grid_δu .= 0.0
+    grid_δv .= 0.0
     grid_δps .= 0.0
+    grid_δt .= 0.0
     spe_δq .= 0.0
     grid_δq .= 0.0
+    grid_lrf_tendency .= 0.0
+    grid_bm_t_tendency .= 0.0
+    grid_bm_q_tendency .= 0.0
+    grid_bm_precip .= 0.0
 
     #####################################################################################################
     # spectral equation quantities
@@ -89,6 +99,15 @@ function Spectral_Physics!(
 
     grid_liquid_water_content = dyn_data.grid_liquid_water_content
     grid_precip = dyn_data.grid_precip
+    grid_precip .= 0.0
+
+    if get(physics_params, "do_Betts_Miller", false) &&
+       get(physics_params, "do_Lscale_Cond", false)
+        error(
+            "Betts-Miller is not yet compatible with the current " *
+            "direct-state large-scale condensation scheme",
+        )
+    end
 
     grid_z_full = dyn_data.grid_z_full
     grid_z_half = dyn_data.grid_z_half
@@ -116,8 +135,6 @@ function Spectral_Physics!(
     # Grid scale condensation
     # Modified: grid_q_c, grid_t_c, grid_δq, grid_δt, grid_precip
     if physics_params["do_Lscale_Cond"] && config.moisture_processes
-        grid_precip .= 0.0
-
         L = physics_params["L"]  # Float64 or AbstractArray{Float64,2}
         Lscale_Cond!(
             vert_coord,
@@ -201,13 +218,6 @@ function Spectral_Physics!(
         Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
     end
 
-    # Initialize additive momentum and temperature tendencies independently of
-    # the enabled parameterizations.
-    grid_δu .= 0.0
-    grid_δv .= 0.0
-    grid_δt .= 0.0
-    grid_lrf_tendency .= 0.0
-
     # Held-Suarez
     if get(physics_params, "do_HS_Forcing", false)
         HS_Forcing!(
@@ -228,8 +238,39 @@ function Spectral_Physics!(
         )
     end
 
+    # Betts-Miller convective adjustment. The kernel returns rates diagnosed
+    # from the current model state; leapfrog applies them over its effective interval.
+    if get(physics_params, "do_Betts_Miller", false)
+        config.moisture_processes ||
+            error("Betts-Miller requires moisture_processes = true")
+        haskey(physics_params, "BM_state") ||
+            error("BM_state was not initialized before time integration")
+        bm_state = physics_params["BM_state"]::Betts_Miller_State
+        Δt <= bm_state.tau || throw(
+            ArgumentError(
+                "Betts-Miller requires effective_dt <= bm_tau; " *
+                "got $Δt s and $(bm_state.tau) s",
+            ),
+        )
+
+        Betts_Miller!(
+            bm_state,
+            atmo_data,
+            grid_t_c,
+            grid_q_c,
+            grid_p_full,
+            grid_p_half,
+            grid_bm_t_tendency,
+            grid_bm_q_tendency,
+            grid_bm_precip,
+        )
+        grid_δt .+= grid_bm_t_tendency
+        grid_δq .+= grid_bm_q_tendency
+        grid_precip .+= grid_bm_precip
+    end
+
     # Linear response function for moisture-radiative feedback. 
-    # Use the previous time level to match the Held-Suarez tendency convention.
+    # Diagnose it from the same current humidity state used by Betts-Miller.
     if get(physics_params, "do_LRF", false)
         config.moisture_processes || error("LRF requires moisture_processes = true")
         haskey(physics_params, "LRF_state") ||
@@ -237,7 +278,7 @@ function Spectral_Physics!(
 
         LRF!(
             physics_params["LRF_state"]::LRF_State,
-            grid_q_p,
+            grid_q_c,
             grid_lrf_tendency,
             config.day_to_sec,
         )

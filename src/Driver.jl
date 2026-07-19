@@ -134,6 +134,26 @@ function JGCM_Simulate(config::Model_Config)
             Load_LRF_State(lrf_file, nλ, config.nθ, config.nd)
     end
 
+    # Construct Betts-Miller configuration and reusable column work arrays once.
+    if get(config.physics_params, "do_Betts_Miller", false)
+        config.moisture_processes ||
+            error("Betts-Miller requires moisture_processes = true")
+        bm_tau = Float64(get(config.physics_params, "bm_tau", 7200.0))
+        bm_relative_humidity =
+            Float64(get(config.physics_params, "bm_relative_humidity", 0.8))
+        2 * config.Δt <= bm_tau || throw(
+            ArgumentError(
+                "Betts-Miller requires 2 * Δt <= bm_tau for leapfrog integration; " *
+                "got Δt=$(config.Δt) s and bm_tau=$bm_tau s",
+            ),
+        )
+        config.physics_params["BM_state"] = Betts_Miller_State(
+            config.nd;
+            tau = bm_tau,
+            relative_humidity = bm_relative_humidity,
+        )
+    end
+
     # Semi-Implicit Solver (Only for 3D)
     semi_implicit = nothing
     if is_3d && vert_coord !== nothing

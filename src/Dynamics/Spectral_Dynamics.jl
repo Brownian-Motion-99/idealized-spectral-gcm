@@ -979,7 +979,8 @@ function Spectral_Initialize_Fields!(
 
     # moisture initialization
     if config.moisture_processes
-        Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data)
+        humidity_floor = Float64(get(config.physics_params, "initial_humidity_floor", 0.0))
+        Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data, humidity_floor)
     end
 
 end
@@ -1034,6 +1035,7 @@ function Initialize_Analytic_Moisture!(
     mesh::Spectral_Spherical_Mesh,
     atmo_data::Atmo_Data,
     dyn_data::Dyn_Data,
+    humidity_floor::Float64 = 0.0,
 )
 
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
@@ -1042,6 +1044,8 @@ function Initialize_Analytic_Moisture!(
     grid_q_p, grid_q_c = dyn_data.grid_q_p, dyn_data.grid_q_c
     grid_p_full, grid_ps = dyn_data.grid_p_full, dyn_data.grid_ps_c
 
+    0 <= humidity_floor < 1 ||
+        throw(ArgumentError("initial_humidity_floor must satisfy 0 <= q < 1"))
     qv0 = 0.018
     θc = mesh.θc # lat
     phi_hw = 2 * pi / 9 * deg2rad(40)
@@ -1053,6 +1057,7 @@ function Initialize_Analytic_Moisture!(
         for j = 1:nθ
             for i = 1:nλ
                 grid_q_c[i, j, k] =
+                    humidity_floor +
                     qv0 *
                     exp(
                         -((grid_p_full[i, j, k] / grid_ps[i, j, 1] - 1.0) * (p0 / p_hw))^2,
@@ -1061,7 +1066,7 @@ function Initialize_Analytic_Moisture!(
             end
         end
     end
-    dyn_data.grid_q_c[:, :, 1] .= 0.0
+    dyn_data.grid_q_c[:, :, 1] .= humidity_floor
 
     Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
     Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
