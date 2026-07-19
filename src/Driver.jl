@@ -42,6 +42,30 @@ function remaining_time_steps(start_time::Integer, end_time::Integer, Δt::Integ
     return Int64(div(remaining_time, Δt))
 end
 
+function progress_metrics(current_time, start_time, end_time, Δt, elapsed_seconds)
+    current_time <= end_time || throw(
+        ArgumentError("current_time ($current_time) exceeds end_time ($end_time)"),
+    )
+    completed_steps = remaining_time_steps(start_time, current_time, Δt)
+    total_steps = remaining_time_steps(start_time, end_time, Δt)
+    segment_progress = total_steps == 0 ? 1.0 : completed_steps / total_steps
+    overall_progress = end_time == 0 ? 1.0 : current_time / end_time
+    eta_seconds = completed_steps == 0 ? nothing :
+                  elapsed_seconds * (total_steps - completed_steps) / completed_steps
+
+    return (; completed_steps, total_steps, segment_progress, overall_progress, eta_seconds)
+end
+
+function run_metrics(start_time, current_time, completed_steps, elapsed_seconds, day_to_sec)
+    day_to_sec > 0 || throw(ArgumentError("day_to_sec must be positive"))
+    simulated_days = (current_time - start_time) / day_to_sec
+    seconds_per_step = completed_steps == 0 ? nothing : elapsed_seconds / completed_steps
+    simulated_days_per_wall_day = completed_steps == 0 || elapsed_seconds <= 0 ? nothing :
+                                  simulated_days * 86400 / elapsed_seconds
+
+    return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
+end
+
 """
     JGCM_Simulate(config::Model_Config)
 
@@ -49,6 +73,7 @@ The main entry point for running any JGCM simulation.
 Handles allocation, initialization, time-stepping, and I/O based on the config.
 """
 function JGCM_Simulate(config::Model_Config)
+    simulation_start_ns = time_ns()
     
     msg_init       = "Initializing Experiment: $(config.name)"
     msg_model_info = "Model Type: $(config.model_type) | Resolution: T$(config.num_fourier)L$(config.nd)"
@@ -171,6 +196,12 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time       = start_time
         integrator.start_time = start_time
         integrator.init_step  = false
+
+        # The semi-implicit solver was constructed with the cold-start timestep.
+        # Rebuild its wave matrix for the leapfrog timestep used after a restart.
+        if !isnothing(semi_implicit)
+            Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
+        end
         
     else
         # --- PATH B: COLD START ---
@@ -295,15 +326,53 @@ function JGCM_Simulate(config::Model_Config)
             # Simple progress indicator
             if i % (config.day_to_sec / config.Δt / 4) == 0
                 elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
-                status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
+                status_diagnostics(elapsed_seconds, config, dyn_data, integrator)
             end
         end
     end
     
     Finalize_Output!(op_man)
+    integration_seconds = (time_ns() - loop_start_ns) / 1.0e9
+    initialization_seconds = (loop_start_ns - simulation_start_ns) / 1.0e9
+    total_seconds = (time_ns() - simulation_start_ns) / 1.0e9
+    completed_steps = remaining_time_steps(start_time, integrator.time, config.Δt)
+    metrics = run_metrics(
+        start_time,
+        integrator.time,
+        completed_steps,
+        integration_seconds,
+        config.day_to_sec,
+    )
+
     msg_end = "Simulation Complete."
+    msg_metrics = if completed_steps == 0
+        @sprintf(
+            "Run Metrics: Model Day %.2f -> %.2f | Steps: 0 | Initialization: %s | Integration: %s | Total: %s | Seconds/Step: N/A | Simulated Days/Wall Day: N/A",
+            start_time / config.day_to_sec,
+            integrator.time / config.day_to_sec,
+            format_duration(initialization_seconds),
+            format_duration(integration_seconds),
+            format_duration(total_seconds),
+        )
+    else
+        @sprintf(
+            "Run Metrics: Model Day %.2f -> %.2f | Steps: %d | Initialization: %s | Integration: %s | Total: %s | %.3f s/step | %.2f simulated days/wall day",
+            start_time / config.day_to_sec,
+            integrator.time / config.day_to_sec,
+            completed_steps,
+            format_duration(initialization_seconds),
+            format_duration(integration_seconds),
+            format_duration(total_seconds),
+            metrics.seconds_per_step,
+            metrics.simulated_days_per_wall_day,
+        )
+    end
     @info msg_end
-    open(config.logger, "a") do log; println(log, msg_end); end
+    @info msg_metrics
+    open(config.logger, "a") do log
+        println(log, msg_end)
+        println(log, msg_metrics)
+    end
 
 end
 
@@ -313,8 +382,6 @@ end
 # Helper: Status Diagnostics
 # ==============================================================================
 function status_diagnostics(
-    step::Int64,
-    total_steps::Int64,
     elapsed_seconds::Float64,
     config::Model_Config,
     dyn_data::Dyn_Data,
@@ -322,20 +389,31 @@ function status_diagnostics(
 )
 
     day = integrator.time / config.day_to_sec
+    metrics = progress_metrics(
+        integrator.time,
+        integrator.start_time,
+        config.end_time,
+        config.Δt,
+        elapsed_seconds,
+    )
 
-    msg_step_and_day = @sprintf("=== Step %d | Day %.2f ===", step, day)
+    msg_step_and_day = @sprintf(
+        "=== Segment Step %d/%d | Day %.2f ===",
+        metrics.completed_steps,
+        metrics.total_steps,
+        day,
+    )
     @info msg_step_and_day
     open(config.logger, "a") do log
         println(log, msg_step_and_day)
     end
 
-    progress = step / total_steps
-    eta_seconds = elapsed_seconds * (total_steps - step) / step
     msg_progress = @sprintf(
-        "Progress: %.1f%% | Elapsed: %s | ETA: %s",
-        100 * progress,
+        "Segment: %.1f%% | Overall: %.1f%% | Elapsed: %s | ETA: %s",
+        100 * metrics.segment_progress,
+        100 * metrics.overall_progress,
         format_duration(elapsed_seconds),
-        format_duration(eta_seconds),
+        isnothing(metrics.eta_seconds) ? "N/A" : format_duration(metrics.eta_seconds),
     )
     @info msg_progress
     open(config.logger, "a") do log
