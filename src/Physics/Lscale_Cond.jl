@@ -62,9 +62,10 @@ function Lscale_Cond!(
     Δak, Δbk   = vert_coord.Δak, vert_coord.Δbk
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
 
-    cp = atmo_data.cp_air
-    Lv = atmo_data.Lv
-    Rv = atmo_data.rvgas
+    cp   = atmo_data.cp_air
+    Lv   = atmo_data.Lv
+    Rv   = atmo_data.rvgas
+    grav = atmo_data.grav
 
     const_es     = 611.12
     const_q1     = 0.622
@@ -98,7 +99,7 @@ function Lscale_Cond!(
 
                 # Pseudo-adiabatic precipitation
                 Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                grid_precip[i, j, 1] += δq * Δp
+                grid_precip[i, j, 1] += δq * Δp / grav
 
             end
         end
@@ -139,9 +140,10 @@ function Lscale_Cond!(
     Δak, Δbk   = vert_coord.Δak, vert_coord.Δbk
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
 
-    cp = atmo_data.cp_air
-    Lv = atmo_data.Lv
-    Rv = atmo_data.rvgas
+    cp   = atmo_data.cp_air
+    Lv   = atmo_data.Lv
+    Rv   = atmo_data.rvgas
+    grav = atmo_data.grav
 
     const_es = 611.12
     const_q1 = 0.622
@@ -176,7 +178,7 @@ function Lscale_Cond!(
                 # Pseudo-adiabatic precipitation
                 if L[i, j] != 0.
                     Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                    grid_precip[i, j, 1] += δq * Δp
+                    grid_precip[i, j, 1] += δq * Δp / grav
                 else
                     grid_precip[i, j, 1]  = 0.
                 end
