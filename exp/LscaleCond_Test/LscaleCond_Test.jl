@@ -9,8 +9,8 @@ nλ = 2 * nθ   # 128
 sinθ, _ = Compute_Gaussian(nθ)
 
 L_field = zeros(Float64, nλ, nθ)
-for j = 1:nθ
-    if abs(sinθ[j]) <= 0.5   # sin(30°) = 0.5
+for j in 1:nθ
+    if abs(sinθ[j]) >= 0.5   # sin(30°) = 0.5
         L_field[:, j] .= 0.5
     end
 end
@@ -101,22 +101,12 @@ config = Model_Config(
     # IO
     output_path = output_path_base,
     output_filename = joinpath(output_path_base, "output.nc"),
-    logger = joinpath(output_path_base, "logger.log"),
-    do_raw_output = true,
-    pressure_levels = [
-        100000.0,
-        92500.0,
-        85000.0,
-        70000.0,
-        50000.0,
-        30000.0,
-        20000.0,
-        10000.0,
-        5000.0,
-        1000.0,
-    ],
-    vars_to_output = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
-    output_interval = 1200,
+    logger          = joinpath(output_path_base, "logger.log"),
+
+    do_raw_output   = true,
+    pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
+    vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
+    output_interval = 86400,
 
     # Physics
     physics_params = physics_params,

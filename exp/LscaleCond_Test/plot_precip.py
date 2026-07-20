@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import netCDF4 as nc
 
-output_file = "exp/LscaleCond_Test/output.nc"
-plot_file   = "exp/LscaleCond_Test/precip_map.png"
+output_file = "output.nc"
+plot_file   = "precip_map.png"
 
 with nc.Dataset(output_file) as ds:
     # Axes
