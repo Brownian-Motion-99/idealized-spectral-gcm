@@ -155,8 +155,18 @@ The `Output_Manager` writes snapshots to a NetCDF file at `output_interval` (in 
 
 The driver prints a status summary to `logger.log` periodically.
 
-* **Monitoring:** It tracks the maximum absolute value of prognostic variables ($U, V, T, P_{surf}$) and their locations.
-* **Usage:** Use this log to detect numerical instability (exploding values) early in the run.
+* **Monitoring:** It tracks the maximum absolute value and location of selected state and diagnostic fields, including $U$, $V$, $T$, vertical velocity, pressure, equilibrium temperature, and moisture.
+* **Segment step:** A segment is the work performed by the current invocation. For a cold start, it runs from model time zero to `end_time`. For a warm start, it runs from the checkpoint time to `end_time`. For example, `Segment Step 360/10080` means that the current invocation has completed 360 of the 10,080 timesteps remaining when it started.
+* **Progress:** `Segment` is the percentage completed since the cold or warm start of the current invocation. `Overall` is the percentage of model time completed from time zero to `end_time`. Elapsed time and ETA apply to the current segment. ETA uses the average wall-clock time per completed segment step and becomes more accurate as the run progresses.
+* **Usage:** Use this log to follow run progress and detect numerical instability, such as rapidly growing field magnitudes.
+
+At successful completion, the driver logs a `Run Metrics` summary containing:
+
+* The model-day interval advanced by the current invocation.
+* The number of timesteps completed.
+* Initialization, integration, and total wall-clock time.
+* Average wall-clock seconds per timestep.
+* **Simulated days/wall day:** A throughput rate extrapolated to 24 hours of real runtime. For example, `5151.07 simulated days/wall day` means that, at the measured speed, one wall-clock day would advance the model by approximately 5,151 simulated days.
 
 ---
 
