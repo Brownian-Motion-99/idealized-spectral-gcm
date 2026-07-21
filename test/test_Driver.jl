@@ -1,29 +1,44 @@
 @testset "Driver timestep accounting" begin
-    remaining_time_steps = JGCM.Driver.remaining_time_steps
+    time_steps = JGCM.Driver.time_steps
 
-    @test remaining_time_steps(0, 86_400, 600) == 144
-    @test remaining_time_steps(43_200, 86_400, 600) == 72
-    @test remaining_time_steps(86_400, 86_400, 600) == 0
+    @test time_steps(86_400, 600) == 144
+    @test time_steps(43_200, 600) == 72
 
-    @test_throws ArgumentError remaining_time_steps(0, 86_400, 0)
-    @test_throws ArgumentError remaining_time_steps(86_400, 43_200, 600)
-    @test_throws ArgumentError remaining_time_steps(1, 1_000, 600)
+    @test_throws ArgumentError time_steps(86_400, 0)
+    @test_throws ArgumentError time_steps(0, 600)
+    @test_throws ArgumentError time_steps(-600, 600)
+    @test_throws ArgumentError time_steps(1_000, 600)
 end
 
 @testset "Driver progress metrics" begin
-    cold = JGCM.Driver.progress_metrics(43_200, 0, 86_400, 600, 72.0)
-    @test cold.completed_steps == 72
-    @test cold.total_steps == 144
-    @test cold.segment_progress == 0.5
-    @test cold.overall_progress == 0.5
-    @test cold.eta_seconds == 72.0
+    halfway = JGCM.Driver.progress_metrics(72, 144, 72.0)
+    @test halfway.completed_steps == 72
+    @test halfway.total_steps == 144
+    @test halfway.segment_progress == 0.5
+    @test halfway.eta_seconds == 72.0
 
-    restart = JGCM.Driver.progress_metrics(64_800, 43_200, 86_400, 600, 30.0)
-    @test restart.completed_steps == 36
-    @test restart.total_steps == 72
-    @test restart.segment_progress == 0.5
-    @test restart.overall_progress == 0.75
-    @test restart.eta_seconds == 30.0
+    not_started = JGCM.Driver.progress_metrics(0, 144, 0.0)
+    @test not_started.segment_progress == 0.0
+    @test isnothing(not_started.eta_seconds)
+
+    complete = JGCM.Driver.progress_metrics(144, 144, 120.0)
+    @test complete.segment_progress == 1.0
+    @test complete.eta_seconds == 0.0
+
+    @test_throws ArgumentError JGCM.Driver.progress_metrics(0, 0, 0.0)
+    @test_throws ArgumentError JGCM.Driver.progress_metrics(145, 144, 120.0)
+end
+
+@testset "Driver warm-start duration semantics" begin
+    duration = 20_000 * 86_400
+    checkpoint_time = 10_000 * 86_400
+    Δt = 600
+
+    segment_steps = JGCM.Driver.time_steps(duration, Δt)
+
+    @test segment_steps == 2_880_000
+    @test segment_steps * Δt == 20_000 * 86_400
+    @test checkpoint_time + segment_steps * Δt == 30_000 * 86_400
 end
 
 @testset "Driver end-of-run metrics" begin

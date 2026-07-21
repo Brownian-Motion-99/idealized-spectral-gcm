@@ -19,41 +19,35 @@ using ..Shallow_Water_Dynamics_Module
 export JGCM_Simulate
 
 """
-    remaining_time_steps(start_time, end_time, Δt)
+    time_steps(duration, Δt)
 
-Return the number of timesteps needed to advance from `start_time` to
-`end_time`. The interval must be nonnegative and exactly divisible by `Δt`.
+Return the number of timesteps in `duration`. Both `duration` and `Δt` must be
+positive, and `duration` must be exactly divisible by `Δt`.
 """
-function remaining_time_steps(start_time::Integer, end_time::Integer, Δt::Integer)
+function time_steps(duration::Integer, Δt::Integer)
     Δt > 0 || throw(ArgumentError("Δt must be positive, got $Δt"))
-    end_time >= start_time || throw(
+    duration > 0 || throw(ArgumentError("duration must be positive, got $duration"))
+    duration % Δt == 0 || throw(
         ArgumentError(
-            "end_time ($end_time) must not be earlier than start_time ($start_time)",
+            "simulation duration ($duration) must be evenly divisible by Δt ($Δt)",
         ),
     )
 
-    remaining_time = end_time - start_time
-    remaining_time % Δt == 0 || throw(
-        ArgumentError(
-            "remaining simulation time ($remaining_time) must be evenly divisible by Δt ($Δt)",
-        ),
-    )
-
-    return Int64(div(remaining_time, Δt))
+    return Int64(div(duration, Δt))
 end
 
-function progress_metrics(current_time, start_time, end_time, Δt, elapsed_seconds)
-    current_time <= end_time || throw(
-        ArgumentError("current_time ($current_time) exceeds end_time ($end_time)"),
+function progress_metrics(completed_steps, total_steps, elapsed_seconds)
+    total_steps > 0 || throw(ArgumentError("total_steps must be positive"))
+    0 <= completed_steps <= total_steps || throw(
+        ArgumentError(
+            "completed_steps ($completed_steps) must be between 0 and total_steps ($total_steps)",
+        ),
     )
-    completed_steps = remaining_time_steps(start_time, current_time, Δt)
-    total_steps = remaining_time_steps(start_time, end_time, Δt)
-    segment_progress = total_steps == 0 ? 1.0 : completed_steps / total_steps
-    overall_progress = end_time == 0 ? 1.0 : current_time / end_time
+    segment_progress = completed_steps / total_steps
     eta_seconds = completed_steps == 0 ? nothing :
                   elapsed_seconds * (total_steps - completed_steps) / completed_steps
 
-    return (; completed_steps, total_steps, segment_progress, overall_progress, eta_seconds)
+    return (; completed_steps, total_steps, segment_progress, eta_seconds)
 end
 
 function run_metrics(start_time, current_time, completed_steps, elapsed_seconds, day_to_sec)
@@ -227,7 +221,12 @@ function JGCM_Simulate(config::Model_Config)
         init_step  = true
     end
 
-    NT = remaining_time_steps(start_time, config.end_time, config.Δt)
+    # `end_time` is the duration of this invocation, not an absolute model time.
+    # Keep this contract so existing warm-start scripts run the requested number
+    # of additional steps regardless of the checkpoint timestamp.
+    NT = time_steps(config.end_time, config.Δt)
+    segment_end_time = start_time + config.end_time
+    integrator.end_time = segment_end_time
     
     # =========================================================================
     # 3. Output Management
@@ -245,7 +244,7 @@ function JGCM_Simulate(config::Model_Config)
 
     op_man = Output_Manager(
         mesh, vert_coord, atmo_data,
-        start_time, config.end_time,
+        start_time, segment_end_time,
         config.vars_to_output;
         filename = config.output_filename,
         do_raw_output = config.do_raw_output,
@@ -265,7 +264,7 @@ function JGCM_Simulate(config::Model_Config)
     # 4. Main Time Loop
     # =========================================================================
     
-    msg_start_loop = "Starting Time Loop: $NT remaining steps"
+    msg_start_loop = "Starting Time Loop: $NT segment steps"
     @info msg_start_loop
     open(config.logger, "a") do log; println(log, msg_start_loop); end
 
@@ -277,57 +276,55 @@ function JGCM_Simulate(config::Model_Config)
 
     loop_start_ns = time_ns()
 
-    if NT > 0
-        # --- First Step (Euler / Init for a cold start) ---
+    # --- First Step (Euler / Init for a cold start) ---
+    Step_Dynamics!(
+        config, mesh, atmo_data, dyn_data,
+        integrator, semi_implicit, vert_coord, config.physics_params
+    )
+
+    # A warm restart has init_step = false and continues with leapfrog directly.
+    if integrator.init_step
+        if isnothing(semi_implicit)
+            Time_Integrator_Module.Update_Init_Step!(integrator)
+        else
+            Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
+        end
+    end
+
+    integrator.time += config.Δt
+    Update_Output!(op_man, dyn_data, integrator.time)
+
+    # --- Main Loop ---
+    for i = 2:NT
         Step_Dynamics!(
             config, mesh, atmo_data, dyn_data,
             integrator, semi_implicit, vert_coord, config.physics_params
         )
 
-        # A warm restart has init_step = false and continues with leapfrog directly.
-        if integrator.init_step
-            if isnothing(semi_implicit)
-                Time_Integrator_Module.Update_Init_Step!(integrator)
-            else
-                Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
-            end
-        end
-
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
 
-        # --- Main Loop ---
-        for i = 2:NT
-            Step_Dynamics!(
-                config, mesh, atmo_data, dyn_data,
-                integrator, semi_implicit, vert_coord, config.physics_params
-            )
+        # Restart
+        if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+            Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
 
-            integrator.time += config.Δt
-            Update_Output!(op_man, dyn_data, integrator.time)
+            msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
+            @info msg_ckpt
+            open(config.logger, "a") do log; println(log, msg_ckpt); end
 
-            # Restart
-            if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
-                Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
-
-                msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
-                @info msg_ckpt
-                open(config.logger, "a") do log; println(log, msg_ckpt); end
-
-                # Keep only the last 5 files to save space
-                # Keep the starting file
-                if config.is_restart
-                    Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5, config.restart_file)
-                else
-                    Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5)
-                end
+            # Keep only the last 5 files to save space
+            # Keep the starting file
+            if config.is_restart
+                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5, config.restart_file)
+            else
+                Restart_Manager_Module.Cleanup_Old_Restarts(restart_mgr, 5)
             end
+        end
 
-            # Simple progress indicator
-            if i % (config.day_to_sec / config.Δt / 4) == 0
-                elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
-                status_diagnostics(elapsed_seconds, config, dyn_data, integrator)
-            end
+        # Simple progress indicator
+        if i % (config.day_to_sec / config.Δt / 4) == 0
+            elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
+            status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
     end
     
@@ -335,7 +332,7 @@ function JGCM_Simulate(config::Model_Config)
     integration_seconds = (time_ns() - loop_start_ns) / 1.0e9
     initialization_seconds = (loop_start_ns - simulation_start_ns) / 1.0e9
     total_seconds = (time_ns() - simulation_start_ns) / 1.0e9
-    completed_steps = remaining_time_steps(start_time, integrator.time, config.Δt)
+    completed_steps = NT
     metrics = run_metrics(
         start_time,
         integrator.time,
@@ -382,6 +379,8 @@ end
 # Helper: Status Diagnostics
 # ==============================================================================
 function status_diagnostics(
+    completed_steps::Integer,
+    total_steps::Integer,
     elapsed_seconds::Float64,
     config::Model_Config,
     dyn_data::Dyn_Data,
@@ -389,13 +388,7 @@ function status_diagnostics(
 )
 
     day = integrator.time / config.day_to_sec
-    metrics = progress_metrics(
-        integrator.time,
-        integrator.start_time,
-        config.end_time,
-        config.Δt,
-        elapsed_seconds,
-    )
+    metrics = progress_metrics(completed_steps, total_steps, elapsed_seconds)
 
     msg_step_and_day = @sprintf(
         "=== Segment Step %d/%d | Day %.2f ===",
@@ -409,9 +402,8 @@ function status_diagnostics(
     end
 
     msg_progress = @sprintf(
-        "Segment: %.1f%% | Overall: %.1f%% | Elapsed: %s | ETA: %s",
+        "Segment: %.1f%% | Elapsed: %s | ETA: %s",
         100 * metrics.segment_progress,
-        100 * metrics.overall_progress,
         format_duration(elapsed_seconds),
         isnothing(metrics.eta_seconds) ? "N/A" : format_duration(metrics.eta_seconds),
     )
