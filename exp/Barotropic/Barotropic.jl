@@ -41,7 +41,7 @@ config = Model_Config(
     # Restart logic
     is_restart        = false,
     restart_file      = "",
-    restart_frequency = 86400,
+    saving_frequency = 86400,
 
     # Physics / Tracers
     moisture_processes = false,
@@ -55,7 +55,7 @@ config = Model_Config(
     # Variables must match symbols in Output_Mappings_Module for :Barotropic
     vars_to_output  = [:u, :v, :vor, :ke],
     output_interval = 3600, # Hourly output
-    do_raw_output   = false,
+    do_plev_output  = false,
 
     # Initialization
     initial_condition = :Barotropic_Jet, # Standard Galewsky et al. or similar jet

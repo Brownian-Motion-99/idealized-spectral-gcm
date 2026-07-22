@@ -118,9 +118,9 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     
     # Setup Restart Manager
-    restart_freq = config.restart_frequency
-    restart_dir  = joinpath(config.output_path, "restart")
-    restart_mgr  = Restart_Manager(restart_dir, restart_freq)
+    saving_freq = config.saving_frequency
+    restart_dir = joinpath(config.output_path, "restart")
+    restart_mgr = Restart_Manager(restart_dir, saving_freq)
 
     # State Variables for Integrator
     start_time = 0
@@ -186,19 +186,24 @@ function JGCM_Simulate(config::Model_Config)
         :Barotropic
     end
 
+    # Sanity check: do_plev_output requires pressure_levels to be set
+    if config.do_plev_output && isempty(config.pressure_levels)
+        error("do_plev_output = true but pressure_levels is empty. Please specify the target pressure levels.")
+    end
+
     op_man = Output_Manager(
         mesh, vert_coord, atmo_data,
         start_time, config.end_time,
         config.vars_to_output;
-        filename = config.output_filename,
-        do_raw_output = config.do_raw_output,
+        filename        = config.output_filename,
+        do_plev_output  = config.do_plev_output,
         pressure_levels = config.pressure_levels,
         output_interval = config.output_interval,
-        day_to_sec = config.day_to_sec,
-        spinup_day = config.spinup_day,
-        model_mode = om_mode,
-        institute = config.institution,
-        experiment_id = config.name
+        day_to_sec      = config.day_to_sec,
+        spinup_day      = config.spinup_day,
+        model_mode      = om_mode,
+        institute       = config.institution,
+        experiment_id   = config.name
     )
 
     # Output Initial State
@@ -246,9 +251,10 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
 
-        # Restart
-        if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+        # Checkpoint + NC chunk rotation (coordinated at saving_frequency)
+        if restart_mgr.saving_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.saving_frequency == 0)
             Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
+            Rotate_NC_Chunk!(op_man, Int64(integrator.time))
 
             msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
             @info msg_ckpt
