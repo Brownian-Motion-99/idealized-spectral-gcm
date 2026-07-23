@@ -254,7 +254,13 @@ function JGCM_Simulate(config::Model_Config)
         # Checkpoint + NC chunk rotation (coordinated at saving_frequency)
         if restart_mgr.saving_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.saving_frequency == 0)
             Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
-            Rotate_NC_Chunk!(op_man, Int64(integrator.time))
+
+            # Don't rotate to a fresh NC chunk on the final step: the chunk just
+            # flushed above already holds the last interval's data, and a new
+            # chunk opened here would never receive any (the loop ends next).
+            if integrator.time < config.end_time
+                Rotate_NC_Chunk!(op_man, Int64(integrator.time))
+            end
 
             msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
             @info msg_ckpt
