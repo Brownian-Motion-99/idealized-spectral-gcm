@@ -1,7 +1,7 @@
 name = "JGCM"
 uuid = "1f0199c2-bb27-11ea-051c-5d42b7f6b296"
 authors = ["Daniel-Zhengyu-Huang <hzyhzy2014@gmail.com>", "Hao Chang <chunhaoc777@gmail.com>", "Chin-Yu Chang <peter2606696gmail.com>", "JackQuark <yen169054@gmail.com>"]
-version = "0.1.0"
+version = "0.3.0"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
