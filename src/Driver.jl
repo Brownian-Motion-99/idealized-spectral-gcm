@@ -50,9 +50,8 @@ function progress_metrics(completed_steps, total_steps, elapsed_seconds)
     return (; completed_steps, total_steps, segment_progress, eta_seconds)
 end
 
-function run_metrics(start_time, current_time, completed_steps, elapsed_seconds, day_to_sec)
-    day_to_sec > 0 || throw(ArgumentError("day_to_sec must be positive"))
-    simulated_days = (current_time - start_time) / day_to_sec
+function run_metrics(start_time, current_time, completed_steps, elapsed_seconds)
+    simulated_days = (current_time - start_time) / 86400
     seconds_per_step = completed_steps == 0 ? nothing : elapsed_seconds / completed_steps
     simulated_days_per_wall_day = completed_steps == 0 || elapsed_seconds <= 0 ? nothing :
                                   simulated_days * 86400 / elapsed_seconds
@@ -322,7 +321,7 @@ function JGCM_Simulate(config::Model_Config)
         end
 
         # Simple progress indicator
-        if i % (config.day_to_sec / config.Δt / 4) == 0
+        if i % (86400 / config.Δt / 4) == 0
             elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
             status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
@@ -338,15 +337,14 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time,
         completed_steps,
         integration_seconds,
-        config.day_to_sec,
     )
 
     msg_end = "Simulation Complete."
     msg_metrics = if completed_steps == 0
         @sprintf(
             "Run Metrics: Model Day %.2f -> %.2f | Steps: 0 | Initialization: %s | Integration: %s | Total: %s | Seconds/Step: N/A | Simulated Days/Wall Day: N/A",
-            start_time / config.day_to_sec,
-            integrator.time / config.day_to_sec,
+            start_time / 86400,
+            integrator.time / 86400,
             format_duration(initialization_seconds),
             format_duration(integration_seconds),
             format_duration(total_seconds),
@@ -354,8 +352,8 @@ function JGCM_Simulate(config::Model_Config)
     else
         @sprintf(
             "Run Metrics: Model Day %.2f -> %.2f | Steps: %d | Initialization: %s | Integration: %s | Total: %s | %.3f s/step | %.2f simulated days/wall day",
-            start_time / config.day_to_sec,
-            integrator.time / config.day_to_sec,
+            start_time / 86400,
+            integrator.time / 86400,
             completed_steps,
             format_duration(initialization_seconds),
             format_duration(integration_seconds),
@@ -387,7 +385,7 @@ function status_diagnostics(
     integrator::Filtered_Leapfrog,
 )
 
-    day = integrator.time / config.day_to_sec
+    day = integrator.time / 86400
     metrics = progress_metrics(completed_steps, total_steps, elapsed_seconds)
 
     msg_step_and_day = @sprintf(
