@@ -120,7 +120,7 @@ Use this to continue a simulation.
 
 * **Initialization:** Loads the full model state (spectral coefficients + surface fields) from `restart_file`.
 * **Time:** The model clock resumes exactly where the restart file left off and advances for `end_time` seconds. For example, a restart at model day 10,000 with `end_time` set to 20,000 days finishes at model day 30,000.
-* **Filenames:** New restart files will be generated periodically based on `restart_frequency` (in seconds).
+* **Filenames:** New restart files and NC output chunks will be generated periodically based on `saving_frequency` (in seconds).
 
 ---
 
@@ -134,7 +134,7 @@ The `Output_Manager` writes time-averaged snapshots to NetCDF files at `output_i
 * **Primary output:** Data is always written on the native sigma/hybrid-sigma coordinate grid (e.g., `output_t0.nc`).
 * **Chunked files:** When `saving_frequency > 0`, the output is split into time-stamped chunks (`output_t0.nc`, `output_t86400.nc`, …) coordinated with JLD2 checkpoint saves. Each completed chunk is safe even if the run crashes later.
 * **Pressure-level output (optional):** Set `do_plev_output = true` together with `pressure_levels` to also produce interpolated output on pressure levels (e.g., `output_t0_plev.nc`). An error is raised if `do_plev_output = true` but `pressure_levels` is empty.
-* **Final chunk (fixed):** `Driver.jl` no longer rotates to a new NC chunk on the last timestep of the run. Previously, when `output_interval` divided `end_time` evenly (as it normally does), the last boundary would flush the final interval's data into the current chunk and then immediately open a fresh chunk file for it — a file that the run would never write to, since the loop ended right after. That left a trailing `output_t<end_time>.nc` with a valid header but zero time steps (`time = UNLIMITED ; // (0 currently)`). The fix skips the rotation when `integrator.time >= config.end_time`, so the last interval's data stays in the previously-opened chunk instead.
+* **Final chunk:** `Driver.jl` does not rotate to a new NC chunk on the final saving boundary of the run. The rotation is skipped when `integrator.time >= segment_end_time` (the absolute model time at the end of the current invocation, i.e. `start_time + end_time`). This correctly handles both cold starts (where `segment_end_time == end_time`) and warm restarts (where `segment_end_time > end_time`). The last interval's data stays in the previously-opened chunk rather than being moved to a fresh, empty file.
 
 ### Runtime Logging
 
