@@ -1,6 +1,6 @@
 # idealized-spectral-gcm
 
-[![doc](https://img.shields.io/badge/docs-v0.2.7-blue.svg)](https://Brownian-Motion-99.github.io/idealized-spectral-gcm/)
+[![doc](https://img.shields.io/badge/docs-v0.3.0-blue.svg)](https://Brownian-Motion-99.github.io/idealized-spectral-gcm/)
 [![Build Status](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions/workflows/CI.yml/badge.svg)](https://github.com/Brownian-Motion-99/idealized-spectral-gcm/actions/workflows/CI.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 

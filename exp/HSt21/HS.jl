@@ -82,8 +82,8 @@ config = Model_Config(
     restart_file      = "",
     # is_restart        = true,
     # restart_file      = joinpath(output_path_base, "restart", "restart_t86400.jld2"),
-    # restart_frequency = 86400 * 2,
-    restart_frequency = 0,    # disable saving restarts
+    # saving_frequency = 86400 * 2,
+    saving_frequency = 0,    # disable saving restarts
 
     # Cold start (disabled if is_restart is true)
     initial_condition = :Moist_Spinup,
@@ -97,7 +97,7 @@ config = Model_Config(
     output_filename = joinpath(output_path_base, "output.nc"),
     logger          = joinpath(output_path_base, "logger.log"),
 
-    do_raw_output   = true,
+    do_plev_output  = false,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
     vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
     output_interval = 600,

@@ -50,11 +50,11 @@ function progress_metrics(completed_steps, total_steps, elapsed_seconds)
     return (; completed_steps, total_steps, segment_progress, eta_seconds)
 end
 
-function run_metrics(start_time, current_time, completed_steps, elapsed_seconds)
-    simulated_days = (current_time - start_time) / 86400
+function run_metrics(start_time, current_time, completed_steps, elapsed_seconds, day_to_sec)
+    simulated_days = (current_time - start_time) / day_to_sec
     seconds_per_step = completed_steps == 0 ? nothing : elapsed_seconds / completed_steps
     simulated_days_per_wall_day = completed_steps == 0 || elapsed_seconds <= 0 ? nothing :
-                                  simulated_days * 86400 / elapsed_seconds
+                                  simulated_days * day_to_sec / elapsed_seconds
 
     return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
 end
@@ -160,9 +160,9 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     
     # Setup Restart Manager
-    restart_freq = config.restart_frequency
-    restart_dir  = joinpath(config.output_path, "restart")
-    restart_mgr  = Restart_Manager(restart_dir, restart_freq)
+    saving_freq = config.saving_frequency
+    restart_dir = joinpath(config.output_path, "restart")
+    restart_mgr = Restart_Manager(restart_dir, saving_freq)
 
     # State Variables for Integrator
     start_time = 0
@@ -241,19 +241,24 @@ function JGCM_Simulate(config::Model_Config)
         :Barotropic
     end
 
+    # Sanity check: do_plev_output requires pressure_levels to be set
+    if config.do_plev_output && isempty(config.pressure_levels)
+        error("do_plev_output = true but pressure_levels is empty. Please specify the target pressure levels.")
+    end
+
     op_man = Output_Manager(
         mesh, vert_coord, atmo_data,
         start_time, segment_end_time,
         config.vars_to_output;
-        filename = config.output_filename,
-        do_raw_output = config.do_raw_output,
+        filename        = config.output_filename,
+        do_plev_output  = config.do_plev_output,
         pressure_levels = config.pressure_levels,
         output_interval = config.output_interval,
-        day_to_sec = config.day_to_sec,
-        spinup_day = config.spinup_day,
-        model_mode = om_mode,
-        institute = config.institution,
-        experiment_id = config.name
+        day_to_sec      = config.day_to_sec,
+        spinup_day      = config.spinup_day,
+        model_mode      = om_mode,
+        institute       = config.institution,
+        experiment_id   = config.name
     )
 
     # Output Initial State
@@ -303,9 +308,16 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
 
-        # Restart
-        if restart_mgr.restart_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.restart_frequency == 0)
+        # Checkpoint + NC chunk rotation (coordinated at saving_frequency)
+        if restart_mgr.saving_frequency > 0 && integrator.time > 0 && (integrator.time % restart_mgr.saving_frequency == 0)
             Write_Restart_File(restart_mgr, dyn_data, Int64(integrator.time))
+
+            # Don't rotate to a fresh NC chunk on the final step: the chunk just
+            # flushed above already holds the last interval's data, and a new
+            # chunk opened here would never receive any (the loop ends next).
+            if integrator.time < segment_end_time
+                Rotate_NC_Chunk!(op_man, Int64(integrator.time))
+            end
 
             msg_ckpt = "Checkpoint saved at t=$(integrator.time)"
             @info msg_ckpt
@@ -321,7 +333,7 @@ function JGCM_Simulate(config::Model_Config)
         end
 
         # Simple progress indicator
-        if i % (86400 / config.Δt / 4) == 0
+        if i % (config.day_to_sec / config.Δt / 4) == 0
             elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
             status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
@@ -337,14 +349,15 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time,
         completed_steps,
         integration_seconds,
+        config.day_to_sec,
     )
 
     msg_end = "Simulation Complete."
     msg_metrics = if completed_steps == 0
         @sprintf(
             "Run Metrics: Model Day %.2f -> %.2f | Steps: 0 | Initialization: %s | Integration: %s | Total: %s | Seconds/Step: N/A | Simulated Days/Wall Day: N/A",
-            start_time / 86400,
-            integrator.time / 86400,
+            start_time / config.day_to_sec,
+            integrator.time / config.day_to_sec,
             format_duration(initialization_seconds),
             format_duration(integration_seconds),
             format_duration(total_seconds),
@@ -352,8 +365,8 @@ function JGCM_Simulate(config::Model_Config)
     else
         @sprintf(
             "Run Metrics: Model Day %.2f -> %.2f | Steps: %d | Initialization: %s | Integration: %s | Total: %s | %.3f s/step | %.2f simulated days/wall day",
-            start_time / 86400,
-            integrator.time / 86400,
+            start_time / config.day_to_sec,
+            integrator.time / config.day_to_sec,
             completed_steps,
             format_duration(initialization_seconds),
             format_duration(integration_seconds),
@@ -385,7 +398,7 @@ function status_diagnostics(
     integrator::Filtered_Leapfrog,
 )
 
-    day = integrator.time / 86400
+    day = integrator.time / config.day_to_sec
     metrics = progress_metrics(completed_steps, total_steps, elapsed_seconds)
 
     msg_step_and_day = @sprintf(
@@ -493,8 +506,8 @@ function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_impl
         
     elseif model_type == :Shallow_Water
         # Extract SW params safely
-        kappa_m = get(physics_params, "kappa_m", 1.0/(20.0*86400))
-        kappa_t = get(physics_params, "kappa_t", 1.0/(10.0*86400))
+        kappa_m = get(physics_params, "kappa_m", 1.0/(20.0 * config.day_to_sec))
+        kappa_t = get(physics_params, "kappa_t", 1.0/(10.0 * config.day_to_sec))
         h_eq    = dyn_data.grid_geopots # We stored h_eq here during init
         h_0     = get(physics_params, "h_0", 3.0e4)
         

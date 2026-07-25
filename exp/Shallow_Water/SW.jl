@@ -47,7 +47,7 @@ config = Model_Config(
     # Restart (Default Off)
     is_restart = false,
     restart_file = "",
-    restart_frequency = 86400,
+    saving_frequency = 86400,
 
     # Physics / Tracers
     moisture_processes = false,

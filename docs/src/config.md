@@ -120,7 +120,7 @@ Use this to continue a simulation.
 
 * **Initialization:** Loads the full model state (spectral coefficients + surface fields) from `restart_file`.
 * **Time:** The model clock resumes exactly where the restart file left off and advances for `end_time` seconds. For example, a restart at model day 10,000 with `end_time` set to 20,000 days finishes at model day 30,000.
-* **Filenames:** New restart files will be generated periodically based on `restart_frequency` (in seconds).
+* **Filenames:** New restart files and NC output chunks will be generated periodically based on `saving_frequency` (in seconds).
 
 ---
 
@@ -128,10 +128,13 @@ Use this to continue a simulation.
 
 ### Standard Output (NetCDF)
 
-The `Output_Manager` writes snapshots to a NetCDF file at `output_interval` (in seconds).
+The `Output_Manager` writes time-averaged snapshots to NetCDF files at `output_interval` (in seconds).
 
 * **Fields:** Defined by `vars_to_output`. See [Available Output Namelist](#available-output-namelist) for available outputs.
-* **Vertical Interpolation:** Data is automatically interpolated from model levels to the pressure levels specified in `pressure_levels` (e.g., `[85000.0, 50000.0]`).
+* **Primary output:** Data is always written on the native sigma/hybrid-sigma coordinate grid (e.g., `output_t0.nc`).
+* **Chunked files:** When `saving_frequency > 0`, the output is split into time-stamped chunks (`output_t0.nc`, `output_t86400.nc`, …) coordinated with JLD2 checkpoint saves. Each completed chunk is safe even if the run crashes later.
+* **Pressure-level output (optional):** Set `do_plev_output = true` together with `pressure_levels` to also produce interpolated output on pressure levels (e.g., `output_t0_plev.nc`). An error is raised if `do_plev_output = true` but `pressure_levels` is empty.
+* **Final chunk:** `Driver.jl` does not rotate to a new NC chunk on the final saving boundary of the run. The rotation is skipped when `integrator.time >= segment_end_time` (the absolute model time at the end of the current invocation, i.e. `start_time + end_time`). This correctly handles both cold starts (where `segment_end_time == end_time`) and warm restarts (where `segment_end_time > end_time`). The last interval's data stays in the previously-opened chunk rather than being moved to a fresh, empty file.
 
 ### Runtime Logging
 
@@ -303,7 +306,7 @@ config = Model_Config(
     # Restart
     is_restart        = false,
     restart_file      = "",
-    restart_frequency = 0,    # disable saving restarts
+    saving_frequency = 0,    # disable saving restarts
 
     # Cold start
     initial_condition = :Moist_Spinup,
@@ -317,7 +320,7 @@ config = Model_Config(
     output_filename = joinpath(output_path_base, "output.nc"),
     logger          = joinpath(output_path_base, "logger.log"),
 
-    do_raw_output   = true,
+    do_plev_output  = false,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
     vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
     output_interval = 86400,

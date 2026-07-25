@@ -1,26 +1,42 @@
 """
 Plot time-mean precipitation map from LscaleCond_Test output.
 Checks that precipitation is confined to the tropics (|lat| <= 30 deg).
+
+Native output is written as time-stamped chunks (output_t0.nc, output_t<N>.nc, ...)
+rather than a single output.nc — see Output_Manager's chunked NC output strategy.
+Pressure-level files (output_t*_plev.nc) are excluded; this script only needs
+the native-grid "pr" field. netCDF4.MFDataset can't be used to join the chunks:
+NCDatasets.jl writes full NETCDF4 (HDF5) files, and MFDataset only supports the
+NETCDF3_*/NETCDF4_CLASSIC formats — xarray.open_mfdataset has no such restriction.
 """
+import glob
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-import netCDF4 as nc
+import xarray as xr
 
-output_file = "output.nc"
-plot_file   = "precip_map.png"
+output_pattern = "output_t*.nc"
+plot_file      = "precip_map.png"
 
-with nc.Dataset(output_file) as ds:
-    # Axes
-    lon = ds.variables["lon"][:]   # [nλ]
-    lat = ds.variables["lat"][:]   # [nθ]
+chunk_files = sorted(f for f in glob.glob(output_pattern) if "_plev" not in f)
+if not chunk_files:
+    raise FileNotFoundError(f"No files matching '{output_pattern}' found in current directory")
 
-    # precipitation [time, lat, lon] or [time, lon, lat] — detect
-    precip_var = ds.variables["pr"]
-    precip = precip_var[:]         # load all timesteps
+print(f"Found {len(chunk_files)} output chunk(s): {chunk_files}")
+
+with xr.open_mfdataset(
+    chunk_files, combine="by_coords",
+    data_vars="minimal", coords="minimal", compat="override"
+) as ds:
+    lon = ds["lon"].values   # [nλ]
+    lat = ds["lat"].values   # [nθ]
+
+    precip_var = ds["pr"]
+    precip = precip_var.values   # [time, lat, lon]
 
     print("precip shape:", precip.shape)
-    print("precip units:", getattr(precip_var, "units", "unknown"))
+    print("precip units:", precip_var.attrs.get("units", "unknown"))
 
 # Time-mean
 precip_mean = precip.mean(axis=0)   # [lat, lon] or [lon, lat]
