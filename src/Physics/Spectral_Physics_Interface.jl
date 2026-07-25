@@ -100,14 +100,7 @@ function Spectral_Physics!(
     grid_liquid_water_content = dyn_data.grid_liquid_water_content
     grid_precip = dyn_data.grid_precip
     grid_precip .= 0.0
-
-    if get(physics_params, "do_Betts_Miller", false) &&
-       get(physics_params, "do_Lscale_Cond", false)
-        error(
-            "Betts-Miller is not yet compatible with the current " *
-            "direct-state large-scale condensation scheme",
-        )
-    end
+    grid_liquid_water_content .= 0.0
 
     grid_z_full = dyn_data.grid_z_full
     grid_z_half = dyn_data.grid_z_half
@@ -131,40 +124,6 @@ function Spectral_Physics!(
         grid_t_c,
         grid_q_c,
     )
-
-    # Grid scale condensation
-    # Modified: grid_q_c, grid_t_c, grid_δq, grid_δt, grid_precip
-    if physics_params["do_Lscale_Cond"] && config.moisture_processes
-        L = physics_params["L"]  # Float64 or AbstractArray{Float64,2}
-        Lscale_Cond!(
-            vert_coord,
-            atmo_data,
-            grid_q_c,
-            grid_δq,
-            grid_liquid_water_content,
-            grid_precip,
-            grid_t_c,
-            grid_δt,
-            grid_p_full,
-            grid_ps,
-            Δt,
-            L,
-        )
-
-        grid_q_c[grid_q_c.<0] .= 0
-
-        grid_q_c .= grid_q_c .- grid_δq .* (2 * Δt)
-        grid_t_c .= grid_t_c .+ grid_δt .* (2 * Δt)
-
-        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-
-        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-
-        grid_δq .= 0.0
-        grid_δt .= 0.0
-    end
 
     # Surface sensible heat fluxes
     if physics_params["do_Sensible_Heating"]
@@ -238,35 +197,56 @@ function Spectral_Physics!(
         )
     end
 
-    # Betts-Miller convective adjustment. The kernel returns rates diagnosed
-    # from the current model state; leapfrog applies them over its effective interval.
-    if get(physics_params, "do_Betts_Miller", false)
+    # Betts-Miller first, followed by large-scale condensation 
+    # diagnosed from the temporary post-convection state.
+    do_betts_miller = get(physics_params, "do_Betts_Miller", false)
+    do_lscale_cond = get(physics_params, "do_Lscale_Cond", false)
+    if do_betts_miller || do_lscale_cond
         config.moisture_processes ||
-            error("Betts-Miller requires moisture_processes = true")
-        haskey(physics_params, "BM_state") ||
-            error("BM_state was not initialized before time integration")
-        bm_state = physics_params["BM_state"]::Betts_Miller_State
-        Δt <= bm_state.tau || throw(
-            ArgumentError(
-                "Betts-Miller requires effective_dt <= bm_tau; " *
-                "got $Δt s and $(bm_state.tau) s",
-            ),
-        )
+            error("moist convection and condensation require moisture_processes = true")
 
-        Betts_Miller!(
+        if do_betts_miller
+            haskey(physics_params, "BM_state") ||
+                error("BM_state was not initialized before time integration")
+            bm_state = physics_params["BM_state"]::Betts_Miller_State
+            Δt <= bm_state.tau || throw(
+                ArgumentError(
+                    "Betts-Miller requires effective_dt <= bm_tau; " *
+                    "got $Δt s and $(bm_state.tau) s",
+                ),
+            )
+        else
+            bm_state = nothing
+        end
+        if do_lscale_cond
+            haskey(physics_params, "L") ||
+                error("large-scale condensation requires physics_params[\"L\"]")
+            heating_scale = physics_params["L"]
+        else
+            heating_scale = 1.0
+        end
+
+        Moist_Physics!(
+            do_betts_miller,
+            do_lscale_cond,
             bm_state,
+            heating_scale,
             atmo_data,
             grid_t_c,
             grid_q_c,
             grid_p_full,
             grid_p_half,
+            Δt,
             grid_bm_t_tendency,
             grid_bm_q_tendency,
             grid_bm_precip,
+            dyn_data.grid_d_full1,
+            dyn_data.grid_d_full2,
+            grid_liquid_water_content,
+            grid_δt,
+            grid_δq,
+            grid_precip,
         )
-        grid_δt .+= grid_bm_t_tendency
-        grid_δq .+= grid_bm_q_tendency
-        grid_precip .+= grid_bm_precip
     end
 
     # Linear response function for moisture-radiative feedback. 

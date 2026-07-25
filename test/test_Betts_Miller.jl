@@ -269,6 +269,7 @@ end
         "do_HS_Forcing" => false,
         "do_Betts_Miller" => true,
         "BM_state" => bm_state,
+        "L" => 0.2,
         "do_LRF" => true,
         "LRF_state" => lrf_state,
     )
@@ -309,15 +310,19 @@ end
     @test !isapprox(dyn.grid_lrf_tendency, 2.0 .* dyn.grid_q_p ./ config.day_to_sec)
 
     params["do_Lscale_Cond"] = true
-    @test_throws ErrorException JGCM.Atmos_Param_Module.Spectral_Physics!(
-        config,
-        mesh,
-        vert,
-        atmo,
-        dyn,
-        semi,
-        params,
-    )
+    JGCM.Atmos_Param_Module.Spectral_Physics!(config, mesh, vert, atmo, dyn, semi, params)
+    @test all(isfinite, dyn.grid_δt)
+    @test all(isfinite, dyn.grid_δq)
+    @test all(dyn.grid_precip .>= dyn.grid_bm_precip)
+    @test dyn.grid_δt ≈ dyn.grid_bm_t_tendency + dyn.grid_d_full1 + dyn.grid_lrf_tendency
+    @test dyn.grid_δq ≈ dyn.grid_bm_q_tendency + dyn.grid_d_full2
+
+    # The combined additive tendencies must survive a complete dynamics update;
+    # in particular, the Physics scratch fields are safe to reuse in dynamics.
+    JGCM.Spectral_Dynamics_Module.Spectral_Dynamics!(config, mesh, vert, atmo, dyn, semi)
+    @test all(isfinite, dyn.grid_t_c)
+    @test all(isfinite, dyn.grid_q_c)
+
     params["do_Lscale_Cond"] = false
 
     semi.integrator.init_step = false

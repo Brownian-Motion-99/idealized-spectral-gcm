@@ -24,7 +24,7 @@ This is the configuration of `Lscale_Cond.jl`, controlling grid scale condensati
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `"do_Lscale_Cond"` | `Bool` | `true` | Master switch for the module. |
-| `"L"` | `Float64` | `0.2` | Latent heating efficiency (ranges from 0.0 to 1.0). |
+| `"L"` | `Float64` or 2D array | `0.2` | Latent-heating scale in `[0, 1]`. It changes heating only, not humidity removal or precipitation. |
 
 ### Betts-Miller scheme
 
@@ -38,11 +38,11 @@ profiles. It returns additive rates and a precipitation flux.
 | `"bm_tau"` | `Float64` | `7200.0` | Relaxation time scale in seconds. The leapfrog effective step, `2 * Δt`, must not exceed this value. |
 | `"bm_relative_humidity"` | `Float64` | `0.8` | Relative humidity of the convective reference profile; must lie in `(0, 1]`. |
 
-Betts-Miller and `"do_Lscale_Cond"` cannot currently be enabled together,
-because large-scale condensation directly modifies the state while
-Betts-Miller supplies additive tendencies. A moist analytic initialization may
-set `"initial_humidity_floor"` to a small nonnegative value to prevent spectral
-ringing from producing invalid negative specific humidity.
+Betts-Miller and large-scale condensation may be enabled together. Betts-Miller
+is applied first, and condensation is diagnosed from its temporary adjusted
+temperature and humidity following Isca's process ordering. A moist analytic
+initialization may set `"initial_humidity_floor"` to a small nonnegative value
+to prevent spectral ringing from producing invalid negative specific humidity.
 
 ### Planetary Boundary Layer Processes
 

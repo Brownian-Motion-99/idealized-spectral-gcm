@@ -1,200 +1,142 @@
 using Base.Threads
-using ...Vert_Coordinate_Module
-using ...Atmo_Data_Module
 
+@inline _lscale_heating_scale(scale::Real, i::Int, j::Int) = Float64(scale)
+@inline _lscale_heating_scale(scale::AbstractArray{<:Real,2}, i::Int, j::Int) =
+    Float64(scale[i, j])
 
-
-"""
-    Lscale_Cond!(
-        vert_coord, atmo_data, 
-        grid_q, grid_δq, 
-        grid_liquid_water_content, grid_precip,
-        grid_t, grid_δt, 
-        grid_p_full, grid_ps, 
-        Δt, 
-        L
-    )
-
-Calculates the phase change from water vapor to liquid water (large-scale condensation) 
-using a saturation adjustment scheme. If the specific humidity exceeds the saturation 
-specific humidity, the excess vapor is condensed, releasing latent heat.
-
-### Parameters
-    - vert_coord: Vertical coordinate parameters (Δak, Δbk).
-    - atmo_data: Atmospheric constants (cp, Lv, Rv).
-
-    - grid_q: Specific humidity field [nλ, nθ, nd].
-    - grid_δq: Humidity tendency field. Modified in-place.
-    
-    - grid_liquid_water_content: Diagnostic field for condensation rate (used as proxy for LWC production).
-    - grid_precip: Surface precipitation rate accumulator.
-    
-    - grid_t: Temperature field.
-    - grid_δt: Temperature tendency field. Modified in-place.
-    
-    - grid_p_full: Pressure at layer centers.
-    - grid_ps: Surface pressure.
-    
-    - Δt: Time step size.
-    
-    - L: A scaling factor for the heating rate (typically 1.0 or used for unit conversion).
-
-### Returns
-    - nothing
-
-### Modified
-    - grid_δq
-    - grid_δt
-    - grid_liquid_water_content
-    - grid_precip
-
-"""
-function Lscale_Cond!(
-    vert_coord::Vert_Coordinate,
-    atmo_data::Atmo_Data,
-    grid_q::AbstractArray{Float64,3},
-    grid_δq::AbstractArray{Float64,3},
-    grid_liquid_water_content::Array{Float64,3},
-    grid_precip::Array{Float64,3},
-    grid_t::Array{Float64,3},
-    grid_δt::Array{Float64,3},
-    grid_p_full::Array{Float64,3},
-    grid_ps::Array{Float64,3},
-    Δt::Int64,
-    L::Float64,
-)
-
-    Δak, Δbk = vert_coord.Δak, vert_coord.Δbk
-    nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
-
-    cp   = atmo_data.cp_air
-    Lv   = atmo_data.Lv
-    Rv   = atmo_data.rvgas
-    grav = atmo_data.grav
-
-    const_es = 611.12
-    const_q1 = 0.622
-    const_q2 = 0.378
-    Lv_Rv = Lv / Rv
-    inv_273 = 1.0 / 273.15
-    Lv_cp = Lv / cp
-    heating_rate = L * Lv_cp
-
-    @threads for k = 1:nd
-        for j = 1:nθ
-            for i = 1:nλ
-
-                # Load data
-                t_val = grid_t[i, j, k]
-                p_val = grid_p_full[i, j, k]
-                q_val = grid_q[i, j, k]
-
-                # Saturated specific humidity
-                es = const_es * exp(Lv_Rv * (inv_273 - 1.0 / t_val))
-                qs = (const_q1 * es) / (p_val - const_q2 * es)
-                dqs_dt = Lv * qs / (Rv * t_val^2)
-
-                # Heating
-                δq = (max(q_val, qs) - qs) / (1.0 + Lv_cp * dqs_dt) / (2.0 * Float64(Δt))
-                grid_δq[i, j, k] = δq
-                grid_δt[i, j, k] = δq * heating_rate
-
-                # Liquid water content
-                grid_liquid_water_content[i, j, k] = δq
-
-                # Pseudo-adiabatic precipitation
-                Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                grid_precip[i, j, 1] += δq * Δp / grav
-
-            end
-        end
+function _validate_lscale_heating_scale(scale, nλ::Int, nθ::Int)
+    if scale isa Real
+        value = Float64(scale)
+        isfinite(value) && 0.0 <= value <= 1.0 ||
+            throw(ArgumentError("L must be finite and lie in [0, 1]"))
+    elseif scale isa AbstractArray{<:Real,2}
+        size(scale) == (nλ, nθ) ||
+            throw(DimensionMismatch("array-valued L must have size (nλ, nθ)"))
+        all(value -> isfinite(value) && 0.0 <= value <= 1.0, scale) ||
+            throw(ArgumentError("every value of L must be finite and lie in [0, 1]"))
+    else
+        throw(ArgumentError("L must be a real scalar or a two-dimensional real array"))
     end
-
+    return nothing
 end
 
-
 """
     Lscale_Cond!(
-        vert_coord, atmo_data,
-        grid_q, grid_δq,
-        grid_liquid_water_content, grid_precip,
-        grid_t, grid_δt,
-        grid_p_full, grid_ps,
-        Δt,
-        L::AbstractArray{Float64, 2}
+        atmo_data, temperature, humidity, p_full, p_half, effective_dt, L,
+        prior_temperature_tendency, prior_humidity_tendency,
+        temperature_tendency, humidity_tendency,
+        liquid_water_content, precipitation,
     )
 
-Spatially varying latent heat release efficiency. Identical to the scalar `L` method,
-but `L` is a `[nλ, nθ]` array so each column has its own efficiency factor.
+Diagnose large-scale condensation after applying the supplied prior tendencies
+over `effective_dt`. The prior tendencies are Betts-Miller tendencies. Large-scale
+condensation outputs are rates, use the model-wide signed tendency convention
+(`humidity_tendency < 0` for condensation), and are overwritten. Precipitation
+is a positive flux and is added to the supplied column accumulator.
 
-### Additional parameter
-    - L: Efficiency field [nλ, nθ]. `L[i,j]` scales the latent heating at longitude i, latitude j.
-
-All other parameters and modified fields are the same as the scalar dispatch.
+`L` scales latent heating only. It does not alter condensed water or
+precipitation and intentionally does not appear in the saturation-adjustment
+denominator.
 """
 function Lscale_Cond!(
-    vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data,
-    grid_q::AbstractArray{Float64,3},
-    grid_δq::AbstractArray{Float64,3},
-    grid_liquid_water_content::Array{Float64,3},
-    grid_precip::Array{Float64,3},
-    grid_t::Array{Float64,3},
-    grid_δt::Array{Float64,3},
-    grid_p_full::Array{Float64,3},
-    grid_ps::Array{Float64,3},
-    Δt::Int64,
-    L::AbstractArray{Float64,2},
+    temperature::Array{Float64,3},
+    humidity::Array{Float64,3},
+    p_full::Array{Float64,3},
+    p_half::Array{Float64,3},
+    effective_dt::Real,
+    L,
+    prior_temperature_tendency::Array{Float64,3},
+    prior_humidity_tendency::Array{Float64,3},
+    temperature_tendency::Array{Float64,3},
+    humidity_tendency::Array{Float64,3},
+    liquid_water_content::Array{Float64,3},
+    precipitation::Array{Float64,3},
 )
+    size(temperature) == size(humidity) == size(p_full) ||
+        throw(DimensionMismatch("large-scale-condensation full-level fields must match"))
+    size(temperature) ==
+    size(prior_temperature_tendency) ==
+    size(prior_humidity_tendency) ==
+    size(temperature_tendency) ==
+    size(humidity_tendency) ==
+    size(liquid_water_content) ||
+        throw(DimensionMismatch("large-scale-condensation tendency fields must match"))
 
-    Δak, Δbk = vert_coord.Δak, vert_coord.Δbk
-    nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
+    nλ, nθ, nd = size(temperature)
+    size(p_half) == (nλ, nθ, nd + 1) ||
+        throw(DimensionMismatch("large-scale-condensation p_half has incorrect size"))
+    size(precipitation) == (nλ, nθ, 1) || throw(
+        DimensionMismatch("large-scale-condensation precipitation has incorrect size"),
+    )
+    (nλ, nθ, nd) == (atmo_data.nλ, atmo_data.nθ, atmo_data.nd) ||
+        throw(DimensionMismatch("large-scale-condensation fields do not match atmosphere"))
 
-    cp   = atmo_data.cp_air
-    Lv   = atmo_data.Lv
-    Rv   = atmo_data.rvgas
+    effective_dt = Float64(effective_dt)
+    isfinite(effective_dt) && effective_dt > 0 ||
+        throw(ArgumentError("effective_dt must be positive and finite"))
+    _validate_lscale_heating_scale(L, nλ, nθ)
+
+    cp = atmo_data.cp_air
+    lv = atmo_data.Lv
+    epsilon = atmo_data.rdgas / atmo_data.rvgas
+    lv_over_cp = lv / cp
     grav = atmo_data.grav
 
-    const_es = 611.12
-    const_q1 = 0.622
-    const_q2 = 0.378
-    Lv_Rv = Lv / Rv
-    inv_273 = 1.0 / 273.15
-    Lv_cp = Lv / cp
+    fill!(temperature_tendency, 0.0)
+    fill!(humidity_tendency, 0.0)
+    fill!(liquid_water_content, 0.0)
 
-    @threads for k = 1:nd
-        for j = 1:nθ
-            for i = 1:nλ
+    # Each thread owns complete columns, so precipitation accumulation is
+    # deterministic and free of the level-wise data race in the old kernel.
+    @threads for j = 1:nθ
+        for i = 1:nλ
+            column_precipitation_amount = 0.0
+            heating_scale = _lscale_heating_scale(L, i, j)
 
-                # Load data
-                t_val = grid_t[i, j, k]
-                p_val = grid_p_full[i, j, k]
-                q_val = grid_q[i, j, k]
+            for k = 1:nd
+                t_star =
+                    temperature[i, j, k] +
+                    effective_dt * prior_temperature_tendency[i, j, k]
+                q_star = humidity[i, j, k] + effective_dt * prior_humidity_tendency[i, j, k]
+                pressure = p_full[i, j, k]
 
-                # Saturated specific humidity
-                es = const_es * exp(Lv_Rv * (inv_273 - 1.0 / t_val))
-                qs = (const_q1 * es) / (p_val - const_q2 * es)
-                dqs_dt = Lv * qs / (Rv * t_val^2)
+                isfinite(t_star) && t_star > 0 || throw(
+                    ArgumentError(
+                        "post-convection temperature must be positive and finite",
+                    ),
+                )
+                isfinite(q_star) && 0.0 <= q_star < 1.0 || throw(
+                    ArgumentError(
+                        "post-convection specific humidity must satisfy 0 <= q < 1",
+                    ),
+                )
 
-                # Heating with column-specific efficiency
-                heating_rate = L[i, j] * Lv_cp
-                δq = (max(q_val, qs) - qs) / (1.0 + Lv_cp * dqs_dt) / (2.0 * Float64(Δt))
-                grid_δq[i, j, k] = δq
-                grid_δt[i, j, k] = δq * heating_rate
+                q_sat, dq_sat_dt = _bm_saturation_specific_humidity_and_derivative(
+                    t_star,
+                    pressure,
+                    epsilon,
+                )
 
-                # Liquid water content
-                grid_liquid_water_content[i, j, k] = δq
+                if q_star > q_sat && q_sat > 0.0
+                    humidity_increment = (q_sat - q_star) / (1.0 + lv_over_cp * dq_sat_dt)
+                    temperature_increment = -heating_scale * lv_over_cp * humidity_increment
 
-                # Pseudo-adiabatic precipitation
-                if L[i, j] != 0.
-                    Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                    grid_precip[i, j, 1] += δq * Δp / grav
-                else
-                    grid_precip[i, j, 1]  = 0.
+                    humidity_rate = humidity_increment / effective_dt
+                    temperature_rate = temperature_increment / effective_dt
+                    humidity_tendency[i, j, k] = humidity_rate
+                    temperature_tendency[i, j, k] = temperature_rate
+                    liquid_water_content[i, j, k] = -humidity_rate
+
+                    layer_mass = (p_half[i, j, k+1] - p_half[i, j, k]) / grav
+                    layer_mass >= 0 ||
+                        throw(ArgumentError("p_half must increase from top to surface"))
+                    column_precipitation_amount -= humidity_increment * layer_mass
                 end
-
             end
+
+            precipitation[i, j, 1] += column_precipitation_amount / effective_dt
         end
     end
-
+    return nothing
 end

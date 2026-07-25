@@ -8,8 +8,10 @@ using ..Time_Integrator_Module
 
 include("HS_Forcing.jl")
 include("LRF.jl")
+include("Moist_Thermodynamics.jl")
 include("Betts_Miller.jl")
 include("Lscale_Cond.jl")
+include("Moist_Physics.jl")
 include("PBL.jl")
 include("Spectral_Physics_Interface.jl")
 

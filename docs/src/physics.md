@@ -96,20 +96,25 @@ $$\frac{\partial \mathbf{v}}{\partial t} = -k_v (\sigma) \mathbf{v}$$
 $$\frac{\partial T}{\partial t}_{fric} = -\frac{1}{c_p} (u \frac{\partial u}{\partial t}_{fric} + v \frac{\partial v}{\partial t}_{fric})$$
 
 ### Large-Scale Condensation (`Lscale_Cond.jl`)
-A simple saturation adjustment scheme ("Manabe bucket"). If specific humidity $q$ exceeds the saturation value $q_{sat}(T, p)$:
+A saturation adjustment diagnosed after convection. It uses the same mixed-phase
+Smithsonian saturation-vapor-pressure equation as Betts-Miller. If specific
+humidity $q$ exceeds $q_{sat}(T,p)$, the signed humidity increment is
 
-* **Condensation:** Excess moisture is removed immediately.
-    
 ```math
-\Delta q = \frac{q - q_{sat}}{1 + \frac{L_v}{c_p} \frac{\partial q_{sat}}{\partial T}}
+\Delta q_{LS} =
+\frac{q_{sat}-q}
+{1 + \frac{L_v}{c_p} \frac{\partial q_{sat}}{\partial T}} \leq 0.
 ```
 
-* **Latent Heating:** Temperature is increased by the release of latent heat.
-    
+The temperature increment is
+
 ```math
-\Delta T = \frac{L_v}{c_p} \Delta q * L
+\Delta T_{LS} = -L\frac{L_v}{c_p}\Delta q_{LS} \geq 0,
 ```
-where $L$ is latent heating efficiency, default is 0.2.
+
+where $L$ scales latent heating only. Humidity removal and precipitation do not
+depend on $L$. For $L<1$, reduced heating is intentional, so exact moist-energy
+closure and exact final saturation are not expected.
 
 ### Betts-Miller Convection (`Betts_Miller.jl`)
 
@@ -135,6 +140,12 @@ between them. The parcel calculation includes an initially saturated
 surface-parcel adjustment, an RK2 saturated ascent using the arithmetic
 midpoint pressure, and discrete contiguous LFC/LZB detection. Convection that
 remains buoyant through the model top uses the top full level as its LZB.
+
+When both moist schemes are enabled, they follow Isca's sequential workflow.
+Betts-Miller is diagnosed first, a temporary post-convection state is formed
+over the effective Euler/leapfrog interval, and large-scale condensation is
+diagnosed from that temporary state. Both increments are finally represented as
+additive rates, and their precipitation fluxes are summed.
 
 ### Boundary Layer Mixing (`PBL.jl`)
 Vertical turbulent diffusion of heat, moisture, and momentum.

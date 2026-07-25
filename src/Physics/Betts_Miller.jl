@@ -1,8 +1,5 @@
 using Base.Threads
 
-const BM_FREEZE_TEMPERATURE = 273.16
-const BM_MIN_PARCEL_TEMPERATURE = 173.16
-
 mutable struct Betts_Miller_Work
     parcel_temperature::Vector{Float64}
     parcel_mixing_ratio::Vector{Float64}
@@ -50,61 +47,6 @@ function Betts_Miller_State(nd::Int; tau::Real = 7200.0, relative_humidity::Real
         nd,
         [Betts_Miller_Work(nd) for _ = 1:Threads.nthreads()],
     )
-end
-
-"""
-    Betts_Miller_Saturation_Vapor_Pressure(temperature)
-
-Smithsonian saturation vapor pressure in Pa. Values are over ice below
-253.16 K, over liquid above 273.16 K, and linearly blended in temperature
-between those limits, matching the thermodynamics used by the reference FMS
-Betts-Miller routine.
-"""
-function Betts_Miller_Saturation_Vapor_Pressure(temperature::Real)
-    temperature = Float64(temperature)
-    isfinite(temperature) && temperature > 0 ||
-        throw(ArgumentError("temperature must be positive and finite"))
-
-    t_freeze = BM_FREEZE_TEMPERATURE
-    t_water_base = t_freeze + 100.0
-
-    es_ice = 0.0
-    if temperature < t_freeze
-        x =
-            -9.09718 * (t_freeze / temperature - 1.0) -
-            3.56654 * log10(t_freeze / temperature) +
-            0.876793 * (1.0 - temperature / t_freeze) +
-            log10(610.71)
-        es_ice = 10.0^x
-    end
-
-    es_liquid = 0.0
-    if temperature > t_freeze - 20.0
-        x =
-            -7.90298 * (t_water_base / temperature - 1.0) +
-            5.02808 * log10(t_water_base / temperature) -
-            1.3816e-7 * (10.0^((1.0 - temperature / t_water_base) * 11.344) - 1.0) +
-            8.1328e-3 * (10.0^((t_water_base / temperature - 1.0) * (-3.49149)) - 1.0) +
-            log10(101324.60)
-        es_liquid = 10.0^x
-    end
-
-    if temperature <= t_freeze - 20.0
-        return es_ice
-    elseif temperature >= t_freeze
-        return es_liquid
-    end
-
-    ice_weight = (t_freeze - temperature) / 20.0
-    return ice_weight * es_ice + (1.0 - ice_weight) * es_liquid
-end
-
-@inline function _bm_saturation_mixing_ratio(
-    temperature::Float64,
-    pressure::Float64,
-    epsilon::Float64,
-)
-    return epsilon * Betts_Miller_Saturation_Vapor_Pressure(temperature) / pressure
 end
 
 function _validate_bm_column(

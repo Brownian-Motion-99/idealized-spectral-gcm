@@ -7,6 +7,7 @@ using JGCM
     include("test_Spectral_Spherical_Mesh.jl")
     include("test_LRF.jl")
     include("test_Betts_Miller.jl")
+    include("test_Lscale_Cond.jl")
 end
 
 # 2. Driver Utility Tests
