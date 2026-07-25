@@ -50,11 +50,11 @@ function progress_metrics(completed_steps, total_steps, elapsed_seconds)
     return (; completed_steps, total_steps, segment_progress, eta_seconds)
 end
 
-function run_metrics(start_time, current_time, completed_steps, elapsed_seconds)
-    simulated_days = (current_time - start_time) / config.day_to_sec
+function run_metrics(start_time, current_time, completed_steps, elapsed_seconds, day_to_sec)
+    simulated_days = (current_time - start_time) / day_to_sec
     seconds_per_step = completed_steps == 0 ? nothing : elapsed_seconds / completed_steps
     simulated_days_per_wall_day = completed_steps == 0 || elapsed_seconds <= 0 ? nothing :
-                                  simulated_days * config.day_to_sec / elapsed_seconds
+                                  simulated_days * day_to_sec / elapsed_seconds
 
     return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
 end
@@ -315,7 +315,7 @@ function JGCM_Simulate(config::Model_Config)
             # Don't rotate to a fresh NC chunk on the final step: the chunk just
             # flushed above already holds the last interval's data, and a new
             # chunk opened here would never receive any (the loop ends next).
-            if integrator.time < config.end_time
+            if integrator.time < segment_end_time
                 Rotate_NC_Chunk!(op_man, Int64(integrator.time))
             end
 
@@ -349,6 +349,7 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time,
         completed_steps,
         integration_seconds,
+        config.day_to_sec,
     )
 
     msg_end = "Simulation Complete."

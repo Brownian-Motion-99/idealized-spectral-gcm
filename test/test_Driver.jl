@@ -42,12 +42,12 @@ end
 end
 
 @testset "Driver end-of-run metrics" begin
-    metrics = JGCM.Driver.run_metrics(43_200, 86_400, 72, 36.0)
+    metrics = JGCM.Driver.run_metrics(43_200, 86_400, 72, 36.0, 86_400)
     @test metrics.simulated_days == 0.5
     @test metrics.seconds_per_step == 0.5
     @test metrics.simulated_days_per_wall_day == 1200.0
 
-    no_steps = JGCM.Driver.run_metrics(86_400, 86_400, 0, 0.0)
+    no_steps = JGCM.Driver.run_metrics(86_400, 86_400, 0, 0.0, 86_400)
     @test no_steps.simulated_days == 0.0
     @test isnothing(no_steps.seconds_per_step)
     @test isnothing(no_steps.simulated_days_per_wall_day)
