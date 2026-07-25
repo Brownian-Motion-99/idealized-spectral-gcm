@@ -19,12 +19,54 @@ using ..Shallow_Water_Dynamics_Module
 export JGCM_Simulate
 
 """
+    time_steps(duration, Δt)
+
+Return the number of timesteps in `duration`. Both `duration` and `Δt` must be
+positive, and `duration` must be exactly divisible by `Δt`.
+"""
+function time_steps(duration::Integer, Δt::Integer)
+    Δt > 0 || throw(ArgumentError("Δt must be positive, got $Δt"))
+    duration > 0 || throw(ArgumentError("duration must be positive, got $duration"))
+    duration % Δt == 0 || throw(
+        ArgumentError(
+            "simulation duration ($duration) must be evenly divisible by Δt ($Δt)",
+        ),
+    )
+
+    return Int64(div(duration, Δt))
+end
+
+function progress_metrics(completed_steps, total_steps, elapsed_seconds)
+    total_steps > 0 || throw(ArgumentError("total_steps must be positive"))
+    0 <= completed_steps <= total_steps || throw(
+        ArgumentError(
+            "completed_steps ($completed_steps) must be between 0 and total_steps ($total_steps)",
+        ),
+    )
+    segment_progress = completed_steps / total_steps
+    eta_seconds = completed_steps == 0 ? nothing :
+                  elapsed_seconds * (total_steps - completed_steps) / completed_steps
+
+    return (; completed_steps, total_steps, segment_progress, eta_seconds)
+end
+
+function run_metrics(start_time, current_time, completed_steps, elapsed_seconds)
+    simulated_days = (current_time - start_time) / 86400
+    seconds_per_step = completed_steps == 0 ? nothing : elapsed_seconds / completed_steps
+    simulated_days_per_wall_day = completed_steps == 0 || elapsed_seconds <= 0 ? nothing :
+                                  simulated_days * 86400 / elapsed_seconds
+
+    return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
+end
+
+"""
     JGCM_Simulate(config::Model_Config)
 
 The main entry point for running any JGCM simulation.
 Handles allocation, initialization, time-stepping, and I/O based on the config.
 """
 function JGCM_Simulate(config::Model_Config)
+    simulation_start_ns = time_ns()
     
     msg_init       = "Initializing Experiment: $(config.name)"
     msg_model_info = "Model Type: $(config.model_type) | Resolution: T$(config.num_fourier)L$(config.nd)"
@@ -147,6 +189,12 @@ function JGCM_Simulate(config::Model_Config)
         integrator.time       = start_time
         integrator.start_time = start_time
         integrator.init_step  = false
+
+        # The semi-implicit solver was constructed with the cold-start timestep.
+        # Rebuild its wave matrix for the leapfrog timestep used after a restart.
+        if !isnothing(semi_implicit)
+            Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
+        end
         
     else
         # --- PATH B: COLD START ---
@@ -171,6 +219,13 @@ function JGCM_Simulate(config::Model_Config)
         start_time = 0
         init_step  = true
     end
+
+    # `end_time` is the duration of this invocation, not an absolute model time.
+    # Keep this contract so existing warm-start scripts run the requested number
+    # of additional steps regardless of the checkpoint timestamp.
+    NT = time_steps(config.end_time, config.Δt)
+    segment_end_time = start_time + config.end_time
+    integrator.end_time = segment_end_time
     
     # =========================================================================
     # 3. Output Management
@@ -193,7 +248,7 @@ function JGCM_Simulate(config::Model_Config)
 
     op_man = Output_Manager(
         mesh, vert_coord, atmo_data,
-        start_time, config.end_time,
+        start_time, segment_end_time,
         config.vars_to_output;
         filename        = config.output_filename,
         do_plev_output  = config.do_plev_output,
@@ -213,41 +268,43 @@ function JGCM_Simulate(config::Model_Config)
     # 4. Main Time Loop
     # =========================================================================
     
-    NT = Int64(config.end_time / config.Δt)
-
-    msg_start_loop = "Starting Time Loop: $NT steps"
+    msg_start_loop = "Starting Time Loop: $NT segment steps"
     @info msg_start_loop
     open(config.logger, "a") do log; println(log, msg_start_loop); end
 
     msg_cleanup_old_restarts = "Only the last 5 restart files are kept to save space."
     @warn msg_cleanup_old_restarts
-    open(config.logger, "a") do log; println(log, msg_cleanup_old_restarts); end
-    
-    # --- First Step (Euler / Init) ---
+    open(config.logger, "a") do log
+        println(log, msg_cleanup_old_restarts)
+    end
+
+    loop_start_ns = time_ns()
+
+    # --- First Step (Euler / Init for a cold start) ---
     Step_Dynamics!(
-        config, mesh, atmo_data, dyn_data, 
+        config, mesh, atmo_data, dyn_data,
         integrator, semi_implicit, vert_coord, config.physics_params
     )
-    
-    # If using Leapfrog, we need to correct the first step
-    if isa(integrator, Filtered_Leapfrog)
+
+    # A warm restart has init_step = false and continues with leapfrog directly.
+    if integrator.init_step
         if isnothing(semi_implicit)
             Time_Integrator_Module.Update_Init_Step!(integrator)
         else
             Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
         end
     end
-    
+
     integrator.time += config.Δt
     Update_Output!(op_man, dyn_data, integrator.time)
 
     # --- Main Loop ---
     for i = 2:NT
         Step_Dynamics!(
-            config, mesh, atmo_data, dyn_data, 
+            config, mesh, atmo_data, dyn_data,
             integrator, semi_implicit, vert_coord, config.physics_params
         )
-        
+
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
 
@@ -275,16 +332,54 @@ function JGCM_Simulate(config::Model_Config)
             end
         end
 
-        # Simple Progress Log
-        if i % (config.day_to_sec / config.Δt / 4) == 0
-            status_diagnostics(i, config, dyn_data, integrator)
+        # Simple progress indicator
+        if i % (86400 / config.Δt / 4) == 0
+            elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
+            status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
     end
     
     Finalize_Output!(op_man)
+    integration_seconds = (time_ns() - loop_start_ns) / 1.0e9
+    initialization_seconds = (loop_start_ns - simulation_start_ns) / 1.0e9
+    total_seconds = (time_ns() - simulation_start_ns) / 1.0e9
+    completed_steps = NT
+    metrics = run_metrics(
+        start_time,
+        integrator.time,
+        completed_steps,
+        integration_seconds,
+    )
+
     msg_end = "Simulation Complete."
+    msg_metrics = if completed_steps == 0
+        @sprintf(
+            "Run Metrics: Model Day %.2f -> %.2f | Steps: 0 | Initialization: %s | Integration: %s | Total: %s | Seconds/Step: N/A | Simulated Days/Wall Day: N/A",
+            start_time / 86400,
+            integrator.time / 86400,
+            format_duration(initialization_seconds),
+            format_duration(integration_seconds),
+            format_duration(total_seconds),
+        )
+    else
+        @sprintf(
+            "Run Metrics: Model Day %.2f -> %.2f | Steps: %d | Initialization: %s | Integration: %s | Total: %s | %.3f s/step | %.2f simulated days/wall day",
+            start_time / 86400,
+            integrator.time / 86400,
+            completed_steps,
+            format_duration(initialization_seconds),
+            format_duration(integration_seconds),
+            format_duration(total_seconds),
+            metrics.seconds_per_step,
+            metrics.simulated_days_per_wall_day,
+        )
+    end
     @info msg_end
-    open(config.logger, "a") do log; println(log, msg_end); end
+    @info msg_metrics
+    open(config.logger, "a") do log
+        println(log, msg_end)
+        println(log, msg_metrics)
+    end
 
 end
 
@@ -293,14 +388,40 @@ end
 # ==============================================================================
 # Helper: Status Diagnostics
 # ==============================================================================
-function status_diagnostics(step::Int64, config::Model_Config, dyn_data::Dyn_Data, integrator::Filtered_Leapfrog)
+function status_diagnostics(
+    completed_steps::Integer,
+    total_steps::Integer,
+    elapsed_seconds::Float64,
+    config::Model_Config,
+    dyn_data::Dyn_Data,
+    integrator::Filtered_Leapfrog,
+)
 
-    day = integrator.time / config.day_to_sec
+    day = integrator.time / 86400
+    metrics = progress_metrics(completed_steps, total_steps, elapsed_seconds)
 
-    msg_step_and_day = @sprintf("=== Step %d | Day %.2f ===", step, day)
+    msg_step_and_day = @sprintf(
+        "=== Segment Step %d/%d | Day %.2f ===",
+        metrics.completed_steps,
+        metrics.total_steps,
+        day,
+    )
     @info msg_step_and_day
-    open(config.logger, "a") do log; println(log, msg_step_and_day); end
-    
+    open(config.logger, "a") do log
+        println(log, msg_step_and_day)
+    end
+
+    msg_progress = @sprintf(
+        "Segment: %.1f%% | Elapsed: %s | ETA: %s",
+        100 * metrics.segment_progress,
+        format_duration(elapsed_seconds),
+        isnothing(metrics.eta_seconds) ? "N/A" : format_duration(metrics.eta_seconds),
+    )
+    @info msg_progress
+    open(config.logger, "a") do log
+        println(log, msg_progress)
+    end
+
     # Define variables to monitor
     # Using Views for tracers to avoid allocation
     diag_vars = [
@@ -347,6 +468,27 @@ function status_diagnostics(step::Int64, config::Model_Config, dyn_data::Dyn_Dat
     println("-"^40) # Separator line
     open(config.logger, "a") do log; println(log, "-"^40); end
 
+end
+
+
+"""
+Format a duration in a readable form for progress log.
+"""
+function format_duration(seconds::Real)
+    total_seconds = max(0, round(Int, seconds))
+    days, remainder = divrem(total_seconds, 86400)
+    hours, remainder = divrem(remainder, 3600)
+    minutes, seconds = divrem(remainder, 60)
+
+    if days > 0
+        return @sprintf("%dd %02dh %02dm %02ds", days, hours, minutes, seconds)
+    elseif hours > 0
+        return @sprintf("%dh %02dm %02ds", hours, minutes, seconds)
+    elseif minutes > 0
+        return @sprintf("%dm %02ds", minutes, seconds)
+    else
+        return @sprintf("%ds", seconds)
+    end
 end
 
 
