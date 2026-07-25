@@ -94,7 +94,7 @@ The `vert_coord_option` parameter selects the strategy for generating interface 
 | Parameter | Standard Value | Description |
 | :--- | :--- | :--- |
 | `Δt` | `600` | Time step in seconds. |
-| `end_time` | - | Total simulation duration in seconds. |
+| `end_time` | - | Duration of the current simulation invocation in seconds. |
 | `damping_order` | `4` | Order of hyper-diffusion ($\nabla^4$). |
 | `damping_coef` | `1.15e-4` | Diffusion coefficient. |
 | `robert_coef` | `0.04` | Robert-Asselin time filter strength. |
@@ -119,7 +119,7 @@ Use this for new experiments.
 Use this to continue a simulation.
 
 * **Initialization:** Loads the full model state (spectral coefficients + surface fields) from `restart_file`.
-* **Time:** The model clock resumes exactly where the restart file left off.
+* **Time:** The model clock resumes exactly where the restart file left off and advances for `end_time` seconds. For example, a restart at model day 10,000 with `end_time` set to 20,000 days finishes at model day 30,000.
 * **Filenames:** New restart files will be generated periodically based on `restart_frequency` (in seconds).
 
 ---
@@ -137,8 +137,18 @@ The `Output_Manager` writes snapshots to a NetCDF file at `output_interval` (in 
 
 The driver prints a status summary to `logger.log` periodically.
 
-* **Monitoring:** It tracks the maximum absolute value of prognostic variables ($U, V, T, P_{surf}$) and their locations.
-* **Usage:** Use this log to detect numerical instability (exploding values) early in the run.
+* **Monitoring:** It tracks the maximum absolute value and location of selected state and diagnostic fields, including $U$, $V$, $T$, vertical velocity, pressure, equilibrium temperature, and moisture.
+* **Segment step:** A segment is the work performed by the current invocation. Both cold and warm starts advance for the duration specified by `end_time`; a warm start begins at the checkpoint's model time. For example, `Segment Step 360/10080` means that the current invocation has completed 360 of its 10,080 timesteps.
+* **Progress:** `Segment` is the percentage completed by the current invocation. Elapsed time and ETA also apply to the current segment. ETA uses the average wall-clock time per completed segment step and becomes more accurate as the run progresses. The displayed model day remains the absolute model time, including time accumulated before a warm start.
+* **Usage:** Use this log to follow run progress and detect numerical instability, such as rapidly growing field magnitudes.
+
+At successful completion, the driver logs a `Run Metrics` summary containing:
+
+* The model-day interval advanced by the current invocation.
+* The number of timesteps completed.
+* Initialization, integration, and total wall-clock time.
+* Average wall-clock seconds per timestep.
+* **Simulated days/wall day:** A throughput rate extrapolated to 24 hours of real runtime. For example, `5151.07 simulated days/wall day` means that, at the measured speed, one wall-clock day would advance the model by approximately 5,151 simulated days.
 
 ---
 
