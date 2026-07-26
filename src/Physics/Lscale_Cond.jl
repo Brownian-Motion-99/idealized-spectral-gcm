@@ -94,12 +94,13 @@ function Lscale_Cond!(
                 grid_δq[i, j, k] = δq
                 grid_δt[i, j, k] = δq * heating_rate
 
-                # Liquid water content
-                grid_liquid_water_content[i, j, k] = δq
+                # Liquid water content (diagnostic; grid_δq is divided by the
+                # leapfrog 2Δt, so the diagnostic rate needs a factor of 2)
+                grid_liquid_water_content[i, j, k] = 2.0 * δq
 
                 # Pseudo-adiabatic precipitation
                 Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                grid_precip[i, j, 1] += δq * Δp / grav
+                grid_precip[i, j, 1] += 2.0 * δq * Δp / grav
 
             end
         end
@@ -172,13 +173,14 @@ function Lscale_Cond!(
                 grid_δq[i, j, k] = δq
                 grid_δt[i, j, k] = δq * heating_rate
 
-                # Liquid water content
-                grid_liquid_water_content[i, j, k] = δq
+                # Liquid water content (diagnostic; grid_δq is divided by the
+                # leapfrog 2Δt, so the diagnostic rate needs a factor of 2)
+                grid_liquid_water_content[i, j, k] = 2.0 * δq
 
                 # Pseudo-adiabatic precipitation
                 if L[i, j] != 0.
                     Δp                    = Δak[k] + Δbk[k] * grid_ps[i, j, 1]
-                    grid_precip[i, j, 1] += δq * Δp / grav
+                    grid_precip[i, j, 1] += 2.0 * δq * Δp / grav
                 else
                     grid_precip[i, j, 1]  = 0.
                 end

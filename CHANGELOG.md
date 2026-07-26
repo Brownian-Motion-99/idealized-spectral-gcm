@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.1]
+
+### Fixed
+
+- **Large-scale condensation diagnostics were half their correct value**
+  (`Lscale_Cond!`, both the scalar and spatially-varying `L` dispatches): the
+  condensation tendency `δq` is intentionally divided by `2Δt` because it
+  feeds `grid_δq`/`grid_δt`, which are integrated by the leapfrog scheme over
+  a `2Δt` step. However, the diagnostic-only fields
+  `grid_liquid_water_content` and `grid_precip` (which are not fed back into
+  the integration — they are zeroed and recomputed each physics call) were
+  reusing that same `2Δt`-scaled `δq` directly, understating the physical
+  condensation/precipitation rate by a factor of 2. Both diagnostics are now
+  scaled by `2 * δq`, equivalent to dividing by `Δt` instead of `2Δt`.
+
 ## [0.3.0]
 
 ### Changed (breaking)
