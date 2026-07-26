@@ -130,8 +130,12 @@ function Half_Level_Pressures!(
     ak = vert_coord.ak
 
     # pk = ak * pref
-    for k = 1:nd+1
-        grid_p_half[:, :, k] .= ak[k] .+ bk[k] * grid_ps[:, :, 1]
+    @inbounds for k = 1:nd+1
+        ak_k = ak[k]
+        bk_k = bk[k]
+        for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+            grid_p_half[i, j, k] = ak_k + bk_k * grid_ps[i, j, 1]
+        end
     end
 end
 
@@ -182,27 +186,41 @@ function Pressure_Variables!(
 
     Half_Level_Pressures!(vert_coord, grid_ps, grid_p_half)
     nd = vert_coord.nd
-    grid_Δp .= grid_p_half[:, :, 2:nd+1] - grid_p_half[:, :, 1:nd]
+    @inbounds for k = 1:nd
+        for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+            grid_Δp[i, j, k] = grid_p_half[i, j, k+1] - grid_p_half[i, j, k]
+        end
+    end
     zero_top = vert_coord.zero_top
 
     if (vert_coord.vert_difference_option == "simmons_and_burridge")
 
         k_top = (zero_top ? 2 : 1)
 
-        grid_lnp_half[:, :, k_top:nd+1] .= log.(grid_p_half[:, :, k_top:nd+1])
+        @inbounds for k = k_top:nd+1
+            for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+                grid_lnp_half[i, j, k] = log(grid_p_half[i, j, k])
+            end
+        end
 
         # lnp_{k} = (p_{k+1/2}lnp_{k+1/2} - p_{k-1/2}lnp_{k-1/2})/Δp_k - 1
         #         = [(p_{k+1/2}-p_{k-1/2})lnp_{k+1/2} + p_{k-1/2}(lnp_{k+1/2} - lnp_{k-1/2})]/Δp_k - 1
         #         = lnp_{k+1/2} + [p_{k-1/2}(lnp_{k+1/2} - lnp_{k-1/2})]/Δp_k - 1
-        grid_lnp_full[:, :, k_top:nd] .=
-            grid_lnp_half[:, :, k_top+1:nd+1] .+
-            grid_p_half[:, :, k_top:nd] .*
-            (grid_lnp_half[:, :, k_top+1:nd+1] - grid_lnp_half[:, :, k_top:nd]) ./
-            grid_Δp[:, :, k_top:nd] .- 1.0
+        @inbounds for k = k_top:nd
+            for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+                grid_lnp_full[i, j, k] =
+                    grid_lnp_half[i, j, k+1] +
+                    grid_p_half[i, j, k] *
+                    (grid_lnp_half[i, j, k+1] - grid_lnp_half[i, j, k]) /
+                    grid_Δp[i, j, k] - 1.0
+            end
+        end
 
         if (zero_top)
-            grid_lnp_half[:, :, 1] .= 0.0
-            grid_lnp_full[:, :, 1] .= grid_lnp_half[:, :, 2] .- 1.0
+            @inbounds for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+                grid_lnp_half[i, j, 1] = 0.0
+                grid_lnp_full[i, j, 1] = grid_lnp_half[i, j, 2] - 1.0
+            end
         end
 
     else
@@ -213,7 +231,11 @@ function Pressure_Variables!(
         )
     end
 
-    grid_p_full .= exp.(grid_lnp_full)
+    @inbounds for k = 1:nd
+        for j in axes(grid_ps, 2), i in axes(grid_ps, 1)
+            grid_p_full[i, j, k] = exp(grid_lnp_full[i, j, k])
+        end
+    end
 
 end
 
@@ -251,6 +273,7 @@ accounting for moisture effects via virtual temperature.
 ### Modified
     - grid_geopot_full
     - grid_geopot_half
+    - vert_coord.virtual_temperature
 
 """
 function Compute_Geopotential!(
@@ -270,36 +293,51 @@ function Compute_Geopotential!(
     zero_top = vert_coord.zero_top
     nd = vert_coord.nd
 
-    grid_geopot_half[:, :, nd+1] .= grid_geopots[:, :, 1]
+    virtual_t = vert_coord.virtual_temperature
+    @inbounds for j in axes(grid_t, 2), i in axes(grid_t, 1)
+        grid_geopot_half[i, j, nd+1] = grid_geopots[i, j, 1]
+    end
 
     if zero_top  #todo (pk(1).eq.0.0) then
         k_top = 2
-        grid_geopot_half[:, :, 1] .= 0.0
+        @inbounds for j in axes(grid_t, 2), i in axes(grid_t, 1)
+            grid_geopot_half[i, j, 1] = 0.0
+        end
     else
         k_top = 1
     end
 
-    virtual_t = zeros(Float64, size(grid_t))
     if (use_virtual_temperature)
-        virtual_t .= grid_t .* (1.0 .+ (rvgas / rdgas - 1.0) .* grid_q)
+        virtual_temperature_coefficient = rvgas / rdgas - 1.0
+        @inbounds for k = 1:nd
+            for j in axes(grid_t, 2), i in axes(grid_t, 1)
+                virtual_t[i, j, k] =
+                    grid_t[i, j, k] *
+                    (1.0 + virtual_temperature_coefficient * grid_q[i, j, k])
+            end
+        end
     else
-        virtual_t .= grid_t
+        copyto!(virtual_t, grid_t)
     end
 
-    for k = nd:-1:k_top
+    @inbounds for k = nd:-1:k_top
         #Φ_{k-1/2} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k-1})
-        grid_geopot_half[:, :, k] .=
-            grid_geopot_half[:, :, k+1] .+
-            rdgas * virtual_t[:, :, k] .*
-            (grid_lnp_half[:, :, k+1] - grid_lnp_half[:, :, k])
+        for j in axes(grid_t, 2), i in axes(grid_t, 1)
+            grid_geopot_half[i, j, k] =
+                grid_geopot_half[i, j, k+1] +
+                rdgas * virtual_t[i, j, k] *
+                (grid_lnp_half[i, j, k+1] - grid_lnp_half[i, j, k])
+        end
     end
 
-    for k = 1:nd
+    @inbounds for k = 1:nd
         #Φ_{k} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k})
-        grid_geopot_full[:, :, k] .=
-            grid_geopot_half[:, :, k+1] .+
-            rdgas * virtual_t[:, :, k] .*
-            (grid_lnp_half[:, :, k+1] - grid_lnp_full[:, :, k])
+        for j in axes(grid_t, 2), i in axes(grid_t, 1)
+            grid_geopot_full[i, j, k] =
+                grid_geopot_half[i, j, k+1] +
+                rdgas * virtual_t[i, j, k] *
+                (grid_lnp_half[i, j, k+1] - grid_lnp_full[i, j, k])
+        end
     end
 
 end

@@ -76,6 +76,8 @@ mutable struct Spectral_Spherical_Mesh
     grid_d2::Array{Float64,3}
     grid_ds1::Array{Float64,3}
     grid_ds2::Array{Float64,3}
+    area_weighted_field::Matrix{Float64}
+    area_weighted_sums::Vector{Float64}
 
     spherical_d1::Array{ComplexF64,3}
     spherical_d2::Array{ComplexF64,3}
@@ -194,6 +196,8 @@ function Spectral_Spherical_Mesh(
     grid_d2 = zeros(Float64, nλ, nθ, nd)
     grid_ds1 = zeros(Float64, nλ, nθ, 1)
     grid_ds2 = zeros(Float64, nλ, nθ, 1)
+    area_weighted_field = zeros(Float64, nλ, nθ)
+    area_weighted_sums = zeros(Float64, nλ)
     spherical_d1 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd)
     spherical_d2 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd)
     spherical_ds1 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1)
@@ -255,6 +259,8 @@ function Spectral_Spherical_Mesh(
         grid_d2,
         grid_ds1,
         grid_ds2,
+        area_weighted_field,
+        area_weighted_sums,
         spherical_d1,
         spherical_d2,
         spherical_ds1,
@@ -1472,7 +1478,8 @@ Computes the area-weighted global mean of a physical grid field.
     - area_weighted_global_mean: The computed scalar global mean value for the first vertical level.
 
 ### Modified
-    - nothing
+    - mesh.area_weighted_field
+    - mesh.area_weighted_sums
 
 """
 function Area_Weighted_Global_Mean(
@@ -1485,7 +1492,11 @@ function Area_Weighted_Global_Mean(
 
     wts = mesh.wts
     nλ = mesh.nλ
-    area_weighted_global_mean = sum(grid_datas[:, :, 1] * wts) / (2.0 * nλ)
+    # Preserve the original matrix-vector reduction order while writing its
+    # result into reusable mesh workspace.
+    copyto!(mesh.area_weighted_field, @view(grid_datas[:, :, 1]))
+    mul!(mesh.area_weighted_sums, mesh.area_weighted_field, wts)
+    area_weighted_global_mean = sum(mesh.area_weighted_sums) / (2.0 * nλ)
 
     return area_weighted_global_mean
 end

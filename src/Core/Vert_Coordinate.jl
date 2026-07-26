@@ -38,6 +38,9 @@ mutable struct Vert_Coordinate
     # memory container
     flux::Array{ComplexF64,3}
     vert_integral::Array{Float64,3}
+    virtual_temperature::Array{Float64,3}
+    mass_Δp::Array{Float64,3}
+    mass_integrand::Array{Float64,3}
 
 end
 
@@ -110,6 +113,9 @@ function Vert_Coordinate(
 
     flux = zeros(Float64, nλ, nθ, nd + 1)
     vert_integral = zeros(Float64, nλ, nθ, 1)
+    virtual_temperature = zeros(Float64, nλ, nθ, nd)
+    mass_Δp = zeros(Float64, nλ, nθ, 1)
+    mass_integrand = zeros(Float64, nλ, nθ, 1)
 
     Vert_Coordinate(
         nλ,
@@ -126,6 +132,9 @@ function Vert_Coordinate(
         Δbk,
         flux,
         vert_integral,
+        virtual_temperature,
+        mass_Δp,
+        mass_integrand,
     )
 
 end
@@ -660,6 +669,8 @@ Computes the global area-averaged, mass-weighted vertical integral of a scalar f
 
 ### Modified
     - vert_coord.vert_integral
+    - vert_coord.mass_Δp
+    - vert_coord.mass_integrand
 
 """
 function Mass_Weighted_Global_Integral(
@@ -675,15 +686,17 @@ function Mass_Weighted_Global_Integral(
 
     Δak, Δbk = vert_coord.Δak, vert_coord.Δbk
     vert_integral = vert_coord.vert_integral
-
-    Δp = similar(grid_ps)
+    mass_Δp = vert_coord.mass_Δp
+    mass_integrand = vert_coord.mass_integrand
 
     # Δp_k = Δak + Δbk * p_surface
     # I    = (1/g) * Σ (q_k * Δp_k)
-    vert_integral .= 0.0
+    fill!(vert_integral, 0.0)
     for k = 1:nd
-        Δp .= Δak[k] .+ Δbk[k] * grid_ps
-        vert_integral .+= grid_data[:, :, k] .* Δp[:, :, 1]
+        @. mass_Δp = Δbk[k] * grid_ps
+        mass_Δp .+= Δak[k]
+        @views @. mass_integrand = grid_data[:, :, k] * mass_Δp[:, :, 1]
+        vert_integral .+= mass_integrand
     end
 
     mass_weighted_global_integral = Area_Weighted_Global_Mean(mesh, vert_integral) / grav

@@ -106,9 +106,17 @@ function Lscale_Cond!(
                         "post-convection temperature must be positive and finite",
                     ),
                 )
-                isfinite(q_star) && 0.0 <= q_star < 1.0 || throw(
+                # Spectral transport can produce small negative humidity
+                # undershoots. Large-scale condensation leaves all
+                # subsaturated points unchanged rather than treating those
+                # undershoots as a condensation error.
+                isfinite(q_star) && q_star < 1.0 || throw(
                     ArgumentError(
-                        "post-convection specific humidity must satisfy 0 <= q < 1",
+                        "post-convection specific humidity must be finite and less than 1; " *
+                        "q=$q_star at (i=$i, j=$j, k=$k), " *
+                        "input q=$(humidity[i, j, k]), " *
+                        "prior dq/dt=$(prior_humidity_tendency[i, j, k]), " *
+                        "effective_dt=$effective_dt",
                     ),
                 )
 

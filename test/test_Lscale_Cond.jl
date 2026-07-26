@@ -143,6 +143,42 @@ end
     @test precipitation[1] > 0.0
 end
 
+@testset "Large-scale condensation ignores negative spectral undershoots" begin
+    nλ, nθ, nd = 1, 1, 2
+    atmo = lscale_test_atmosphere(nλ, nθ, nd)
+    p_half = reshape([20000.0, 60000.0, 100000.0], nλ, nθ, nd + 1)
+    p_full = reshape([40000.0, 80000.0], nλ, nθ, nd)
+    temperature = reshape([250.0, 285.0], nλ, nθ, nd)
+    humidity = reshape([-1.0e-5, 0.0], nλ, nθ, nd)
+    prior_temperature_tendency = zeros(nλ, nθ, nd)
+    prior_humidity_tendency = zeros(nλ, nθ, nd)
+    temperature_tendency = fill(NaN, nλ, nθ, nd)
+    humidity_tendency = fill(NaN, nλ, nθ, nd)
+    liquid_water_content = fill(NaN, nλ, nθ, nd)
+    precipitation = zeros(nλ, nθ, 1)
+
+    JGCM.Atmos_Param_Module.Lscale_Cond!(
+        atmo,
+        temperature,
+        humidity,
+        p_full,
+        p_half,
+        600.0,
+        0.2,
+        prior_temperature_tendency,
+        prior_humidity_tendency,
+        temperature_tendency,
+        humidity_tendency,
+        liquid_water_content,
+        precipitation,
+    )
+
+    @test all(iszero, temperature_tendency)
+    @test all(iszero, humidity_tendency)
+    @test all(iszero, liquid_water_content)
+    @test all(iszero, precipitation)
+end
+
 @testset "Shared Betts-Miller saturation derivative" begin
     thermo = JGCM.Atmos_Param_Module
     for temperature in (240.0, 263.16, 290.0)
