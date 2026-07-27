@@ -88,11 +88,9 @@ mutable struct Dyn_Data
     grid_δdiv::Array{Float64,3}
 
     # w-e velocity tendency
-    spec_δu::Array{ComplexF64,3}
     grid_δu::Array{Float64,3}
 
     # n-s velocity tendency
-    spec_δv::Array{ComplexF64,3}
     grid_δv::Array{Float64,3}
 
     # pressure     
@@ -169,9 +167,6 @@ mutable struct Dyn_Data
 
     grid_d_full1::Array{Float64,3}
     grid_d_full2::Array{Float64,3}
-
-    grid_d_half1::Array{Float64,3}
-    grid_d_half2::Array{Float64,3}
 
     spe_zeros::Array{ComplexF64,3}
     K_E::Array{Float64,3}
@@ -307,11 +302,9 @@ function Dyn_Data(
     grid_δdiv = zeros(Float64, nλ, nθ, nd)
 
     # w-e velocity tendency
-    spec_δu = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     grid_δu = zeros(Float64, nλ, nθ, nd)
 
     # n-s velocity tendency
-    spec_δv = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     grid_δv = zeros(Float64, nλ, nθ, nd)
 
     # pressure     
@@ -388,9 +381,6 @@ function Dyn_Data(
     grid_d_full1 = zeros(Float64, nλ, nθ, nd)
     grid_d_full2 = zeros(Float64, nλ, nθ, nd)
 
-    grid_d_half1 = zeros(Float64, nλ, nθ, nd + 1)
-    grid_d_half2 = zeros(Float64, nλ, nθ, nd + 1)
-
     spe_zeros = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     K_E = zeros(Float64, nλ, nθ, nd + 1)
 
@@ -446,9 +436,7 @@ function Dyn_Data(
         spe_δdiv,
         grid_div,
         grid_δdiv,
-        spec_δu,
         grid_δu,
-        spec_δv,
         grid_δv,
         spe_δlnps,
         grid_lnps,
@@ -491,8 +479,6 @@ function Dyn_Data(
         spe_d2,
         grid_d_full1,
         grid_d_full2,
-        grid_d_half1,
-        grid_d_half2,
         spe_zeros,
         K_E,
     )

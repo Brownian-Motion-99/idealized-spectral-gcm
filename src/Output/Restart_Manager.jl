@@ -5,6 +5,8 @@ using ..Dyn_Data_Module
 
 export Restart_Manager, Write_Restart_File, Load_Restart_File!, Cleanup_Old_Restarts
 
+const RESTART_FORMAT_VERSION = 2
+
 
 struct Restart_Manager
     output_dir::String
@@ -36,7 +38,16 @@ function Write_Restart_File(
     filename = joinpath(manager.output_dir, "restart_t$(current_time).jld2")
     temp_filename = filename * ".tmp"
 
-    jldsave(temp_filename; dyn_data_state = dyn_data, saved_time = current_time)
+    jldopen(temp_filename, "w") do file
+        file["restart_format_version"] = RESTART_FORMAT_VERSION
+        file["saved_time"] = current_time
+        file["dimensions"] =
+            (dyn_data.num_fourier, dyn_data.num_spherical, dyn_data.nλ, dyn_data.nθ, dyn_data.nd)
+        for name in fieldnames(Dyn_Data)
+            value = getfield(dyn_data, name)
+            value isa Array && (file["state/$(name)"] = value)
+        end
+    end
 
     mv(temp_filename, filename; force = true)
     @info "Checkpoint saved: $filename"
@@ -54,24 +65,42 @@ function Load_Restart_File!(dyn_data::Dyn_Data, filename::String)
 
     @info "Loading warm start from: $filename"
 
-    loaded_file = load(filename)
-    loaded_struct = loaded_file["dyn_data_state"]
-    saved_time = loaded_file["saved_time"]
-
-    for name in fieldnames(Dyn_Data)
-        src_field = getfield(loaded_struct, name)
-        dest_field = getfield(dyn_data, name)
-
-        if isa(src_field, Array)
-            copyto!(dest_field, src_field)
+    return jldopen(filename, "r") do file
+        saved_time = file["saved_time"]
+        if haskey(file, "restart_format_version")
+            expected =
+                (dyn_data.num_fourier, dyn_data.num_spherical, dyn_data.nλ, dyn_data.nθ, dyn_data.nd)
+            file["dimensions"] == expected ||
+                error("Restart resolution does not match the configured model")
+            for name in fieldnames(Dyn_Data)
+                path = "state/$(name)"
+                haskey(file, path) || continue
+                _copy_restart_array!(getfield(dyn_data, name), file[path], name)
+            end
         else
-            setfield!(dyn_data, name, src_field)
+            # Legacy files stored the complete Dyn_Data object. Copy common
+            # array fields so removed scratch fields are harmless.
+            legacy = file["dyn_data_state"]
+            for name in fieldnames(Dyn_Data)
+                hasproperty(legacy, name) || continue
+                dest = getfield(dyn_data, name)
+                dest isa Array || continue
+                _copy_restart_array!(dest, getproperty(legacy, name), name)
+            end
         end
+        saved_time
     end
-
-    return saved_time
 end
 
+function _copy_restart_array!(dest::Array, src::Array, name::Symbol)
+    if size(dest) == size(src)
+        copyto!(dest, src)
+    elseif length(dest) == 0 && occursin("tracer", String(name))
+        return
+    else
+        error("Restart field $name has size $(size(src)); expected $(size(dest))")
+    end
+end
 
 
 """

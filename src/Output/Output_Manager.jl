@@ -351,7 +351,8 @@ function Output_Manager(
             (meta.dims == 3) ? zeros(Float64, nλ, nθ, nd) : zeros(Float64, nλ, nθ)
     end
 
-    acc_raw = deepcopy(acc_main)
+    acc_raw =
+        do_raw_output ? deepcopy(acc_main) : Dict{Symbol,Array{Float64}}()
     acc_plev = Dict{Symbol,Array{Float64}}()
     # --- Initialize Accumulators --- #
 

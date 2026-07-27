@@ -3,10 +3,19 @@ using ...Atmo_Data_Module
 using ...Dyn_Data_Module
 using ...Spectral_Spherical_Mesh_Module
 
+struct PBL_Workspace
+    V_c::Matrix{Float64}
+    za::Matrix{Float64}
+    rho::Array{Float64,3}
+end
+
+PBL_Workspace(nλ::Int, nθ::Int, nd::Int) =
+    PBL_Workspace(zeros(nλ, nθ), zeros(nλ, nθ), zeros(nλ, nθ, nd))
 
 
 """
-    Calculate_V_c_za_rho(
+    Calculate_V_c_za_rho!(
+        workspace,
         atmo_data,
         grid_p_half, grid_p_full, grid_ps,
         grid_u, grid_v,
@@ -35,7 +44,8 @@ vertical diffusion.
     - rho: Air density at layer centers [nλ, nθ, nd].
 
 """
-function Calculate_V_c_za_rho(
+function Calculate_V_c_za_rho!(
+    workspace::PBL_Workspace,
     atmo_data::Atmo_Data,
     grid_p_half::Array{Float64,3},
     grid_p_full::Array{Float64,3},
@@ -52,10 +62,7 @@ function Calculate_V_c_za_rho(
     Rd_g = Rd / grav
     inv_Rd = 1.0 / Rd
 
-    # Allocation
-    V_c = zeros(Float64, nλ, nθ)
-    za = zeros(Float64, nλ, nθ)
-    rho = zeros(Float64, nλ, nθ, nd)
+    V_c, za, rho = workspace.V_c, workspace.za, workspace.rho
 
     @threads for j = 1:nθ
         for i = 1:nλ

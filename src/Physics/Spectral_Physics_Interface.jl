@@ -113,20 +113,29 @@ function Spectral_Physics!(
     # temporary variables
     grid_δQ = dyn_data.grid_d_full1
 
-    # Surface wind speed, surface geopotential, density
-    V_c, za, rho = Calculate_V_c_za_rho(
-        atmo_data,
-        grid_p_half,
-        grid_p_full,
-        grid_ps,
-        grid_u,
-        grid_v,
-        grid_t_c,
-        grid_q_c,
-    )
+    do_sensible = get(physics_params, "do_Sensible_Heating", false)
+    do_evaporation = get(physics_params, "do_Surface_Evaporation", false)
+    do_pbl_mixing = get(physics_params, "do_Implicit_PBL_Scheme", false)
+    if do_sensible || do_evaporation || do_pbl_mixing
+        workspace = get!(physics_params, "PBL_workspace") do
+            PBL_Workspace(atmo_data.nλ, atmo_data.nθ, atmo_data.nd)
+        end
+        workspace = workspace::PBL_Workspace
+        V_c, za, rho = Calculate_V_c_za_rho!(
+            workspace,
+            atmo_data,
+            grid_p_half,
+            grid_p_full,
+            grid_ps,
+            grid_u,
+            grid_v,
+            grid_t_c,
+            grid_q_c,
+        )
+    end
 
     # Surface sensible heat fluxes
-    if physics_params["do_Sensible_Heating"]
+    if do_sensible
         C_H = physics_params["C_H"]::Float64
         Sensible_Heating!(mesh, atmo_data, grid_t_c, grid_shflx, V_c, za, rho, Δt, C_H)
         Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
@@ -134,7 +143,7 @@ function Spectral_Physics!(
     end
 
     # Surface latent heat fluxes
-    if physics_params["do_Surface_Evaporation"] && config.moisture_processes
+    if do_evaporation && config.moisture_processes
         C_E = physics_params["C_E"]::Float64
         Surface_Evaporation!(
             mesh,
@@ -153,7 +162,7 @@ function Spectral_Physics!(
     end
 
     # PBL mixing for temperature and moisture
-    if physics_params["do_Implicit_PBL_Scheme"]
+    if do_pbl_mixing
         C_D = physics_params["C_D"]::Float64
         Implicit_PBL_Mixing!(
             atmo_data,
