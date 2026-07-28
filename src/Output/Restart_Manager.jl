@@ -10,7 +10,7 @@ const RESTART_FORMAT_VERSION = 2
 
 struct Restart_Manager
     output_dir::String
-    restart_frequency::Int64
+    saving_frequency::Int64
 
     function Restart_Manager(output_dir::String, frequency::Int64)
         if frequency > 0 && !isdir(output_dir)

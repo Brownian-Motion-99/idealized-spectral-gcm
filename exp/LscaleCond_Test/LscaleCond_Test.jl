@@ -87,9 +87,9 @@ config = Model_Config(
     implicit_coef = 0.5,
 
     # Restart
-    is_restart = false,
-    restart_file = "",
-    restart_frequency = 0,
+    is_restart        = false,
+    restart_file      = "",
+    saving_frequency = 0,
 
     # Cold start
     initial_condition = :Moist_Spinup,
@@ -103,7 +103,7 @@ config = Model_Config(
     output_filename = joinpath(output_path_base, "output.nc"),
     logger          = joinpath(output_path_base, "logger.log"),
 
-    do_raw_output   = true,
+    do_plev_output  = true,
     pressure_levels = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0],
     vars_to_output  = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
     output_interval = 86400,

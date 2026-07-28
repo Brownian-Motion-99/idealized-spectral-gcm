@@ -66,10 +66,10 @@ config = Model_Config(
     output_path = output_path,
     output_filename = joinpath(output_path, "output.nc"),
     logger = joinpath(output_path, "logger.log"),
-    do_raw_output = true,
+    do_plev_output = true,
     vars_to_output = [:u, :v, :q, :t, :ps, :precip, :bm_dt, :bm_dq, :bm_precip],
     output_interval = 3600,
-    restart_frequency = 0,
+    saving_frequency = 0,
     physics_params = physics_params,
 )
 

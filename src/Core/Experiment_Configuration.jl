@@ -7,7 +7,7 @@ export Model_Config
 """
     Model_Config
 
-The blueprint for a JGCM simulation. 
+The blueprint for a JGCM simulation.
 """
 Base.@kwdef struct Model_Config
     # -------------------------------------------------------
@@ -54,13 +54,13 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     # 5. Restart Configuration
     # -------------------------------------------------------
-    is_restart::Bool = false       # Toggle warm start
-    restart_file::String = ""          # Path to the .jld2 file to load
-    restart_frequency::Int64 = 86400       # How often to save checkpoints (seconds)
+    is_restart::Bool         = false       # Toggle warm start
+    restart_file::String     = ""          # Path to the .jld2 file to load
+    saving_frequency::Int64  = 86400       # How often to save JLD2 checkpoints and rotate NC chunks (seconds)
 
     # -------------------------------------------------------
     # 6. Composition & Physics
-    # -------------------------------------------------------   
+    # -------------------------------------------------------
     moisture_processes::Bool = true
 
     num_tracers::Int64 = 1
@@ -74,19 +74,8 @@ Base.@kwdef struct Model_Config
     output_filename::String               # Full path for the main NetCDF
     logger::String                        # Full path for the log file
 
-    do_raw_output::Bool = true
-    pressure_levels::Vector{Float64} = [
-        100000.0,
-        92500.0,
-        85000.0,
-        70000.0,
-        50000.0,
-        30000.0,
-        20000.0,
-        10000.0,
-        5000.0,
-        1000.0,
-    ]
+    do_plev_output::Bool = false
+    pressure_levels::Vector{Float64} = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0]
     vars_to_output::Vector{Symbol}
     output_interval::Int64
 

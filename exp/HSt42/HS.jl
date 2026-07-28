@@ -101,10 +101,10 @@ config = Model_Config(
     # WARNING!!! Using a cold start would CLEANUP the restart directory!!!
     # is_restart = false,
     # restart_file = "",
-    is_restart        = true,
-    restart_file      = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
-    restart_frequency = 86400 * 100,
-    # restart_frequency = 0,    # disable saving restarts
+    is_restart = true,
+    restart_file = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
+    saving_frequency = 86400 * 100,
+    # saving_frequency = 0,    # disable saving restarts
 
     # Cold start (disabled if is_restart is true)
     initial_condition = :Moist_Spinup,
@@ -117,7 +117,6 @@ config = Model_Config(
     output_path = output_path_base,
     output_filename = joinpath(output_path_base, "output.nc"),
     logger = joinpath(output_path_base, "logger.log"),
-    do_raw_output = false,
     pressure_levels = [
         100000.0,
         92500.0,
@@ -146,6 +145,8 @@ config = Model_Config(
         :lrf_dt,
     ],
     output_interval = 21600,  # 6 hours
+
+    do_plev_output = true,
 
     # Physics
     physics_params = physics_params,

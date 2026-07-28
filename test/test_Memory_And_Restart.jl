@@ -66,11 +66,11 @@ end
             600,
             [:t, :ps];
             filename = joinpath(dir, "output.nc"),
-            do_raw_output = false,
+            do_plev_output = false,
             pressure_levels = [100_000.0, 50_000.0],
             output_interval = 600,
         )
-        @test isempty(output.acc_raw)
+        @test !isempty(output.acc_raw)
         Finalize_Output!(output)
     end
 end
