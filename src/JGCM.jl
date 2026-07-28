@@ -70,6 +70,7 @@ using .Atmos_Param_Module
 export LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Betts_Miller_Saturation_Vapor_Pressure
+export Default_Lower_Boundary_Temperature
 
 using .Variable_Mappings_Module
 export Get_Data_Pointer

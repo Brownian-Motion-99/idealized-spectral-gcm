@@ -1,17 +1,37 @@
 using JGCM
 
+# Moist-physics switches
+do_betts_miller = false
+do_lscale_condensation = true
+
+# LRF requires a resolution-matched JLD2 file. It is enabled when the file is
+# supplied, for example:
+#   JGCM_LRF_FILE=/path/to/LRF_state.jld2 julia --project exp/HSt42/HS.jl
+lrf_file = get(ENV, "JGCM_LRF_FILE", "")
+do_lrf = !isempty(lrf_file)
+
 # 1. Physics Configuration
 physics_params = Dict{String,Any}(
 
-    # Corrections    
+    # Corrections
     "do_mass_correction" => true,
     "do_energy_correction" => true,
     "do_water_correction" => true,
     "use_virtual_temperature" => true,
 
+    # Betts-Miller convection
+    "do_Betts_Miller" => do_betts_miller,
+    "bm_tau" => 7200.0,
+    "bm_relative_humidity" => 0.8,
+    "initial_humidity_floor" => 5.0e-5,
+
     # Grid scale condensation
-    "do_Lscale_Cond" => true,
+    "do_Lscale_Cond" => do_lscale_condensation,
     "L" => 0.2,
+
+    # Linear response function
+    "do_LRF" => do_lrf,
+    "LRF_file" => lrf_file,
 
     # PBL fluxes
     "do_Sensible_Heating" => true,
@@ -40,7 +60,7 @@ physics_params = Dict{String,Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name = "ctrl"
+experiment_name = "sst1_0"
 output_path_base = joinpath("/data92/garywu/undergrad_proposal", experiment_name)
 mkpath(output_path_base)
 
@@ -68,7 +88,7 @@ config = Model_Config(
 
     # Time Integration
     Δt = 600,
-    end_time = 86400 * 20000,
+    end_time = 86400 * 10000,
     spinup_day = 0.0,
 
     # Numerics
@@ -79,11 +99,11 @@ config = Model_Config(
 
     # Restart
     # WARNING!!! Using a cold start would CLEANUP the restart directory!!!
-    is_restart = false,
-    restart_file = "",
-    # is_restart        = true,
-    # restart_file      = joinpath("/data92/prcpltwfkwd/JGCM_Example_Runs/t42_HS_moist/t42_HS_moist/restart", "restart_t777600000.jld2"),
-    restart_frequency = 86400 * 2,
+    # is_restart = false,
+    # restart_file = "",
+    is_restart        = true,
+    restart_file      = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
+    restart_frequency = 86400 * 100,
     # restart_frequency = 0,    # disable saving restarts
 
     # Cold start (disabled if is_restart is true)
@@ -91,7 +111,7 @@ config = Model_Config(
 
     # Physics
     moisture_processes = true,
-    num_tracers = 1,
+    num_tracers = 0,
 
     # IO
     output_path = output_path_base,
@@ -110,8 +130,22 @@ config = Model_Config(
         5000.0,
         1000.0,
     ],
-    vars_to_output = [:u, :v, :w, :q, :t, :ps, :shflx, :lhflx, :precip],
-    output_interval = 1200,
+    vars_to_output = [
+        :u,
+        :v,
+        :w,
+        :q,
+        :t,
+        :ps,
+        :shflx,
+        :lhflx,
+        :precip,
+        :bm_dt,
+        :bm_dq,
+        :bm_precip,
+        :lrf_dt,
+    ],
+    output_interval = 21600,  # 6 hours
 
     # Physics
     physics_params = physics_params,

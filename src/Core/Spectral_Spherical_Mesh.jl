@@ -42,9 +42,10 @@ mutable struct Spectral_Spherical_Mesh
     λc::Array{Float64,1}
     θc::Array{Float64,1}
 
-    qnm::Array{Float64,3}
-    dqnm::Array{Float64,3}
-    qwg::Array{Float64,3}
+    qnm_even::Vector{Matrix{Float64}}
+    qnm_odd::Vector{Matrix{Float64}}
+    qwg_even::Vector{Matrix{Float64}}
+    qwg_odd::Vector{Matrix{Float64}}
 
     λe::Array{Float64,1}    #cell boundary 
     θe::Array{Float64,1}    #cell boundary 
@@ -94,9 +95,8 @@ mutable struct Spectral_Spherical_Mesh
     # 2. Si (Sum Imag / Input Imag)
     # 3. Dr (Diff Real / Output Real)
     # 4. Di (Diff Imag / Output Imag)
-    # 5. Qr (Contiguous Legendre Polynomials)
-    # 6. Tmp (Extra Workspace)
-    leg_scratch::Vector{NTuple{6,Matrix{Float64}}}
+    # 5. Tmp (Extra Workspace)
+    leg_scratch::Vector{NTuple{5,Matrix{Float64}}}
 
 end
 
@@ -159,6 +159,25 @@ function Spectral_Spherical_Mesh(
         qwg[:, :, i] .= qnm[:, :, i] * wts[i]
     end
 
+    # Exact parity slices used by the Legendre transforms, packed once.
+    nθ_half = div(nθ, 2)
+    qnm_even = [
+        Matrix(@view qnm[m, m:2:num_spherical+1, 1:nθ_half]) for
+        m = 1:num_fourier+1
+    ]
+    qnm_odd = [
+        Matrix(@view qnm[m, m+1:2:num_spherical+1, 1:nθ_half]) for
+        m = 1:num_fourier+1
+    ]
+    qwg_even = [
+        Matrix(@view qwg[m, m:2:num_spherical, 1:nθ_half]) for
+        m = 1:num_fourier+1
+    ]
+    qwg_odd = [
+        Matrix(@view qwg[m, m+1:2:num_spherical, 1:nθ_half]) for
+        m = 1:num_fourier+1
+    ]
+
     # Normalization factors
     epsilon = zeros(Float64, num_fourier + 1, num_spherical + 1)
     for m = 0:num_fourier
@@ -210,11 +229,10 @@ function Spectral_Spherical_Mesh(
     fft_scratch = [zeros(ComplexF64, nλ) for _ = 1:nthreads()]
 
     # Scratch Allocation (for threaded loops)
-    rows = max(num_spherical + 1, div(nθ, 2))
-    cols = max(nd, div(nθ, 2))
+    rows = max(cld(num_spherical + 1, 2), nθ_half)
+    cols = nd
     leg_scratch = [
         (
-            zeros(Float64, rows, cols),
             zeros(Float64, rows, cols),
             zeros(Float64, rows, cols),
             zeros(Float64, rows, cols),
@@ -235,9 +253,10 @@ function Spectral_Spherical_Mesh(
         wts,
         λc,
         θc,
-        qnm,
-        dqnm,
-        qwg,
+        qnm_even,
+        qnm_odd,
+        qwg_even,
+        qwg_odd,
         λe,
         θe,
         epsilon,
@@ -299,7 +318,7 @@ function Trans_Spherical_To_Grid!(
 
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
     nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
-    qnm = mesh.qnm
+    qnm_even, qnm_odd = mesh.qnm_even, mesh.qnm_odd
     fft_scratch = mesh.fft_scratch
     leg_scratch = mesh.leg_scratch
 
@@ -339,13 +358,13 @@ function Trans_Spherical_To_Grid!(
     @threads for m = 1:num_fourier+1
         # Local buffer for this thread
         tid = threadid()
-        Sr, Si, Dr, Di, Qr, Tmp = leg_scratch[tid]
+        Sr, Si, Dr, Di, Tmp = leg_scratch[tid]
 
         n_even = m:2:num_spherical+1
         n_odd = m+1:2:num_spherical+1
 
         if !isempty(n_even)
-            Q_even = @view qnm[m, n_even, 1:nθ_half]
+            Q_even = qnm_even[m]
             S_source = @view snm[m, n_even, :]
 
             k_len = size(S_source, 2)
@@ -357,23 +376,19 @@ function Trans_Spherical_To_Grid!(
             @. Sr_view = real(S_source)
             @. Si_view = imag(S_source)
 
-            # 2. Pack Q (Strided Real -> Contiguous Real)
-            Qr_view = @view Qr[1:n_len, 1:nθ_half]
-            copyto!(Qr_view, Q_even)
-
-            # 3. Pure Real Matrix Multiplication
+            # 2. Pure Real Matrix Multiplication
             Dr_view = @view Dr[1:nθ_half, 1:k_len]
             Di_view = @view Di[1:nθ_half, 1:k_len]
 
-            mul!(Dr_view, transpose(Qr_view), Sr_view)
-            mul!(Di_view, transpose(Qr_view), Si_view)
+            mul!(Dr_view, transpose(Q_even), Sr_view)
+            mul!(Di_view, transpose(Q_even), Si_view)
 
             Dest_even = @view fourier_s[m, 1:nθ_half, :]
             @. Dest_even += complex(Dr_view, Di_view)
         end
 
         if !isempty(n_odd)
-            Q_odd = @view qnm[m, n_odd, 1:nθ_half]
+            Q_odd = qnm_odd[m]
             S_source = @view snm[m, n_odd, :]
 
             k_len = size(S_source, 2)
@@ -384,14 +399,11 @@ function Trans_Spherical_To_Grid!(
             @. Sr_view = real(S_source)
             @. Si_view = imag(S_source)
 
-            Qr_view = @view Qr[1:n_len, 1:nθ_half]
-            copyto!(Qr_view, Q_odd)
-
             Dr_view = @view Dr[1:nθ_half, 1:k_len]
             Di_view = @view Di[1:nθ_half, 1:k_len]
 
-            mul!(Dr_view, transpose(Qr_view), Sr_view)
-            mul!(Di_view, transpose(Qr_view), Si_view)
+            mul!(Dr_view, transpose(Q_odd), Sr_view)
+            mul!(Di_view, transpose(Q_odd), Si_view)
 
             Dest_odd = @view fourier_s[m, nθ_half+1:nθ, :]
             @. Dest_odd += complex(Dr_view, Di_view)
@@ -464,7 +476,7 @@ function Trans_Grid_To_Spherical!(
 
     num_fourier, num_spherical = mesh.num_fourier, mesh.num_spherical
     nλ, nθ, nd = mesh.nλ, mesh.nθ, mesh.nd
-    qwg = mesh.qwg
+    qwg_even, qwg_odd = mesh.qwg_even, mesh.qwg_odd
     fft_scratch = mesh.fft_scratch
     leg_scratch = mesh.leg_scratch
 
@@ -525,7 +537,7 @@ function Trans_Grid_To_Spherical!(
     # --- Forward Legendre Transform --- #
     @threads for m = 1:num_fourier+1
         tid = threadid()
-        Sr, Si, Dr, Di, Qr, Tmp = leg_scratch[tid]
+        Sr, Si, Dr, Di, Tmp = leg_scratch[tid]
 
         north_view = @view fourier_g[m, 1:nθ_half, :]
         south_view = @view fourier_g[m, nθ:-1:nθ_half+1, :]
@@ -547,42 +559,35 @@ function Trans_Grid_To_Spherical!(
         # --- Even Modes (Uses Sum) ---
         n_even = m:2:num_spherical
         if !isempty(n_even)
-            Q_even = @view qwg[m, n_even, 1:nθ_half]
+            Q_even = qwg_even[m]
             S_dest = @view snm[m, n_even, :]
             n_len = length(n_even)
-
-            # Pack Q
-            Qr_view = @view Qr[1:n_len, 1:nθ_half]
-            copyto!(Qr_view, Q_even)
 
             # Multiply (Result goes to Tmp)
             # Use Tmp as Real output buffer
             Dest_r = @view Tmp[1:n_len, 1:k_len]
-            mul!(Dest_r, Qr_view, Sum_r)
+            mul!(Dest_r, Q_even, Sum_r)
 
             # Update Real part of S_dest
             @. S_dest += Dest_r
 
             # Multiply Imag
-            mul!(Dest_r, Qr_view, Sum_i) # Reuse Tmp
+            mul!(Dest_r, Q_even, Sum_i) # Reuse Tmp
             @. S_dest += Dest_r * im
         end
 
         # --- Odd Modes (Uses Diff) ---
         n_odd = m+1:2:num_spherical
         if !isempty(n_odd)
-            Q_odd = @view qwg[m, n_odd, 1:nθ_half]
+            Q_odd = qwg_odd[m]
             S_dest = @view snm[m, n_odd, :]
             n_len = length(n_odd)
 
-            Qr_view = @view Qr[1:n_len, 1:nθ_half]
-            copyto!(Qr_view, Q_odd)
-
             Dest_r = @view Tmp[1:n_len, 1:k_len]
-            mul!(Dest_r, Qr_view, Dif_r)
+            mul!(Dest_r, Q_odd, Dif_r)
             @. S_dest += Dest_r
 
-            mul!(Dest_r, Qr_view, Dif_i)
+            mul!(Dest_r, Q_odd, Dif_i)
             @. S_dest += Dest_r * im
         end
     end

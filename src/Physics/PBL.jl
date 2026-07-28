@@ -108,7 +108,8 @@ end
         grid_t, grid_shflx,
         V_c, za, rho,
         Δt, 
-        C_H
+        C_H,
+        lower_boundary_temperature
     )
 
 Computes the exchange of sensible heat between the surface and the lowest atmospheric 
@@ -116,7 +117,7 @@ layer. The implementation uses a backward-implicit update to solve for the new
 temperature, ensuring stability without restricting the model time step.
 
 ### Parameters
-    - mesh: Spectral mesh properties (provides latitude θc for Held-Suarez forcing).
+    - mesh: Spectral mesh properties (provides longitude λc and latitude θc).
     - atmo_data: Atmospheric constants (cₚ, nλ, nθ).
     
     - grid_t: Temperature field [nλ, nθ, nd]. Modified in-place (lowest level updated).
@@ -129,6 +130,8 @@ temperature, ensuring stability without restricting the model time step.
     - Δt: Physics time step.
     
     - C_H: Bulk aerodynamic transfer coefficient for heat (Stanton number). Default 0.0044.
+    - lower_boundary_temperature: Function `(longitude, latitude) -> temperature_K`.
+      Defaults to `Default_Lower_Boundary_Temperature`.
 
 ### Returns
     - nothing
@@ -148,22 +151,17 @@ function Sensible_Heating!(
     rho::Array{Float64,3},
     Δt::Int64,
     C_H::Float64 = 0.0044,
+    lower_boundary_temperature = Default_Lower_Boundary_Temperature,
 )
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
     cp = atmo_data.cp_air::Float64
-    θc = mesh.θc
-
-    deg_factor = 26.0 * pi / 180.0
-    denom_lat = 2.0 * deg_factor^2
+    λc, θc = mesh.λc, mesh.θc
 
     @threads for j = 1:nθ
 
-        # Surface temperature (Held-Suarez)
-        lat_factor = θc[j]^2 / denom_lat
-        tsj = 29.0 * exp(-lat_factor) + 271.0
-
         for i = 1:nλ
+            surface_temperature = Float64(lower_boundary_temperature(λc[i], θc[j]))
 
             # Implicit coef.
             # λ = (C_H * |V| * Δt) / za
@@ -172,7 +170,7 @@ function Sensible_Heating!(
             # New temperature
             # T_new = (T_old + λ * T_s) / (1 + λ)
             t_old = grid_t[i, j, nd]
-            t_new = (t_old + lambda * tsj) / (1 + lambda)
+            t_new = (t_old + lambda * surface_temperature) / (1 + lambda)
             grid_t[i, j, nd] = t_new
 
             # Back-calculate sensible heat flux (W/m^2)
@@ -197,7 +195,8 @@ end
         grid_q, grid_lhflx,
         V_c, za, rho,
         Δt, 
-        C_E
+        C_E,
+        lower_boundary_temperature
     )
 
 Computes the vertical transport of water vapor from the surface to the lowest atmospheric 
@@ -205,7 +204,7 @@ layer. The scheme employs a backward-implicit time integration to ensure numeric
 and enforces a "no-dew" condition (evaporation only).
 
 ### Parameters
-    - mesh: Spectral mesh properties (provides latitude θc).
+    - mesh: Spectral mesh properties (provides longitude λc and latitude θc).
     - atmo_data: Atmospheric constants (Lᵥ, Rᵥ, etc.).
     
     - grid_ps: Surface pressure [nλ, nθ, 1].
@@ -220,6 +219,8 @@ and enforces a "no-dew" condition (evaporation only).
     - Δt: Physics time step.
     
     - C_E: Bulk aerodynamic transfer coefficient for moisture (Dalton number). Default 0.0044.
+    - lower_boundary_temperature: Function `(longitude, latitude) -> temperature_K`.
+      Defaults to `Default_Lower_Boundary_Temperature`.
 
 ### Returns
     - nothing
@@ -240,15 +241,14 @@ function Surface_Evaporation!(
     rho::Array{Float64,3},
     Δt::Int64,
     C_E::Float64 = 0.0044,
+    lower_boundary_temperature = Default_Lower_Boundary_Temperature,
 )
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
     Lv = atmo_data.Lv::Float64
     Rv = atmo_data.rvgas::Float64
-    θc = mesh.θc
+    λc, θc = mesh.λc, mesh.θc
 
-    deg_factor = 26.0 * pi / 180.0
-    denom_lat = 2.0 * deg_factor^2
     const_es = 611.12
     const_q1 = 0.622
     const_q2 = 0.378
@@ -257,12 +257,9 @@ function Surface_Evaporation!(
 
     @threads for j = 1:nθ
 
-        # Surface saturated specific humidity
-        lat_factor = θc[j]^2 / denom_lat
-        tsj = 29.0 * exp(-lat_factor) + 271.0
-        es = const_es * exp(Lv_Rv * (inv_273 - 1.0 / tsj))
-
         for i = 1:nλ
+            surface_temperature = Float64(lower_boundary_temperature(λc[i], θc[j]))
+            es = const_es * exp(Lv_Rv * (inv_273 - 1.0 / surface_temperature))
 
             # Unpack
             ps_val = grid_ps[i, j, 1]

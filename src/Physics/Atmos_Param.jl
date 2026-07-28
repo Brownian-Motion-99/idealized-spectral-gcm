@@ -12,6 +12,7 @@ include("Moist_Thermodynamics.jl")
 include("Betts_Miller.jl")
 include("Lscale_Cond.jl")
 include("Moist_Physics.jl")
+include("Lower_Boundary_Temperature.jl")
 include("PBL.jl")
 include("Spectral_Physics_Interface.jl")
 
@@ -19,5 +20,6 @@ export Spectral_Physics!, LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Betts_Miller_Saturation_Vapor_Pressure
 export PBL_Workspace
+export Default_Lower_Boundary_Temperature
 
 end

@@ -52,6 +52,7 @@ Configuration of `PBL.jl`, handling PBL-related processes, including surface sen
 | :--- | :--- | :--- | :--- |
 | `"do_Sensible_Heating"` | `Bool` | `true` | Toggle of surface sensible heat fluxes. |
 | `"C_H"` | `Float64` | `0.0044` | Sensible heat flux coefficient. |
+| `"lower_boundary_temperature"` | `Function` | `Default_Lower_Boundary_Temperature` | Prescribed surface temperature callback used by sensible heat and evaporation, `(longitude, latitude) -> temperature_K`; coordinates are in radians. |
 | `"do_Surface_Evaporation"` | `Bool` | `true` | Toggle of surface evaporation (latent heat fluxes). |
 | `"C_E"` | `Float64` | `0.0044` | Latent heat flux (evaporation) coefficient. |
 | `"do_Implicit_PBL_Scheme"` | `Bool` | `true` | Toggle of PBL mixing. |
@@ -262,6 +263,7 @@ physics_params = Dict{String, Any}(
     # PBL fluxes
     "do_Sensible_Heating"    => true,
     "C_H"                    => 0.0044,
+    "lower_boundary_temperature" => (longitude, latitude) -> 300.0,
     "do_Surface_Evaporation" => true,
     "C_E"                    => 0.0044,
     "do_Implicit_PBL_Scheme" => true,

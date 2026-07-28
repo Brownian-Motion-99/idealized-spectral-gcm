@@ -116,6 +116,11 @@ function Spectral_Physics!(
     do_sensible = get(physics_params, "do_Sensible_Heating", false)
     do_evaporation = get(physics_params, "do_Surface_Evaporation", false)
     do_pbl_mixing = get(physics_params, "do_Implicit_PBL_Scheme", false)
+    lower_boundary_temperature = get(
+        physics_params,
+        "lower_boundary_temperature",
+        Default_Lower_Boundary_Temperature,
+    )
     if do_sensible || do_evaporation || do_pbl_mixing
         workspace = get!(physics_params, "PBL_workspace") do
             PBL_Workspace(atmo_data.nλ, atmo_data.nθ, atmo_data.nd)
@@ -137,7 +142,18 @@ function Spectral_Physics!(
     # Surface sensible heat fluxes
     if do_sensible
         C_H = physics_params["C_H"]::Float64
-        Sensible_Heating!(mesh, atmo_data, grid_t_c, grid_shflx, V_c, za, rho, Δt, C_H)
+        Sensible_Heating!(
+            mesh,
+            atmo_data,
+            grid_t_c,
+            grid_shflx,
+            V_c,
+            za,
+            rho,
+            Δt,
+            C_H,
+            lower_boundary_temperature,
+        )
         Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
         Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
     end
@@ -156,6 +172,7 @@ function Spectral_Physics!(
             rho,
             Δt,
             C_E,
+            lower_boundary_temperature,
         )
         Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
         Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)

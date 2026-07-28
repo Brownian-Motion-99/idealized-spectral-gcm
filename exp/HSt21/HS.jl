@@ -89,7 +89,7 @@ config = Model_Config(
 
     # Physics
     moisture_processes = true,
-    num_tracers = 1,
+    num_tracers = 0,
 
     # IO
     output_path = output_path_base,

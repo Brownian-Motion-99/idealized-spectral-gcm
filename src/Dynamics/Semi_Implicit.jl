@@ -37,7 +37,7 @@ mutable struct Semi_Implicit_Solver
 
     num_wavenumbers::Int64
     wave_numbers::Array{Int64,2}
-    wave_matrix::Array{Float64,3}
+    wave_matrix::Array{ComplexF64,3}
 
     # spectral memory container
     spe_δdiv_temp::Array{ComplexF64,3}
@@ -141,7 +141,8 @@ function Semi_Implicit_Solver(
     # first time step 
     ξ = Get_ξ(integrator)
     laplacian_eigen = integrator.laplacian_eigen
-    wave_matrix = Build_Wave_Matrices(num_wavenumbers, laplacian_eigen, div_mat, ξ)
+    wave_matrix =
+        ComplexF64.(Build_Wave_Matrices(num_wavenumbers, laplacian_eigen, div_mat, ξ))
 
 
     # spectral memory container
@@ -863,6 +864,24 @@ end
 
 
 
+function Helmholtz_Solve!(
+    spe_δdiv::Array{ComplexF64,3},
+    wave_matrix::Array{ComplexF64,3},
+    num_wavenumbers::Int64,
+    work::Array{ComplexF64,3},
+)
+    nf, ns, _ = size(spe_δdiv)
+    for n = 0:min(ns - 1, num_wavenumbers)
+        nmodes = min(n + 1, nf)
+        rhs = @view spe_δdiv[1:nmodes, n+1, :]
+        rhs_work = @view work[1:nmodes, 1, :]
+        copyto!(rhs_work, rhs)
+        mul!(rhs, rhs_work, transpose(@view wave_matrix[:, :, n+1]))
+    end
+end
+
+
+
 """
     Implicit_Correction!(
             semi_implicit, vert_coord, atmo_data,
@@ -987,24 +1006,20 @@ function Implicit_Correction!(
 
 
     num_wavenumbers = semi_implicit.num_wavenumbers
-    wave_numbers = semi_implicit.wave_numbers
     wave_matrix = semi_implicit.wave_matrix
 
     # Helmholtz Inversion (Divergence Solve)
     # Solves for the implicit divergence tendency (δD) for each total wavenumber L:
     # δDₗ = (I - ξ² B ∇²)⁻¹ ⋅ RHSₗ
     # where B is the vertical structure matrix (div_mat) and the inverse operator is stored in wave_matrix.
-    nf, ns, nd = size(spe_δdiv)
-    for m = 0:nf-1
-        for n = m:ns-1
-            L = wave_numbers[m+1, n+1]
-            @assert(L == n)
-            # does not need the last spherical mode
-            if (L <= num_wavenumbers)
-                spe_δdiv[m+1, n+1, :] .= wave_matrix[:, :, L+1] * spe_δdiv[m+1, n+1, :]
-            end
-        end
-    end
+    # Modes with the same total wavenumber use the same vertical inverse.
+    # spe_δdiv_temp is dead after Adjust_δlnps_δt_δdiv! and is reused as workspace.
+    Helmholtz_Solve!(
+        spe_δdiv,
+        wave_matrix,
+        num_wavenumbers,
+        semi_implicit.spe_δdiv_temp,
+    )
 
     t_ref, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref = semi_implicit.t_ref,
     semi_implicit.ps_ref,
