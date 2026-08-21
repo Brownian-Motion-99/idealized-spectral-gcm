@@ -811,7 +811,7 @@ function Initialize_Analytic_Moisture!(mesh::Spectral_Spherical_Mesh, atmo_data:
 
     qv0             = 0.018
     θc              = mesh.θc # lat
-    phi_hw          = 2 * pi / 9 * deg2rad(40)
+    phi_hw          = 2 * pi / 9
     p_hw            = 30000.
     phi             = LinRange(-90, 90, nθ)
     p0              = 100000.

@@ -31,7 +31,9 @@ vertical diffusion.
 
 ### Returns
     - V_c: Magnitude of the horizontal wind at the lowest model level [nλ, nθ].
-    - za: Geometric height of the lowest model level (anemometer height proxy) [nλ, nθ].
+    - za: Geometric height of the lowest model level (anemometer height proxy) [nλ, nθ],
+      calculated from the surface pressure and the interface above the lowest layer
+      following Thatcher and Jablonowski (2016), Eq. (12).
     - rho: Air density at layer centers [nλ, nθ, nd].
 
 """
@@ -61,8 +63,7 @@ function Calculate_V_c_za_rho(
             vs_val      = grid_v[i, j, nd]
             ts_val      = grid_t[i, j, nd]
             qs_val      = grid_q[i, j, nd]
-            ps_full_val = grid_p_full[i, j, nd]
-            ps_half_val = grid_p_half[i, j, nd+1]
+            p_above_val = grid_p_half[i, j, nd]
             ps_val      = grid_ps[i, j, 1]
             
             # tv
@@ -71,15 +72,21 @@ function Calculate_V_c_za_rho(
             # Surface wind speed
             V_c[i, j] = sqrt(us_val^2 + vs_val^2)
 
-            # Geopotential at the lowest level
+            # Height of the lowest full level. Equation (12) of Thatcher and
+            # Jablonowski (2016) uses the interface between the two lowest full
+            # levels; the factor 1/2 places the full level halfway through the
+            # lowest layer in log-pressure height.
             tvs      = ts_val * tv_factor
-            za[i, j] = Rd_g * tvs * (log(ps_val / ((ps_full_val + ps_half_val) * 0.5))) * 0.5
+            za[i, j] = Rd_g * tvs * log(ps_val / p_above_val) * 0.5
 
-            # density
+            # Density uses the virtual temperature of each level, not the
+            # lowest-level humidity for the entire column.
             for k = 1:nd
                 p_full_val = grid_p_full[i, j, k]
                 t_val      = grid_t[i, j, k]
-                rho[i, j, k] = p_full_val * inv_Rd / (t_val * tv_factor)
+                q_val      = grid_q[i, j, k]
+                tv_factor_k = 1.0 + 0.608 * q_val
+                rho[i, j, k] = p_full_val * inv_Rd / (t_val * tv_factor_k)
             end
             
         end

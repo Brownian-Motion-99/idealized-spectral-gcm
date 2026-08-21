@@ -12,7 +12,12 @@ end
     include("test_Driver.jl")
 end
 
-# 3. Integration Tests (Optional: Run short simulations)
+# 3. Physics parameterization tests
+@testset "Physics Parameterizations" begin
+    include("test_PBL.jl")
+end
+
+# 4. Integration Tests (Optional: Run short simulations)
 @testset "Integration Tests" begin
     # You could potentially include a very short Barotropic run here
     # to ensure the full pipeline works without crashing.
