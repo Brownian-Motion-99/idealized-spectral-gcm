@@ -15,6 +15,7 @@ end
 # 3. Physics parameterization tests
 @testset "Physics Parameterizations" begin
     include("test_PBL.jl")
+    include("test_Corrections.jl")
 end
 
 # 4. Integration Tests (Optional: Run short simulations)
