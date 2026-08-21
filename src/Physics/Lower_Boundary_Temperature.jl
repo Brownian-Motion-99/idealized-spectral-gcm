@@ -9,7 +9,7 @@ Both coordinates are in radians. The perturbation is retained explicitly, but
 the default result is zonally symmetric because `A = 0`.
 """
 function Default_Lower_Boundary_Temperature(longitude::Real, latitude::Real)
-    A = 1.0
+    A = 0.0
     σ = 26.0 * pi / 180.0
     σ_damp = 15.0 * pi / 180.0
 

@@ -62,7 +62,7 @@ end
         p_full,
         p_half,
     )
-    invalid_humidity[3] = -1.0e-6
+    invalid_humidity[3] = NaN
     @test_throws ArgumentError Betts_Miller_Column(
         state,
         atmo,
@@ -71,6 +71,22 @@ end
         p_full,
         p_half,
     )
+
+    undershot_humidity = copy(humidity)
+    undershot_humidity[3] = -1.3302935592021637e-5
+    undershot = Betts_Miller_Column(
+        state,
+        atmo,
+        temperature,
+        undershot_humidity,
+        p_full,
+        p_half,
+    )
+    @test undershot_humidity[3] == -1.3302935592021637e-5
+    @test all(undershot.reference_humidity .>= 0.0)
+    @test all(isfinite, undershot.temperature_tendency)
+    @test all(isfinite, undershot.humidity_tendency)
+
     @test_throws ArgumentError Betts_Miller_Column(
         state,
         atmo,

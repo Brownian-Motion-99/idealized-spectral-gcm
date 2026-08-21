@@ -16,7 +16,10 @@ physics_params = Dict{String,Any}(
     # Corrections
     "do_mass_correction" => true,
     "do_energy_correction" => true,
-    "do_water_correction" => true,
+    # Condensation and surface evaporation are physical vapor sinks/sources.
+    # The current leapfrog water fixer can rescale their updated field to an
+    # invalid global target, so do not apply it in this moist experiment.
+    "do_water_correction" => false,
     "use_virtual_temperature" => true,
 
     # Betts-Miller convection
@@ -60,7 +63,7 @@ physics_params = Dict{String,Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name = "sst1_0"
+experiment_name = "ctrl_L_1_0"
 output_path_base = joinpath("/data92/garywu/undergrad_proposal", experiment_name)
 mkpath(output_path_base)
 
@@ -88,7 +91,7 @@ config = Model_Config(
 
     # Time Integration
     Δt = 600,
-    end_time = 86400 * 10000,
+    end_time = 86400 * 20000,
     spinup_day = 0.0,
 
     # Numerics
@@ -99,10 +102,10 @@ config = Model_Config(
 
     # Restart
     # WARNING!!! Using a cold start would CLEANUP the restart directory!!!
-    # is_restart = false,
-    # restart_file = "",
-    is_restart = true,
-    restart_file = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
+    is_restart = false,
+    restart_file = "",
+    # is_restart = true,
+    # restart_file = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
     saving_frequency = 86400 * 100,
     # saving_frequency = 0,    # disable saving restarts
 

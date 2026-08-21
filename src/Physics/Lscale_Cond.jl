@@ -103,7 +103,11 @@ function Lscale_Cond!(
 
                 isfinite(t_star) && t_star > 0 || throw(
                     ArgumentError(
-                        "post-convection temperature must be positive and finite",
+                        "post-convection temperature must be positive and finite; " *
+                        "T=$t_star at (i=$i, j=$j, k=$k), " *
+                        "input T=$(temperature[i, j, k]), " *
+                        "prior dT/dt=$(prior_temperature_tendency[i, j, k]), " *
+                        "effective_dt=$effective_dt",
                     ),
                 )
                 # Spectral transport can produce small negative humidity

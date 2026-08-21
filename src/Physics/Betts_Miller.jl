@@ -63,9 +63,9 @@ function _validate_bm_column(
     nd > 1 || throw(ArgumentError("Betts-Miller requires at least two vertical levels"))
 
     all(isfinite, temperature) || throw(ArgumentError("temperature must be finite"))
-    all(q -> isfinite(q) && 0 <= q < 1, humidity) || throw(
+    all(q -> isfinite(q) && q < 1, humidity) || throw(
         ArgumentError(
-            "specific humidity must satisfy 0 <= q < 1; " *
+            "specific humidity must be finite and less than 1; " *
             "column extrema are $(extrema(humidity))",
         ),
     )
@@ -193,10 +193,13 @@ function _betts_miller_column!(
     tdot = work.temperature_tendency
     qdot = work.humidity_tendency
 
+    # Spherical-harmonic transforms can create tiny negative grid-point
+    # undershoots even when the spectral humidity field is physically valid.
+    # Diagnose those points as dry without mutating the prognostic state.
     tp .= temperature
-    @. rp = humidity / (1.0 - humidity)
+    @. qref = max(humidity, 0.0)
+    @. rp = qref / (1.0 - qref)
     tref .= temperature
-    qref .= humidity
     fill!(tdot, 0.0)
     fill!(qdot, 0.0)
 
@@ -336,7 +339,7 @@ function _betts_miller_column!(
         reference_mixing_ratio = state.relative_humidity * rp[k]
         qref[k] = reference_mixing_ratio / (1.0 + reference_mixing_ratio)
         tdot[k] = (tref[k] - Float64(temperature[k])) / state.tau
-        qdot[k] = (qref[k] - Float64(humidity[k])) / state.tau
+        qdot[k] = (qref[k] - max(Float64(humidity[k]), 0.0)) / state.tau
     end
 
     moisture_precipitation = 0.0
