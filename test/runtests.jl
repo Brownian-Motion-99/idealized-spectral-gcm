@@ -29,7 +29,5 @@ end
 
 # 4. Integration Tests (Optional: Run short simulations)
 @testset "Integration Tests" begin
-    # You could potentially include a very short Barotropic run here
-    # to ensure the full pipeline works without crashing.
-    # include("../exp/Barotropic/Barotropic.jl") 
+    include("test_Coupling.jl")
 end

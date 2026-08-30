@@ -144,6 +144,10 @@ end
     dyn.grid_u_c .= 12.0
     dyn.grid_v_c .= -6.0
     dyn.grid_t_c .= 300.0
+    dyn.grid_ps_n .= dyn.grid_ps_c
+    dyn.grid_u_n .= dyn.grid_u_c
+    dyn.grid_v_n .= dyn.grid_v_c
+    dyn.grid_t_n .= dyn.grid_t_c
     dyn.grid_u_p .= 120.0
     dyn.grid_v_p .= 60.0
     dyn.grid_t_p .= 240.0
@@ -210,9 +214,12 @@ end
 
     sigma = 0.75
     damping_rate = (1.0 / 86400.0) * (sigma - 0.7) / (1.0 - 0.7)
-    @test all(dyn.grid_δu[:, :, 2] .≈ -damping_rate * 12.0)
-    @test all(dyn.grid_δv[:, :, 2] .≈ damping_rate * 6.0)
-    @test !all(dyn.grid_δu[:, :, 2] .≈ -damping_rate * 120.0)
+    @test all((dyn.grid_u_n[:, :, 2] .- current_u[:, :, 2]) ./ 600.0 .≈
+              -damping_rate * 12.0)
+    @test all((dyn.grid_v_n[:, :, 2] .- current_v[:, :, 2]) ./ 600.0 .≈
+              damping_rate * 6.0)
+    @test !all((dyn.grid_u_n[:, :, 2] .- current_u[:, :, 2]) ./ 600.0 .≈
+               -damping_rate * 120.0)
 
     equatorial_index = argmin(abs.(mesh.θc))
     sin_latitude = sin(mesh.θc[equatorial_index])
@@ -235,7 +242,8 @@ end
         frictional_heating -
         thermal_rate * (post_friction_temperature - expected_equilibrium)
     @test dyn.grid_t_eq[1, equatorial_index, 2] ≈ expected_equilibrium
-    @test dyn.grid_δt[1, equatorial_index, 2] ≈ expected_dt
+    @test (dyn.grid_t_n[1, equatorial_index, 2] - current_t[1, equatorial_index, 2]) /
+          600.0 ≈ expected_dt
     @test dyn.grid_u_c == current_u
     @test dyn.grid_v_c == current_v
     @test dyn.grid_t_c == current_t

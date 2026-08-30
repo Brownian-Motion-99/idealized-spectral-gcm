@@ -3,8 +3,8 @@
 
 Sequentially apply Betts-Miller convection and large-scale condensation to a
 private physics working state. Betts-Miller diagnostic rates are applied once
-over the effective Euler/leapfrog interval; large-scale condensation then sees
-that updated state directly.
+over one bounded physics substep; large-scale condensation then sees that
+updated state directly.
 """
 function Moist_Physics!(
     do_betts_miller::Bool,

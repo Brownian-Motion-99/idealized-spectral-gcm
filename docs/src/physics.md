@@ -130,9 +130,9 @@ returns the relaxation rates
 
 The column energy correction lengthens whichever of the temperature or
 humidity adjustments supplies the larger precipitation-equivalent energy; it
-does not cap either tendency using the model time step. For explicit leapfrog
-integration the driver instead requires `2 * Δt <= bm_tau`, so applying the
-returned rate cannot overshoot its reference profile.
+does not cap either tendency using the model time step. Physics is subcycled at
+the base model timestep, so the driver requires `Δt <= bm_tau`; each explicit
+BM adjustment therefore cannot overshoot its reference profile.
 
 Saturation vapor pressure follows the reference mixed-phase Smithsonian
 thermodynamics: ice below 253.16 K, liquid above 273.16 K, and a linear blend
@@ -141,11 +141,14 @@ surface-parcel adjustment, an RK2 saturated ascent using the arithmetic
 midpoint pressure, and discrete contiguous LFC/LZB detection. Convection that
 remains buoyant through the model top uses the top full level as its LZB.
 
-When both moist schemes are enabled, they follow Isca's sequential workflow.
-Betts-Miller is diagnosed first, a temporary post-convection state is formed
-over the effective Euler/leapfrog interval, and large-scale condensation is
-diagnosed from that temporary state. Both increments are finally represented as
-additive rates, and their precipitation fluxes are summed.
+When both moist schemes are enabled, Betts-Miller updates the private physics
+state first and large-scale condensation diagnoses that updated state. The
+complete physics chain is applied directly to the provisional post-dynamics
+state in 600 s substeps: one substep during startup and two across a mature
+leapfrog interval. Physics increments are not inserted into the leapfrog RHS.
+The process order is BM, large-scale condensation, surface exchange, PBL
+mixing, Rayleigh friction, Newtonian relaxation, and LRF. Diagnostic tendency
+and flux fields are time averages across the substeps.
 
 ### Boundary Layer Mixing (`PBL.jl`)
 Vertical turbulent diffusion of heat, moisture, and momentum.

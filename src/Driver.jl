@@ -164,9 +164,9 @@ function JGCM_Simulate(config::Model_Config)
         bm_tau = Float64(get(config.physics_params, "bm_tau", 7200.0))
         bm_relative_humidity =
             Float64(get(config.physics_params, "bm_relative_humidity", 0.8))
-        2 * config.Δt <= bm_tau || throw(
+        config.Δt <= bm_tau || throw(
             ArgumentError(
-                "Betts-Miller requires 2 * Δt <= bm_tau for leapfrog integration; " *
+                "Betts-Miller requires Δt <= bm_tau for each physics substep; " *
                 "got Δt=$(config.Δt) s and bm_tau=$bm_tau s",
             ),
         )

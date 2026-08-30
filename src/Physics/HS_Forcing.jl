@@ -101,7 +101,7 @@ function Newtonian_Relaxation!(
     k_s = Float64(physics_params["k_s"]) / Float64(day_to_sec)
     delta_t_y = Float64(physics_params["ΔT_y"])
     delta_theta_z = Float64(physics_params["Δθ_z"])
-    t_equator = Float64(get(physics_params, "T_equator", 315.0))
+    t_equator = Float64(get(physics_params, "T_equator", 294.0))
     t_stratosphere = Float64(get(physics_params, "T_stratosphere", 200.0))
     0.0 <= sigma_b < 1.0 || throw(ArgumentError("σ_b must lie in [0, 1)"))
     all(x -> isfinite(x) && x >= 0, (k_a, k_s)) ||

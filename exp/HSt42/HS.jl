@@ -16,8 +16,8 @@ physics_params = Dict{String,Any}(
     # Corrections
     "do_mass_correction" => true,
     "do_energy_correction" => true,
-    # The sequential physics increments are included in the leapfrog water
-    # target, so the fixer preserves physical evaporation and precipitation.
+    # Post-dynamics physics carries its own water budget; the positivity
+    # projection preserves that post-physics integral.
     "do_water_correction" => true,
     "use_virtual_temperature" => true,
 
@@ -66,7 +66,7 @@ physics_params = Dict{String,Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name = "ctrl_L_1_0"
+experiment_name = "ctrl"
 output_path_base = joinpath("/data92/garywu/undergrad_proposal", experiment_name)
 mkpath(output_path_base)
 
@@ -94,7 +94,7 @@ config = Model_Config(
 
     # Time Integration
     Δt = 600,
-    end_time = 86400 * 20000,
+    end_time = 86400 * 10000,
     spinup_day = 0.0,
 
     # Numerics

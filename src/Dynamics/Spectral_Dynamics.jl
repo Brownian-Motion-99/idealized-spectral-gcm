@@ -17,6 +17,7 @@ using Statistics
 using Interpolations
 export Compute_Corrections_Init,
     Compute_Corrections!,
+    Reset_Dynamics_Tendencies!,
     Four_In_One!,
     Spectral_Dynamics!,
     Get_Topography!,
@@ -30,36 +31,27 @@ export Compute_Corrections_Init,
     Compute_Corrections_Init(
         mesh, vert_coord, atmo_data,
         grid_ps_p,
-        grid_energy_temp, 
-        grid_u_p, grid_v_p, grid_t_p, 
-        grid_δu, grid_δv, grid_δt,  
-        grid_q_p, grid_δq,
-        Δt
+        grid_energy_temp,
+        grid_u, grid_v, grid_t, grid_q
     )
 
 Calculates the global integrals of mass, total energy, and moisture to serve as 
-conservation targets. These values are computed using the state at (t-1) projected 
-forward by the explicit tendencies to ensure that the subsequent semi-implicit 
-update and filtering steps do not violate global conservation laws.
+conservation targets for a single, internally consistent model state. Physics is
+applied after the dynamics update, so physics tendencies must not be folded into
+these dynamics-only targets.
 
 ### Parameters
     - mesh: Spectral spherical mesh properties.
     - vert_coord: Vertical coordinate definitions.
     - atmo_data: Atmospheric physical constants and flags (do_mass_correction, etc.).
 
-    - grid_ps_p: Surface pressure at the previous time step (t-1) [nλ, nθ, 1].
+    - grid_ps_p: Surface pressure of the target state [nλ, nθ, 1].
     
     - grid_energy_temp: Temporary work array for energy calculation [nλ, nθ, nd].
     
-    - grid_u_p, grid_v_p: Horizontal wind components at (t-1).
-    - grid_t_p: Temperature at (t-1).
-    
-    - grid_δu, grid_δv, grid_δt: Explicit time tendencies for winds and temperature.
-    
-    - grid_q_p: Specific humidity at (t-1).
-    - grid_δq: Explicit time tendency for specific humidity.
-    
-    - Δt: Time step size (integer).
+    - grid_u, grid_v: Horizontal wind components of the target state.
+    - grid_t: Temperature of the target state.
+    - grid_q: Specific humidity of the target state.
 
 ### Returns
     - mean_ps_p: Global mean surface pressure (Mass target).
@@ -73,15 +65,10 @@ function Compute_Corrections_Init(
     atmo_data::Atmo_Data,
     grid_ps_p::Array{Float64,3},
     grid_energy_temp::Array{Float64,3},
-    grid_u_p::Array{Float64,3},
-    grid_v_p::Array{Float64,3},
-    grid_t_p::Array{Float64,3},
-    grid_δu::Array{Float64,3},
-    grid_δv::Array{Float64,3},
-    grid_δt::Array{Float64,3},
-    grid_q_p::Array{Float64,3},
-    grid_δq::Array{Float64,3},
-    Δt::Int64,
+    grid_u::Array{Float64,3},
+    grid_v::Array{Float64,3},
+    grid_t::Array{Float64,3},
+    grid_q::Array{Float64,3},
 )
 
     mean_ps_p = 0.0
@@ -99,11 +86,7 @@ function Compute_Corrections_Init(
     end
 
     if (do_energy_correction)
-        grid_energy_temp .=
-            0.5 * (
-                (grid_u_p + Float64(Δt) * grid_δu) .^ 2 +
-                (grid_v_p + Float64(Δt) * grid_δv) .^ 2
-            ) + cp_air * (grid_t_p + Float64(Δt) * grid_δt)
+        @. grid_energy_temp = 0.5 * (grid_u^2 + grid_v^2) + cp_air * grid_t
         mean_energy_p = Mass_Weighted_Global_Integral(
             vert_coord,
             mesh,
@@ -118,12 +101,191 @@ function Compute_Corrections_Init(
             vert_coord,
             mesh,
             atmo_data,
-            grid_q_p .+ grid_δq * Float64(Δt),
+            grid_q,
             grid_ps_p,
         )
     end
 
     return mean_ps_p, mean_energy_p, mean_moisture_p
+end
+
+"""Clear every explicit dynamics tendency before constructing a new RHS."""
+function Reset_Dynamics_Tendencies!(dyn_data::Dyn_Data)
+    for field in (
+        dyn_data.spe_δvor,
+        dyn_data.spe_δdiv,
+        dyn_data.spe_δlnps,
+        dyn_data.spe_δt,
+        dyn_data.spe_δq,
+        dyn_data.spe_δtracers,
+        dyn_data.grid_δvor,
+        dyn_data.grid_δdiv,
+        dyn_data.grid_δu,
+        dyn_data.grid_δv,
+        dyn_data.grid_δps,
+        dyn_data.grid_δlnps,
+        dyn_data.grid_δt,
+        dyn_data.grid_δq,
+        dyn_data.grid_δtracers,
+    )
+        fill!(field, zero(eltype(field)))
+    end
+    return nothing
+end
+
+"""
+Project humidity to the retained spectral space while preserving positivity and
+then rescale it to the requested global water integral. A constant offset is
+band-limited, unlike gridpoint clipping, so the inverse transform cannot recreate
+the clipped Gibbs undershoots.
+"""
+function _project_positive_humidity!(
+    mesh::Spectral_Spherical_Mesh,
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    target_water::Float64,
+    grid_ps::Array{Float64,3},
+    grid_q::Array{Float64,3},
+    spe_q::Array{ComplexF64,3},
+)
+    isfinite(target_water) && target_water >= 0.0 || throw(
+        DomainError(
+            target_water,
+            "target atmospheric water must be finite and non-negative",
+        ),
+    )
+
+    if iszero(target_water)
+        fill!(grid_q, 0.0)
+        fill!(spe_q, 0.0)
+        return nothing
+    end
+
+    Trans_Grid_To_Spherical!(mesh, grid_q, spe_q)
+    Trans_Spherical_To_Grid!(mesh, spe_q, grid_q)
+
+    # Retain the predicted vertical water distribution wherever a level has a
+    # positive integral. A single global rescaling after adding positivity
+    # offsets would otherwise move water spuriously into initially dry levels.
+    level_water = zeros(Float64, size(grid_q, 3))
+    for k in axes(grid_q, 3)
+        @. vert_coord.mass_Δp =
+            vert_coord.Δbk[k] * grid_ps + vert_coord.Δak[k]
+        @views @. vert_coord.mass_integrand =
+            grid_q[:, :, k] * vert_coord.mass_Δp[:, :, 1]
+        level_water[k] =
+            Area_Weighted_Global_Mean(mesh, vert_coord.mass_integrand) / atmo_data.grav
+    end
+    positive_water = sum(max(water, 0.0) for water in level_water)
+    positive_water > 0.0 ||
+        error("Cannot apply water correction: projected atmospheric water is non-positive")
+    level_targets = max.(level_water, 0.0) .* (target_water / positive_water)
+
+    # Adding a levelwise constant only changes the retained degree-zero mode;
+    # a positive levelwise scaling then restores that level's water target.
+    for k in axes(grid_q, 3)
+        qk = @view grid_q[:, :, k]
+        if iszero(level_targets[k])
+            fill!(qk, 0.0)
+            continue
+        end
+        qmin = minimum(qk)
+        if qmin < 0.0
+            margin = 64.0 * eps(max(maximum(abs, qk), 1.0))
+            qk .+= -qmin + margin
+        end
+        @. vert_coord.mass_Δp =
+            vert_coord.Δbk[k] * grid_ps + vert_coord.Δak[k]
+        @views @. vert_coord.mass_integrand =
+            grid_q[:, :, k] * vert_coord.mass_Δp[:, :, 1]
+        adjusted_water =
+            Area_Weighted_Global_Mean(mesh, vert_coord.mass_integrand) / atmo_data.grav
+        isfinite(adjusted_water) && adjusted_water > 0.0 ||
+            error("Cannot apply water correction: level $k has non-positive water")
+        qk .*= level_targets[k] / adjusted_water
+    end
+    Trans_Grid_To_Spherical!(mesh, grid_q, spe_q)
+    Trans_Spherical_To_Grid!(mesh, spe_q, grid_q)
+
+    minimum(grid_q) >= -1.0e-14 ||
+        error("humidity positivity projection failed")
+    current_water = Mass_Weighted_Global_Integral(
+        vert_coord,
+        mesh,
+        atmo_data,
+        grid_q,
+        grid_ps,
+    )
+    isfinite(current_water) && current_water > 0.0 ||
+        error("Cannot apply water correction: projected atmospheric water is non-positive")
+    factor = target_water / current_water
+    grid_q .*= factor
+    spe_q .*= factor
+    return nothing
+end
+
+"""Make a gridpoint-adjusted next state authoritative in spectral space."""
+function _synchronize_physics_next!(
+    mesh::Spectral_Spherical_Mesh,
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    dyn_data::Dyn_Data,
+)
+    mean_ps, mean_energy, mean_water = Compute_Corrections_Init(
+        mesh,
+        vert_coord,
+        atmo_data,
+        dyn_data.grid_ps_n,
+        dyn_data.grid_energy_full,
+        dyn_data.grid_u_n,
+        dyn_data.grid_v_n,
+        dyn_data.grid_t_n,
+        dyn_data.grid_q_n,
+    )
+
+    Vor_Div_From_Grid_UV!(
+        mesh,
+        dyn_data.grid_u_n,
+        dyn_data.grid_v_n,
+        dyn_data.spe_vor_n,
+        dyn_data.spe_div_n,
+    )
+    UV_Grid_From_Vor_Div!(
+        mesh,
+        dyn_data.spe_vor_n,
+        dyn_data.spe_div_n,
+        dyn_data.grid_u_n,
+        dyn_data.grid_v_n,
+    )
+    Trans_Grid_To_Spherical!(mesh, dyn_data.grid_t_n, dyn_data.spe_t_n)
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_t_n, dyn_data.grid_t_n)
+
+    Compute_Corrections!(
+        mesh,
+        vert_coord,
+        atmo_data,
+        mean_ps,
+        dyn_data.grid_ps_n,
+        dyn_data.spe_lnps_n,
+        mean_energy,
+        dyn_data.grid_energy_full,
+        dyn_data.grid_u_n,
+        dyn_data.grid_v_n,
+        dyn_data.grid_t_n,
+        dyn_data.spe_t_n,
+        mean_water,
+        dyn_data.grid_q_n,
+        dyn_data.spe_q_n,
+    )
+
+    all(isfinite, dyn_data.grid_u_n) && all(isfinite, dyn_data.grid_v_n) &&
+        all(isfinite, dyn_data.grid_t_n) && all(isfinite, dyn_data.grid_q_n) ||
+        error("spectral projection produced a non-finite post-physics state")
+    minimum(dyn_data.grid_t_n) > 0.0 ||
+        error("spectral projection produced a non-positive temperature")
+    minimum(dyn_data.grid_q_n) >= -1.0e-14 ||
+        error("spectral projection produced negative specific humidity")
+    return nothing
 end
 
 
@@ -214,49 +376,25 @@ function Compute_Corrections!(
             grid_ps_n,
         )
 
+        mean_ps_for_energy = Area_Weighted_Global_Mean(mesh, grid_ps_n)
+        isfinite(mean_ps_for_energy) && mean_ps_for_energy > 0.0 ||
+            error("Cannot apply energy correction: surface pressure is non-positive")
         temperature_correction =
-            grav * (mean_energy_p - mean_energy_n) / (cp_air * mean_ps_p)
+            grav * (mean_energy_p - mean_energy_n) / (cp_air * mean_ps_for_energy)
         grid_t_n .+= temperature_correction
         spe_t_n[1, 1, :] .+= temperature_correction
     end
 
     if (do_water_correction)
-        isfinite(mean_moisture_p) && mean_moisture_p >= 0.0 ||
-            throw(
-                DomainError(
-                    mean_moisture_p,
-                    "target atmospheric water must be finite and non-negative",
-                ),
-            )
-
-        grid_q_n[grid_q_n.<0.0] .= 0.0
-
-        # Clipping is nonlinear and creates scales beyond the spectral
-        # truncation. Project it first, then make the grid field authoritative
-        # to the retained spectral modes before enforcing the global integral.
-        Trans_Grid_To_Spherical!(mesh, grid_q_n, spe_q_n)
-        Trans_Spherical_To_Grid!(mesh, spe_q_n, grid_q_n)
-
-        if iszero(mean_moisture_p)
-            grid_q_n .= 0.0
-            spe_q_n .= 0.0
-        else
-            mean_moisture_n = Mass_Weighted_Global_Integral(
-                vert_coord,
-                mesh,
-                atmo_data,
-                grid_q_n,
-                grid_ps_n,
-            )
-            isfinite(mean_moisture_n) && mean_moisture_n > 0.0 ||
-                error(
-                    "Cannot apply water correction: predicted atmospheric water is non-positive",
-                )
-
-            water_correction_factor = mean_moisture_p / mean_moisture_n
-            grid_q_n .*= water_correction_factor
-            spe_q_n .*= water_correction_factor
-        end
+        _project_positive_humidity!(
+            mesh,
+            vert_coord,
+            atmo_data,
+            mean_moisture_p,
+            grid_ps_n,
+            grid_q_n,
+            spe_q_n,
+        )
     end
 
 end
@@ -510,7 +648,11 @@ function Spectral_Dynamics!(
     atmo_data::Atmo_Data,
     dyn_data::Dyn_Data,
     semi_implicit::Semi_Implicit_Solver,
+    ;
+    advance_time::Bool = true,
 )
+
+    Reset_Dynamics_Tendencies!(dyn_data)
 
     # spectral equation quantities
     spe_lnps_p, spe_lnps_c, spe_lnps_n, spe_δlnps =
@@ -593,8 +735,7 @@ function Spectral_Dynamics!(
     integrator = semi_implicit.integrator
     Δt = Get_Δt(integrator)
 
-    # --- Conservation check --- #
-    # Computes global mass/energy integrals of the previous state.
+    # Dynamics conserves the previous time-level invariants.
     mean_ps_p, mean_energy_p, mean_moisture_p = Compute_Corrections_Init(
         mesh,
         vert_coord,
@@ -604,14 +745,8 @@ function Spectral_Dynamics!(
         grid_u_p,
         grid_v_p,
         grid_t_p,
-        grid_δu,
-        grid_δv,
-        grid_δt,
         grid_q_p,
-        grid_δq,
-        Δt,
     )
-    # --- Conservation check --- #
 
     # --- Pressure-related --- #
     # Updates pressure variables and computes gradients ∇pₛ.
@@ -835,20 +970,24 @@ function Spectral_Dynamics!(
     )
     # --- Conservation Fixer --- #
 
-    # -- Time Advance -- #
-    # Rotates time indices (p ← c, c ← n).
-    Time_Advance!(dyn_data)
+    # Keep the unfiltered grid current as the conservation ledger that rotates
+    # into grid_*_p. The Asselin-filtered spectral current is numerical history,
+    # not a second authoritative physical state; reconstructing it on the grid
+    # makes the global fixer conserve the dissipated computational mode and is
+    # unstable for this leapfrog formulation.
 
-    Pressure_Variables!(
-        vert_coord,
-        grid_ps,
-        grid_p_half,
-        grid_Δp,
-        grid_lnp_half,
-        grid_p_full,
-        grid_lnp_full,
-    )
-    # -- Time Advance -- #
+    if advance_time
+        Time_Advance!(dyn_data)
+        Pressure_Variables!(
+            vert_coord,
+            grid_ps,
+            grid_p_half,
+            grid_Δp,
+            grid_lnp_half,
+            grid_p_full,
+            grid_lnp_full,
+        )
+    end
 
     return
 end
@@ -1120,7 +1259,27 @@ function Atmosphere_Update!(
     semi_implicit::Semi_Implicit_Solver,
     physics_params::Dict{String,Any},
 )
+    # First form a corrected dynamics-only provisional next state. Physics is
+    # then a direct time-split map of that state, never a leapfrog tendency.
+    Spectral_Dynamics!(
+        config,
+        mesh,
+        vert_coord,
+        atmo_data,
+        dyn_data,
+        semi_implicit,
+        advance_time = false,
+    )
 
+    Pressure_Variables!(
+        vert_coord,
+        dyn_data.grid_ps_n,
+        dyn_data.grid_p_half,
+        dyn_data.grid_Δp,
+        dyn_data.grid_lnp_half,
+        dyn_data.grid_p_full,
+        dyn_data.grid_lnp_full,
+    )
     Spectral_Physics!(
         config,
         mesh,
@@ -1130,7 +1289,20 @@ function Atmosphere_Update!(
         semi_implicit,
         physics_params,
     )
-    Spectral_Dynamics!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit)
+    physics_changed_state = any(
+        get(physics_params, key, false) for key in (
+            "do_Betts_Miller",
+            "do_Lscale_Cond",
+            "do_Sensible_Heating",
+            "do_Surface_Evaporation",
+            "do_Implicit_PBL_Scheme",
+            "do_HS_Forcing",
+            "do_LRF",
+        )
+    )
+    physics_changed_state &&
+        _synchronize_physics_next!(mesh, vert_coord, atmo_data, dyn_data)
+    Time_Advance!(dyn_data)
 
     grid_ps, grid_Δp, grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full =
         dyn_data.grid_ps_c,

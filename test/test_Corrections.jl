@@ -42,6 +42,7 @@
     )
 
     @test data.grid_q_n ≈ reconstructed atol = 1e-14 rtol = 1e-13
+    @test minimum(data.grid_q_n) >= -1e-14
     @test corrected_water ≈ target_water rtol = 1e-13
 
     JGCM.Dyn_Data_Module.Time_Advance!(data)
