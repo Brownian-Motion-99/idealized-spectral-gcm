@@ -1,24 +1,24 @@
-const BM_FREEZE_TEMPERATURE = 273.16
+const SATURATION_FREEZE_TEMPERATURE = 273.16
 const BM_MIN_PARCEL_TEMPERATURE = 173.16
 
 """
-    Betts_Miller_Saturation_Vapor_Pressure(temperature)
+    Saturation_Vapor_Pressure(temperature)
 
 Smithsonian saturation vapor pressure in Pa. Values are over ice below
 253.16 K, over liquid above 273.16 K, and linearly blended in temperature
 between those limits.
 """
-function Betts_Miller_Saturation_Vapor_Pressure(temperature::Real)
-    pressure, _ = _bm_saturation_vapor_pressure_and_derivative(temperature)
+function Saturation_Vapor_Pressure(temperature::Real)
+    pressure, _ = _saturation_vapor_pressure_and_derivative(temperature)
     return pressure
 end
 
-function _bm_saturation_vapor_pressure_and_derivative(temperature::Real)
+function _saturation_vapor_pressure_and_derivative(temperature::Real)
     temperature = Float64(temperature)
     isfinite(temperature) && temperature > 0 ||
         throw(ArgumentError("temperature must be positive and finite"))
 
-    t_freeze = BM_FREEZE_TEMPERATURE
+    t_freeze = SATURATION_FREEZE_TEMPERATURE
     t_water_base = t_freeze + 100.0
     log_ten = log(10.0)
 
@@ -71,25 +71,82 @@ function _bm_saturation_vapor_pressure_and_derivative(temperature::Real)
     return es, des
 end
 
-@inline function _bm_saturation_mixing_ratio(
-    temperature::Float64,
+@inline function _validate_saturation_pressure(
     pressure::Float64,
+    vapor_pressure::Float64,
     epsilon::Float64,
 )
-    return epsilon * Betts_Miller_Saturation_Vapor_Pressure(temperature) / pressure
+    isfinite(pressure) && pressure > 0.0 ||
+        throw(ArgumentError("pressure must be positive and finite"))
+    isfinite(epsilon) && 0.0 < epsilon < 1.0 ||
+        throw(ArgumentError("epsilon must be finite and lie in (0, 1)"))
+    vapor_pressure < pressure || throw(
+        DomainError(
+            (pressure = pressure, saturation_vapor_pressure = vapor_pressure),
+            "saturation vapor pressure must be smaller than total pressure",
+        ),
+    )
+    return nothing
 end
 
-@inline function _bm_saturation_specific_humidity_and_derivative(
-    temperature::Float64,
-    pressure::Float64,
-    epsilon::Float64,
+"""
+    Saturation_Mixing_Ratio(temperature, pressure, epsilon)
+
+Exact saturation water-vapor mixing ratio (vapor mass per unit dry-air mass),
+`epsilon * e_s / (pressure - e_s)`.
+"""
+@inline function Saturation_Mixing_Ratio(
+    temperature::Real,
+    pressure::Real,
+    epsilon::Real,
 )
-    isfinite(pressure) && pressure > 0 ||
-        throw(ArgumentError("pressure must be positive and finite"))
-    es, des_dt = _bm_saturation_vapor_pressure_and_derivative(temperature)
-    saturation_mixing_ratio = epsilon * es / pressure
-    denominator = 1.0 + saturation_mixing_ratio
-    saturation_specific_humidity = saturation_mixing_ratio / denominator
-    derivative = epsilon * des_dt / pressure / denominator^2
-    return saturation_specific_humidity, derivative
+    mixing_ratio, _ =
+        _saturation_mixing_ratio_and_derivative(temperature, pressure, epsilon)
+    return mixing_ratio
+end
+
+@inline function _saturation_mixing_ratio_and_derivative(
+    temperature::Real,
+    pressure::Real,
+    epsilon::Real,
+)
+    pressure = Float64(pressure)
+    epsilon = Float64(epsilon)
+    es, des_dt = _saturation_vapor_pressure_and_derivative(temperature)
+    _validate_saturation_pressure(pressure, es, epsilon)
+    denominator = pressure - es
+    mixing_ratio = epsilon * es / denominator
+    derivative = epsilon * pressure * des_dt / denominator^2
+    return mixing_ratio, derivative
+end
+
+"""
+    Saturation_Specific_Humidity(temperature, pressure, epsilon)
+
+Exact saturation specific humidity (vapor mass per unit moist-air mass),
+`epsilon * e_s / (pressure - (1 - epsilon) * e_s)`.
+"""
+@inline function Saturation_Specific_Humidity(
+    temperature::Real,
+    pressure::Real,
+    epsilon::Real,
+)
+    specific_humidity, _ =
+        _saturation_specific_humidity_and_derivative(temperature, pressure, epsilon)
+    return specific_humidity
+end
+
+@inline function _saturation_specific_humidity_and_derivative(
+    temperature::Real,
+    pressure::Real,
+    epsilon::Real,
+)
+    pressure = Float64(pressure)
+    epsilon = Float64(epsilon)
+    es, des_dt = _saturation_vapor_pressure_and_derivative(temperature)
+    _validate_saturation_pressure(pressure, es, epsilon)
+    denominator = pressure - (1.0 - epsilon) * es
+    specific_humidity = epsilon * es / denominator
+    derivative = epsilon * pressure * des_dt / denominator^2
+    return specific_humidity, derivative
 end

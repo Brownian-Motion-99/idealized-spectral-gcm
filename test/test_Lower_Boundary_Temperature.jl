@@ -47,16 +47,16 @@ using JGCM
         custom_temperature,
     )
 
+    expected_t = similar(grid_t)
     for j = 1:nθ, i = 1:nλ
-        expected_t =
+        expected_t[i, j, nd] =
             (280.0 + lambda * custom_temperature(mesh.λc[i], mesh.θc[j])) / (1.0 + lambda)
-        @test grid_t[i, j, nd] ≈ expected_t
-        @test grid_shflx[i, j, 1] ≈
-              density[i, j, nd] *
-              lowest_level_height[i, j] *
-              atmo.cp_air *
-              (expected_t - 280.0) / Δt
     end
+    expected_shflx =
+        @. density[:, :, nd] * lowest_level_height * atmo.cp_air *
+           (expected_t[:, :, nd] - 280.0) / Δt
+    @test grid_t ≈ expected_t
+    @test grid_shflx[:, :, 1] ≈ expected_shflx
 
     grid_ps = fill(100_000.0, nλ, nθ, 1)
     grid_q = fill(0.001, nλ, nθ, nd)
@@ -77,17 +77,20 @@ using JGCM
         custom_temperature,
     )
 
+    expected_q = similar(grid_q)
     for j = 1:nθ, i = 1:nλ
         surface_temperature = custom_temperature(mesh.λc[i], mesh.θc[j])
-        vapor_pressure =
-            611.12 * exp(atmo.Lv / atmo.rvgas * (1.0 / 273.15 - 1.0 / surface_temperature))
-        surface_q = 0.622 * vapor_pressure / (grid_ps[i, j, 1] - 0.378 * vapor_pressure)
-        expected_q = (0.001 + evaporation_lambda * surface_q) / (1.0 + evaporation_lambda)
-        @test grid_q[i, j, nd] ≈ expected_q
-        @test grid_lhflx[i, j, 1] ≈
-              (expected_q - 0.001) *
-              density[i, j, nd] *
-              lowest_level_height[i, j] *
-              atmo.Lv / Δt
+        surface_q = Saturation_Specific_Humidity(
+            surface_temperature,
+            grid_ps[i, j, 1],
+            atmo.rdgas / atmo.rvgas,
+        )
+        expected_q[i, j, nd] =
+            (0.001 + evaporation_lambda * surface_q) / (1.0 + evaporation_lambda)
     end
+    expected_lhflx =
+        @. (expected_q[:, :, nd] - 0.001) * density[:, :, nd] *
+           lowest_level_height * atmo.Lv / Δt
+    @test grid_q ≈ expected_q
+    @test grid_lhflx[:, :, 1] ≈ expected_lhflx
 end

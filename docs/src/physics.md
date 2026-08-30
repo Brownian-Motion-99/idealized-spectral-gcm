@@ -97,7 +97,8 @@ $$\frac{\partial T}{\partial t}_{fric} = -\frac{1}{c_p} (u \frac{\partial u}{\pa
 
 ### Large-Scale Condensation (`Lscale_Cond.jl`)
 A saturation adjustment diagnosed after convection. It uses the same mixed-phase
-Smithsonian saturation-vapor-pressure equation as Betts-Miller. If specific
+Smithsonian saturation-vapor-pressure equation and exact saturation-specific-humidity
+conversion as Betts-Miller and the surface evaporation scheme. If specific
 humidity $q$ exceeds $q_{sat}(T,p)$, the signed humidity increment is
 
 ```math

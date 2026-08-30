@@ -16,22 +16,33 @@ function bm_test_atmosphere(nd)
 end
 
 @testset "Betts-Miller thermodynamics and validation" begin
-    @test Betts_Miller_Saturation_Vapor_Pressure(240.0) > 0
-    @test Betts_Miller_Saturation_Vapor_Pressure(263.16) > 0
-    @test Betts_Miller_Saturation_Vapor_Pressure(290.0) > 0
-    @test Betts_Miller_Saturation_Vapor_Pressure(290.0) >
-          Betts_Miller_Saturation_Vapor_Pressure(263.16) >
-          Betts_Miller_Saturation_Vapor_Pressure(240.0)
     @test isapprox(
-        Betts_Miller_Saturation_Vapor_Pressure(253.16 - 1.0e-6),
-        Betts_Miller_Saturation_Vapor_Pressure(253.16 + 1.0e-6);
+        Saturation_Vapor_Pressure(253.16 - 1.0e-6),
+        Saturation_Vapor_Pressure(253.16 + 1.0e-6);
         rtol = 1.0e-6,
     )
     @test isapprox(
-        Betts_Miller_Saturation_Vapor_Pressure(273.16 - 1.0e-6),
-        Betts_Miller_Saturation_Vapor_Pressure(273.16 + 1.0e-6);
+        Saturation_Vapor_Pressure(273.16 - 1.0e-6),
+        Saturation_Vapor_Pressure(273.16 + 1.0e-6);
         rtol = 1.0e-6,
     )
+
+    temperature = 300.0
+    pressure = 100_000.0
+    epsilon = 287.0 / 461.5
+    vapor_pressure = Saturation_Vapor_Pressure(temperature)
+    expected_mixing_ratio = epsilon * vapor_pressure / (pressure - vapor_pressure)
+    expected_specific_humidity =
+        epsilon * vapor_pressure / (pressure - (1.0 - epsilon) * vapor_pressure)
+    @test Saturation_Mixing_Ratio(temperature, pressure, epsilon) ≈
+          expected_mixing_ratio rtol = 1.0e-14
+    @test Saturation_Specific_Humidity(temperature, pressure, epsilon) ≈
+          expected_specific_humidity rtol = 1.0e-14
+    @test Saturation_Specific_Humidity(temperature, pressure, epsilon) ≈
+          expected_mixing_ratio / (1.0 + expected_mixing_ratio) rtol = 1.0e-14
+    @test_throws DomainError Saturation_Mixing_Ratio(temperature, vapor_pressure, epsilon)
+    @test_throws DomainError Saturation_Specific_Humidity(temperature, vapor_pressure, epsilon)
+    @test_throws ArgumentError Saturation_Mixing_Ratio(temperature, pressure, 1.0)
 
     @test_throws ArgumentError Betts_Miller_State(6; tau = 0.0)
     @test_throws ArgumentError Betts_Miller_State(6; relative_humidity = 0.0)
@@ -119,7 +130,7 @@ end
     @test stable.precipitation == 0.0
 
     temperature = [210.0, 225.0, 240.0, 255.0, 275.0, 300.0]
-    humidity = [5.0e-4, 2.0e-3, 5.0e-3, 1.0e-2, 1.6e-2, 2.0e-2]
+    humidity = [6.0e-4, 2.4e-3, 6.0e-3, 1.2e-2, 1.92e-2, 2.4e-2]
     convective = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
 
     @test convective.active
@@ -144,7 +155,7 @@ end
 
     # A saturated surface parcel must use the explicit surface saturation branch.
     epsilon = atmo.rdgas / atmo.rvgas
-    rs = epsilon * Betts_Miller_Saturation_Vapor_Pressure(300.0) / p_full[end]
+    rs = Saturation_Mixing_Ratio(300.0, p_full[end], epsilon)
     saturated_humidity = copy(humidity)
     saturated_humidity[end] = rs / (1.0 + rs)
     saturated =
@@ -175,7 +186,7 @@ end
     p_half = zeros(nλ, nθ, nd + 1)
     for j = 1:nθ, i = 1:nλ
         temperature[i, j, :] .= [210.0, 225.0, 240.0, 255.0, 275.0, 300.0]
-        humidity[i, j, :] .= [5.0e-4, 2.0e-3, 5.0e-3, 1.0e-2, 1.6e-2, 2.0e-2]
+        humidity[i, j, :] .= [6.0e-4, 2.4e-3, 6.0e-3, 1.2e-2, 1.92e-2, 2.4e-2]
         p_full[i, j, :] .= p_full_column
         p_half[i, j, :] .= p_half_column
     end
@@ -259,7 +270,7 @@ end
     p_half_column = collect(range(0.0, 1.0e5; length = nd + 1))
     p_full_column = 0.5 .* (p_half_column[1:end-1] .+ p_half_column[2:end])
     temperature_column = [210.0, 225.0, 240.0, 255.0, 275.0, 300.0]
-    humidity_column = [5.0e-4, 2.0e-3, 5.0e-3, 1.0e-2, 1.6e-2, 2.0e-2]
+    humidity_column = [6.0e-4, 2.4e-3, 6.0e-3, 1.2e-2, 1.92e-2, 2.4e-2]
     for j = 1:nθ, i = 1:nλ
         dyn.grid_ps_c[i, j, 1] = 1.0e5
         dyn.grid_ps_p[i, j, 1] = 1.0e5

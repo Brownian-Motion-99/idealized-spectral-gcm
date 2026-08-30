@@ -110,7 +110,7 @@ function _bm_lcl(
     residual(logp) = begin
         pressure = exp(logp)
         parcel_temperature = theta0 * (pressure / pstar)^kappa
-        _bm_saturation_mixing_ratio(parcel_temperature, pressure, epsilon) - r0
+        Saturation_Mixing_Ratio(parcel_temperature, pressure, epsilon) - r0
     end
 
     lo = log(p_top)
@@ -160,11 +160,11 @@ function _bm_moist_rk2(
     derivative_a = _bm_moist_derivative(temperature_a, mixing_ratio_a, kappa, cp, lv, rv)
     temperature_mid = temperature_a + 0.5 * derivative_a * delta_log_pressure
     pressure_mid = 0.5 * (pressure_a + pressure_b)
-    mixing_ratio_mid = _bm_saturation_mixing_ratio(temperature_mid, pressure_mid, epsilon)
+    mixing_ratio_mid = Saturation_Mixing_Ratio(temperature_mid, pressure_mid, epsilon)
     derivative_mid =
         _bm_moist_derivative(temperature_mid, mixing_ratio_mid, kappa, cp, lv, rv)
     temperature_b = temperature_a + derivative_mid * delta_log_pressure
-    mixing_ratio_b = _bm_saturation_mixing_ratio(temperature_b, pressure_b, epsilon)
+    mixing_ratio_b = Saturation_Mixing_Ratio(temperature_b, pressure_b, epsilon)
     return temperature_b, mixing_ratio_b
 end
 
@@ -208,7 +208,7 @@ function _betts_miller_column!(
     surface = nd
     t0 = Float64(temperature[surface])
     r0 = rp[surface]
-    rs0 = _bm_saturation_mixing_ratio(t0, Float64(p_full[surface]), epsilon)
+    rs0 = Saturation_Mixing_Ratio(t0, Float64(p_full[surface]), epsilon)
 
     cape = 0.0
     cin = 0.0
@@ -221,7 +221,7 @@ function _betts_miller_column!(
         lcl = surface
         tp[surface] = t0 + (r0 - rs0) / (cp / lv + lv * rs0 / (rv * t0^2))
         rp[surface] =
-            _bm_saturation_mixing_ratio(tp[surface], Float64(p_full[surface]), epsilon)
+            Saturation_Mixing_Ratio(tp[surface], Float64(p_full[surface]), epsilon)
     elseif r0 > 0
         theta0 = t0 * (pstar / Float64(p_full[surface]))^kappa
         plcl, tlcl = _bm_lcl(
@@ -236,7 +236,7 @@ function _betts_miller_column!(
         k = surface
         while k >= 1 && p_full[k] > plcl
             tp[k] = theta0 * (Float64(p_full[k]) / pstar)^kappa
-            rp[k] = _bm_saturation_mixing_ratio(tp[k], Float64(p_full[k]), epsilon)
+            rp[k] = Saturation_Mixing_Ratio(tp[k], Float64(p_full[k]), epsilon)
             cin +=
                 rd *
                 (Float64(temperature[k]) - tp[k]) *

@@ -118,7 +118,7 @@ function Lscale_Cond!(
                     ),
                 )
 
-                q_sat, dq_sat_dt = _bm_saturation_specific_humidity_and_derivative(
+                q_sat, dq_sat_dt = _saturation_specific_humidity_and_derivative(
                     t_star,
                     pressure,
                     epsilon,

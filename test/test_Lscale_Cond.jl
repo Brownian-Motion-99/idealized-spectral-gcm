@@ -17,8 +17,7 @@ end
 
 function lscale_saturation_specific_humidity(atmo, temperature, pressure)
     epsilon = atmo.rdgas / atmo.rvgas
-    mixing_ratio = epsilon * Betts_Miller_Saturation_Vapor_Pressure(temperature) / pressure
-    return mixing_ratio / (1.0 + mixing_ratio)
+    return Saturation_Specific_Humidity(temperature, pressure, epsilon)
 end
 
 function run_lscale_column(effective_dt, heating_scale)
@@ -144,16 +143,41 @@ end
     @test all(iszero, precipitation)
 end
 
-@testset "Shared Betts-Miller saturation derivative" begin
+@testset "Shared exact saturation derivatives" begin
     thermo = JGCM.Atmos_Param_Module
+    epsilon = 287.0 / 461.5
+    pressure = 100_000.0
     for temperature in (240.0, 263.16, 290.0)
-        _, derivative = thermo._bm_saturation_vapor_pressure_and_derivative(temperature)
+        _, derivative = thermo._saturation_vapor_pressure_and_derivative(temperature)
         step = 1.0e-3
         finite_difference =
             (
-                Betts_Miller_Saturation_Vapor_Pressure(temperature + step) -
-                Betts_Miller_Saturation_Vapor_Pressure(temperature - step)
+                Saturation_Vapor_Pressure(temperature + step) -
+                Saturation_Vapor_Pressure(temperature - step)
             ) / (2.0 * step)
         @test derivative ≈ finite_difference rtol = 2.0e-7
+
+        _, mixing_ratio_derivative =
+            thermo._saturation_mixing_ratio_and_derivative(temperature, pressure, epsilon)
+        mixing_ratio_finite_difference =
+            (
+                Saturation_Mixing_Ratio(temperature + step, pressure, epsilon) -
+                Saturation_Mixing_Ratio(temperature - step, pressure, epsilon)
+            ) / (2.0 * step)
+        @test mixing_ratio_derivative ≈ mixing_ratio_finite_difference rtol = 2.0e-7
+
+        _, specific_humidity_derivative =
+            thermo._saturation_specific_humidity_and_derivative(
+                temperature,
+                pressure,
+                epsilon,
+            )
+        specific_humidity_finite_difference =
+            (
+                Saturation_Specific_Humidity(temperature + step, pressure, epsilon) -
+                Saturation_Specific_Humidity(temperature - step, pressure, epsilon)
+            ) / (2.0 * step)
+        @test specific_humidity_derivative ≈
+              specific_humidity_finite_difference rtol = 2.0e-7
     end
 end

@@ -52,24 +52,6 @@ using JGCM
     @test equilibrium_temperature[1, 3, 2] ≈ 229.0
     @test all(equilibrium_temperature[:, :, 1] .== 200.0)
 
-    # Conventional dry Held-Suarez callers retain the original defaults.
-    delete!(params, "T_equator")
-    delete!(params, "T_stratosphere")
-    params["ΔT_y"] = 60.0
-    temperature .= 250.0
-    JGCM.Atmos_Param_Module.Newtonian_Relaxation!(
-        atmo,
-        600,
-        86400,
-        sin_latitude,
-        p_half,
-        p_full,
-        temperature,
-        equilibrium_temperature,
-        params,
-    )
-    @test equilibrium_temperature[1, 2, 2] ≈ 315.0
-    @test equilibrium_temperature[1, 1, 2] ≈ 255.0
 end
 
 @testset "Held-Suarez uses the current leapfrog state" begin

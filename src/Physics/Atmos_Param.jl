@@ -18,7 +18,7 @@ include("Spectral_Physics_Interface.jl")
 
 export Spectral_Physics!, Physics_Workspace, LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
-export Betts_Miller_Saturation_Vapor_Pressure
+export Saturation_Vapor_Pressure, Saturation_Mixing_Ratio, Saturation_Specific_Humidity
 export PBL_Workspace
 export Default_Lower_Boundary_Temperature
 

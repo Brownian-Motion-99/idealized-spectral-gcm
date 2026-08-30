@@ -252,27 +252,20 @@ function Surface_Evaporation!(
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
     Lv = atmo_data.Lv::Float64
-    Rv = atmo_data.rvgas::Float64
+    epsilon = atmo_data.rdgas / atmo_data.rvgas
     λc, θc = mesh.λc, mesh.θc
-
-    const_es = 611.12
-    const_q1 = 0.622
-    const_q2 = 0.378
-    Lv_Rv = Lv / Rv
-    inv_273 = 1.0 / 273.15
 
     @threads for j = 1:nθ
 
         for i = 1:nλ
             surface_temperature = Float64(lower_boundary_temperature(λc[i], θc[j]))
-            es = const_es * exp(Lv_Rv * (inv_273 - 1.0 / surface_temperature))
 
             # Unpack
             ps_val = grid_ps[i, j, 1]
             qs_val = grid_q[i, j, nd]
 
             # Surface saturated specific humidity
-            qs = (const_q1 * es) / (ps_val - const_q2 * es)
+            qs = Saturation_Specific_Humidity(surface_temperature, ps_val, epsilon)
 
             # Implicit coef.
             # λ = (C_E * |V| * Δt) / za

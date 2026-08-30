@@ -103,12 +103,11 @@ using JGCM
     epsilon = atmo.rdgas / atmo.rvgas
     relative_humidity = similar(dyn.grid_q_c)
     for index in eachindex(relative_humidity)
-        saturation_mixing_ratio =
-            epsilon *
-            Betts_Miller_Saturation_Vapor_Pressure(dyn.grid_t_c[index]) /
-            dyn.grid_p_full[index]
-        saturation_specific_humidity =
-            saturation_mixing_ratio / (1.0 + saturation_mixing_ratio)
+        saturation_specific_humidity = Saturation_Specific_Humidity(
+            dyn.grid_t_c[index],
+            dyn.grid_p_full[index],
+            epsilon,
+        )
         relative_humidity[index] = dyn.grid_q_c[index] / saturation_specific_humidity
     end
     @test maximum(relative_humidity) < 1.0
