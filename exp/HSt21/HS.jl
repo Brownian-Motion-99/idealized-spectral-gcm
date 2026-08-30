@@ -10,7 +10,7 @@ physics_params = Dict{String,Any}(
 
     # Grid scale condensation
     "do_Lscale_Cond" => false,
-    "L" => 0.2,
+    "condensation_heating_fraction" => 0.2,
 
     # PBL fluxes
     "do_Sensible_Heating" => false,
@@ -31,7 +31,9 @@ physics_params = Dict{String,Any}(
     "k_a" => 1.0 / (40.0),
     "k_s" => 1.0 / (4.0),
     "k_f" => 1.0 / (1.0),
-    "ΔT_y" => 60.0,
+    "T_equator" => 294.0,
+    "T_stratosphere" => 200.0,
+    "ΔT_y" => 65.0,
     "Δθ_z" => 10.0,
 
     # TODO: cumulus parameterization

@@ -5,6 +5,52 @@ using ...Atmo_Data_Module
 using ...Dyn_Data_Module
 using ...Semi_Implicit_Module
 
+"""Persistent storage for the sequential gridpoint physics calculation."""
+struct Physics_Workspace
+    grid_u::Array{Float64,3}
+    grid_v::Array{Float64,3}
+    grid_t::Array{Float64,3}
+    grid_q::Array{Float64,3}
+    grid_lscale_t_tendency::Array{Float64,3}
+    grid_lscale_q_tendency::Array{Float64,3}
+    pbl::PBL_Workspace
+end
+
+function Physics_Workspace(nλ::Int, nθ::Int, nd::Int)
+    field() = zeros(Float64, nλ, nθ, nd)
+    return Physics_Workspace(
+        field(),
+        field(),
+        field(),
+        field(),
+        field(),
+        field(),
+        PBL_Workspace(nλ, nθ, nd),
+    )
+end
+
+function _physics_workspace!(
+    physics_params::Dict{String,Any},
+    atmo_data::Atmo_Data,
+)
+    workspace = get!(physics_params, "Physics_workspace") do
+        Physics_Workspace(atmo_data.nλ, atmo_data.nθ, atmo_data.nd)
+    end
+    workspace isa Physics_Workspace ||
+        error("physics_params[\"Physics_workspace\"] has an incompatible type")
+    size(workspace.grid_t) == (atmo_data.nλ, atmo_data.nθ, atmo_data.nd) ||
+        throw(DimensionMismatch("Physics_workspace does not match the model grid"))
+    return workspace
+end
+
+"""
+    Spectral_Physics!(config, mesh, vert_coord, atmo_data, dyn_data,
+                      semi_implicit, physics_params)
+
+Apply all physical parameterizations sequentially to a private working state,
+then expose one combined process-split tendency to the leapfrog dynamical core.
+The prognostic current grid and spectral states are never modified here.
+"""
 function Spectral_Physics!(
     config::Model_Config,
     mesh::Spectral_Spherical_Mesh,
@@ -14,217 +60,46 @@ function Spectral_Physics!(
     semi_implicit::Semi_Implicit_Solver,
     physics_params::Dict{String,Any},
 )
-
-    grid_δu, grid_δv, grid_δps, grid_δt =
-        dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δps, dyn_data.grid_δt
-    grid_u_p, grid_v_p, grid_t_p = dyn_data.grid_u_p, dyn_data.grid_v_p, dyn_data.grid_t_p
-    grid_p_half, grid_p_full = dyn_data.grid_p_half, dyn_data.grid_p_full
-    grid_t_eq = dyn_data.grid_t_eq
-    grid_lrf_tendency = dyn_data.grid_lrf_tendency
-    grid_bm_t_tendency = dyn_data.grid_bm_t_tendency
-    grid_bm_q_tendency = dyn_data.grid_bm_q_tendency
-    grid_bm_precip = dyn_data.grid_bm_precip
-
-    grid_δq = dyn_data.grid_δq
-    spe_δq = dyn_data.spe_δq
-
-    # Initialize all additive physics tendencies and diagnostics once per call.
-    grid_δu .= 0.0
-    grid_δv .= 0.0
-    grid_δps .= 0.0
-    grid_δt .= 0.0
-    spe_δq .= 0.0
-    grid_δq .= 0.0
-    grid_lrf_tendency .= 0.0
-    grid_bm_t_tendency .= 0.0
-    grid_bm_q_tendency .= 0.0
-    grid_bm_precip .= 0.0
-
-    #####################################################################################################
-    # spectral equation quantities
-    spe_lnps_p, spe_lnps_c, spe_lnps_n, spe_δlnps =
-        dyn_data.spe_lnps_p, dyn_data.spe_lnps_c, dyn_data.spe_lnps_n, dyn_data.spe_δlnps
-    spe_vor_p, spe_vor_c, spe_vor_n, spe_δvor =
-        dyn_data.spe_vor_p, dyn_data.spe_vor_c, dyn_data.spe_vor_n, dyn_data.spe_δvor
-    spe_div_p, spe_div_c, spe_div_n, spe_δdiv =
-        dyn_data.spe_div_p, dyn_data.spe_div_c, dyn_data.spe_div_n, dyn_data.spe_δdiv
-    spe_t_p, spe_t_c, spe_t_n, spe_δt =
-        dyn_data.spe_t_p, dyn_data.spe_t_c, dyn_data.spe_t_n, dyn_data.spe_δt
-
-    # grid quantities
-    grid_u_p, grid_u, grid_u_n = dyn_data.grid_u_p, dyn_data.grid_u_c, dyn_data.grid_u_n
-    grid_v_p, grid_v, grid_v_n = dyn_data.grid_v_p, dyn_data.grid_v_c, dyn_data.grid_v_n
-    grid_ps_p, grid_ps, grid_ps_n =
-        dyn_data.grid_ps_p, dyn_data.grid_ps_c, dyn_data.grid_ps_n
-    grid_t_p, grid_t_c, grid_t_n = dyn_data.grid_t_p, dyn_data.grid_t_c, dyn_data.grid_t_n
-
-    # related quanties
-    grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_p_half,
-    dyn_data.grid_lnp_half,
-    dyn_data.grid_p_full,
-    dyn_data.grid_lnp_full
-    grid_dλ_ps, grid_dθ_ps = dyn_data.grid_dλ_ps, dyn_data.grid_dθ_ps
-    grid_lnps = dyn_data.grid_lnps
-
-    grid_div, grid_absvor, grid_vor =
-        dyn_data.grid_div, dyn_data.grid_absvor, dyn_data.grid_vor
-    grid_w_full, grid_M_half = dyn_data.grid_w_full, dyn_data.grid_M_half
-    grid_geopots, grid_geopot_full, grid_geopot_half =
-        dyn_data.grid_geopots, dyn_data.grid_geopot_full, dyn_data.grid_geopot_half
-
-    grid_energy_full, spe_energy = dyn_data.grid_energy_full, dyn_data.spe_energy
-
-    # moisture pre-process
-    spe_q_n = dyn_data.spe_q_n
-    spe_q_c = dyn_data.spe_q_c
-    spe_q_p = dyn_data.spe_q_p
-
-    grid_q_n = dyn_data.grid_q_n
-    grid_q_c = dyn_data.grid_q_c
-    grid_q_p = dyn_data.grid_q_p
-
-    spe_δq = dyn_data.spe_δq
+    grid_δu = dyn_data.grid_δu
+    grid_δv = dyn_data.grid_δv
+    grid_δps = dyn_data.grid_δps
+    grid_δt = dyn_data.grid_δt
     grid_δq = dyn_data.grid_δq
 
-    grid_z_full = dyn_data.grid_z_full
-    grid_z_half = dyn_data.grid_z_half
+    # All tendency and per-step diagnostic arrays are overwritten once here.
+    fill!(grid_δu, 0.0)
+    fill!(grid_δv, 0.0)
+    fill!(grid_δps, 0.0)
+    fill!(grid_δt, 0.0)
+    fill!(grid_δq, 0.0)
+    fill!(dyn_data.spe_δq, 0.0)
+    fill!(dyn_data.grid_shflx, 0.0)
+    fill!(dyn_data.grid_lhflx, 0.0)
+    fill!(dyn_data.grid_precip, 0.0)
+    fill!(dyn_data.grid_liquid_water_content, 0.0)
+    fill!(dyn_data.grid_t_eq, 0.0)
+    fill!(dyn_data.grid_lrf_tendency, 0.0)
+    fill!(dyn_data.grid_bm_t_tendency, 0.0)
+    fill!(dyn_data.grid_bm_q_tendency, 0.0)
+    fill!(dyn_data.grid_bm_precip, 0.0)
 
-    grid_w_full = dyn_data.grid_w_full
+    workspace = _physics_workspace!(physics_params, atmo_data)
+    work_u = workspace.grid_u
+    work_v = workspace.grid_v
+    work_t = workspace.grid_t
+    work_q = workspace.grid_q
+    copyto!(work_u, dyn_data.grid_u_c)
+    copyto!(work_v, dyn_data.grid_v_c)
+    copyto!(work_t, dyn_data.grid_t_c)
+    copyto!(work_q, dyn_data.grid_q_c)
 
-    integrator = semi_implicit.integrator
-    Δt = Get_Δt(integrator)
+    effective_dt = Get_Δt(semi_implicit.integrator)
+    grid_p_half = dyn_data.grid_p_half
+    grid_p_full = dyn_data.grid_p_full
+    grid_ps = dyn_data.grid_ps_c
 
-    grid_shflx = dyn_data.grid_shflx
-    grid_lhflx = dyn_data.grid_lhflx
-
-    grid_liquid_water_content = dyn_data.grid_liquid_water_content
-    grid_precip = dyn_data.grid_precip
-    grid_precip .= 0.0
-    grid_liquid_water_content .= 0.0
-
-    grid_z_full = dyn_data.grid_z_full
-    grid_z_half = dyn_data.grid_z_half
-    grid_δq = dyn_data.grid_δq
-
-    K_E = dyn_data.K_E
-    ###############################################################################
-    # pressure difference
-    grid_Δp = dyn_data.grid_Δp
-    # temporary variables
-    grid_δQ = dyn_data.grid_d_full1
-
-    do_sensible = get(physics_params, "do_Sensible_Heating", false)
-    do_evaporation = get(physics_params, "do_Surface_Evaporation", false)
-    do_pbl_mixing = get(physics_params, "do_Implicit_PBL_Scheme", false)
-    lower_boundary_temperature = get(
-        physics_params,
-        "lower_boundary_temperature",
-        Default_Lower_Boundary_Temperature,
-    )
-    if do_sensible || do_evaporation || do_pbl_mixing
-        workspace = get!(physics_params, "PBL_workspace") do
-            PBL_Workspace(atmo_data.nλ, atmo_data.nθ, atmo_data.nd)
-        end
-        workspace = workspace::PBL_Workspace
-        V_c, za, rho = Calculate_V_c_za_rho!(
-            workspace,
-            atmo_data,
-            grid_p_half,
-            grid_p_full,
-            grid_ps,
-            grid_u,
-            grid_v,
-            grid_t_c,
-            grid_q_c,
-        )
-    end
-
-    # Surface sensible heat fluxes
-    if do_sensible
-        C_H = physics_params["C_H"]::Float64
-        Sensible_Heating!(
-            mesh,
-            atmo_data,
-            grid_t_c,
-            grid_shflx,
-            V_c,
-            za,
-            rho,
-            Δt,
-            C_H,
-            lower_boundary_temperature,
-        )
-        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-    end
-
-    # Surface latent heat fluxes
-    if do_evaporation && config.moisture_processes
-        C_E = physics_params["C_E"]::Float64
-        Surface_Evaporation!(
-            mesh,
-            atmo_data,
-            grid_ps,
-            grid_q_c,
-            grid_lhflx,
-            V_c,
-            za,
-            rho,
-            Δt,
-            C_E,
-            lower_boundary_temperature,
-        )
-        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-    end
-
-    # PBL mixing for temperature and moisture
-    if do_pbl_mixing
-        C_D = physics_params["C_D"]::Float64
-        Implicit_PBL_Mixing!(
-            atmo_data,
-            grid_p_full,
-            grid_p_half,
-            grid_t_c,
-            grid_q_c,
-            K_E,
-            V_c,
-            za,
-            rho,
-            physics_params,
-            Δt,
-            C_D,
-        )
-
-        Trans_Grid_To_Spherical!(mesh, grid_t_c, spe_t_c)
-        Trans_Spherical_To_Grid!(mesh, spe_t_c, grid_t_c)
-
-        Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-    end
-
-    # Held-Suarez
-    if get(physics_params, "do_HS_Forcing", false)
-        HS_Forcing!(
-            atmo_data,
-            Δt,
-            86400,
-            mesh.sinθ,
-            grid_u_p,
-            grid_v_p,
-            grid_p_half,
-            grid_p_full,
-            grid_t_p,
-            grid_δu,
-            grid_δv,
-            grid_t_eq,
-            grid_δt,
-            physics_params,
-        )
-    end
-
-    # Betts-Miller first, followed by large-scale condensation 
-    # diagnosed from the temporary post-convection state.
+    # Convection is followed by a grid-scale saturation cleanup. Both schemes
+    # update only the private working state and retain separate diagnostics.
     do_betts_miller = get(physics_params, "do_Betts_Miller", false)
     do_lscale_cond = get(physics_params, "do_Lscale_Cond", false)
     if do_betts_miller || do_lscale_cond
@@ -235,60 +110,167 @@ function Spectral_Physics!(
             haskey(physics_params, "BM_state") ||
                 error("BM_state was not initialized before time integration")
             bm_state = physics_params["BM_state"]::Betts_Miller_State
-            Δt <= bm_state.tau || throw(
+            effective_dt <= bm_state.tau || throw(
                 ArgumentError(
                     "Betts-Miller requires effective_dt <= bm_tau; " *
-                    "got $Δt s and $(bm_state.tau) s",
+                    "got $effective_dt s and $(bm_state.tau) s",
                 ),
             )
         else
             bm_state = nothing
         end
-        if do_lscale_cond
-            haskey(physics_params, "L") ||
-                error("large-scale condensation requires physics_params[\"L\"]")
-            heating_scale = physics_params["L"]
-        else
-            heating_scale = 1.0
-        end
 
+        heating_fraction = get(
+            physics_params,
+            "condensation_heating_fraction",
+            get(physics_params, "L", 1.0),
+        )
         Moist_Physics!(
             do_betts_miller,
             do_lscale_cond,
             bm_state,
-            heating_scale,
+            heating_fraction,
             atmo_data,
-            grid_t_c,
-            grid_q_c,
+            work_t,
+            work_q,
             grid_p_full,
             grid_p_half,
-            Δt,
-            grid_bm_t_tendency,
-            grid_bm_q_tendency,
-            grid_bm_precip,
-            dyn_data.grid_d_full1,
-            dyn_data.grid_d_full2,
-            grid_liquid_water_content,
-            grid_δt,
-            grid_δq,
-            grid_precip,
+            effective_dt,
+            dyn_data.grid_bm_t_tendency,
+            dyn_data.grid_bm_q_tendency,
+            dyn_data.grid_bm_precip,
+            workspace.grid_lscale_t_tendency,
+            workspace.grid_lscale_q_tendency,
+            dyn_data.grid_liquid_water_content,
+            dyn_data.grid_precip,
+        )
+    else
+        fill!(workspace.grid_lscale_t_tendency, 0.0)
+        fill!(workspace.grid_lscale_q_tendency, 0.0)
+    end
+
+    # Surface exchange and vertical mixing see the post-condensation state.
+    do_sensible = get(physics_params, "do_Sensible_Heating", false)
+    do_evaporation =
+        get(physics_params, "do_Surface_Evaporation", false) && config.moisture_processes
+    do_pbl_mixing = get(physics_params, "do_Implicit_PBL_Scheme", false)
+    if do_sensible || do_evaporation || do_pbl_mixing
+        surface_wind, surface_height, density = Calculate_V_c_za_rho!(
+            workspace.pbl,
+            atmo_data,
+            grid_p_half,
+            grid_p_full,
+            grid_ps,
+            work_u,
+            work_v,
+            work_t,
+            work_q,
+        )
+        lower_boundary_temperature = get(
+            physics_params,
+            "lower_boundary_temperature",
+            Default_Lower_Boundary_Temperature,
+        )
+
+        if do_sensible
+            Sensible_Heating!(
+                mesh,
+                atmo_data,
+                work_t,
+                dyn_data.grid_shflx,
+                surface_wind,
+                surface_height,
+                density,
+                effective_dt,
+                physics_params["C_H"]::Float64,
+                lower_boundary_temperature,
+            )
+        end
+        if do_evaporation
+            Surface_Evaporation!(
+                mesh,
+                atmo_data,
+                grid_ps,
+                work_q,
+                dyn_data.grid_lhflx,
+                surface_wind,
+                surface_height,
+                density,
+                effective_dt,
+                physics_params["C_E"]::Float64,
+                lower_boundary_temperature,
+            )
+        end
+        if do_pbl_mixing
+            Implicit_PBL_Mixing!(
+                atmo_data,
+                grid_p_full,
+                grid_p_half,
+                work_t,
+                work_q,
+                dyn_data.K_E,
+                surface_wind,
+                surface_height,
+                physics_params,
+                effective_dt,
+                physics_params["C_D"]::Float64,
+            )
+        end
+    else
+        fill!(dyn_data.K_E, 0.0)
+    end
+
+    # Rayleigh damping, including exact finite-step frictional heating, precedes
+    # the Newtonian relaxation so radiation sees the post-friction temperature.
+    if get(physics_params, "do_HS_Forcing", false)
+        Rayleigh_Friction!(
+            atmo_data,
+            effective_dt,
+            config.day_to_sec,
+            grid_p_half,
+            grid_p_full,
+            work_u,
+            work_v,
+            work_t,
+            physics_params,
+        )
+        Newtonian_Relaxation!(
+            atmo_data,
+            effective_dt,
+            config.day_to_sec,
+            mesh.sinθ,
+            grid_p_half,
+            grid_p_full,
+            work_t,
+            dyn_data.grid_t_eq,
+            physics_params,
         )
     end
 
-    # Linear response function for moisture-radiative feedback. 
-    # Diagnose it from the same current humidity state used by Betts-Miller.
+    # The moisture LRF is the final radiative contribution and therefore sees
+    # the humidity left by convection, condensation, surface exchange and PBL.
     if get(physics_params, "do_LRF", false)
         config.moisture_processes || error("LRF requires moisture_processes = true")
         haskey(physics_params, "LRF_state") ||
             error("LRF_state was not initialized before time integration")
-
         LRF!(
             physics_params["LRF_state"]::LRF_State,
-            grid_q_c,
-            grid_lrf_tendency,
+            work_q,
+            dyn_data.grid_lrf_tendency,
             config.day_to_sec,
         )
-        grid_δt .+= grid_lrf_tendency
+        @. work_t += effective_dt * dyn_data.grid_lrf_tendency
     end
 
+    # This telescoping state difference is the sole authoritative physics
+    # tendency. It includes each sequential process exactly once.
+    inv_effective_dt = 1.0 / Float64(effective_dt)
+    @. grid_δu = (work_u - dyn_data.grid_u_c) * inv_effective_dt
+    @. grid_δv = (work_v - dyn_data.grid_v_c) * inv_effective_dt
+    @. grid_δt = (work_t - dyn_data.grid_t_c) * inv_effective_dt
+    if config.moisture_processes
+        @. grid_δq = (work_q - dyn_data.grid_q_c) * inv_effective_dt
+    end
+
+    return nothing
 end

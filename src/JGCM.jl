@@ -67,6 +67,7 @@ using .Dyn_Data_Module
 export Dyn_Data
 
 using .Atmos_Param_Module
+export Physics_Workspace
 export LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Betts_Miller_Saturation_Vapor_Pressure

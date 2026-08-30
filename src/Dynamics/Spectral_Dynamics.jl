@@ -134,7 +134,7 @@ end
         mean_ps_p, grid_ps_n, spe_lnps_n, 
         mean_energy_p, grid_energy_temp, 
         grid_u_n, grid_v_n, grid_t_n, spe_t_n,
-        mean_moisture_p, grid_q_n
+        mean_moisture_p, grid_q_n, spe_q_n
     )
 
 Adjusts the updated atmospheric state fields (grid_*_n) to strictly enforce global 
@@ -159,6 +159,7 @@ multiplicatively for mass and moisture, and additively for temperature (energy).
     
     - mean_moisture_p: Target global moisture integral.
     - grid_q_n: Updated specific humidity field at (t+Δt). Modified in-place.
+    - spe_q_n: Spectral coefficients of specific humidity. Modified in-place.
 
 ### Returns
     - nothing
@@ -169,6 +170,7 @@ multiplicatively for mass and moisture, and additively for temperature (energy).
     - grid_t_n
     - spe_t_n
     - grid_q_n
+    - spe_q_n
 
 """
 function Compute_Corrections!(
@@ -186,6 +188,7 @@ function Compute_Corrections!(
     spe_t_n::Array{ComplexF64,3},
     mean_moisture_p::Float64,
     grid_q_n::Array{Float64,3},
+    spe_q_n::Array{ComplexF64,3},
 )
 
     do_mass_correction, do_energy_correction, do_water_correction =
@@ -218,12 +221,42 @@ function Compute_Corrections!(
     end
 
     if (do_water_correction)
+        isfinite(mean_moisture_p) && mean_moisture_p >= 0.0 ||
+            throw(
+                DomainError(
+                    mean_moisture_p,
+                    "target atmospheric water must be finite and non-negative",
+                ),
+            )
+
         grid_q_n[grid_q_n.<0.0] .= 0.0
-        mean_moisture_n =
-            Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n)
-        grid_q_n .*= mean_moisture_p ./ mean_moisture_n
-        mean_moisture_n =
-            Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_n, grid_ps_n)
+
+        # Clipping is nonlinear and creates scales beyond the spectral
+        # truncation. Project it first, then make the grid field authoritative
+        # to the retained spectral modes before enforcing the global integral.
+        Trans_Grid_To_Spherical!(mesh, grid_q_n, spe_q_n)
+        Trans_Spherical_To_Grid!(mesh, spe_q_n, grid_q_n)
+
+        if iszero(mean_moisture_p)
+            grid_q_n .= 0.0
+            spe_q_n .= 0.0
+        else
+            mean_moisture_n = Mass_Weighted_Global_Integral(
+                vert_coord,
+                mesh,
+                atmo_data,
+                grid_q_n,
+                grid_ps_n,
+            )
+            isfinite(mean_moisture_n) && mean_moisture_n > 0.0 ||
+                error(
+                    "Cannot apply water correction: predicted atmospheric water is non-positive",
+                )
+
+            water_correction_factor = mean_moisture_p / mean_moisture_n
+            grid_q_n .*= water_correction_factor
+            spe_q_n .*= water_correction_factor
+        end
     end
 
 end
@@ -798,6 +831,7 @@ function Spectral_Dynamics!(
         spe_t_n,
         mean_moisture_p,
         grid_q_n,
+        spe_q_n,
     )
     # --- Conservation Fixer --- #
 
@@ -1048,7 +1082,7 @@ function Initialize_Analytic_Moisture!(
         throw(ArgumentError("initial_humidity_floor must satisfy 0 <= q < 1"))
     qv0 = 0.018
     θc = mesh.θc # lat
-    phi_hw = 2 * pi / 9 * deg2rad(40)
+    phi_hw = 2 * pi / 9
     p_hw = 30000.0
     phi = LinRange(-90, 90, nθ)
     p0 = 100000.0

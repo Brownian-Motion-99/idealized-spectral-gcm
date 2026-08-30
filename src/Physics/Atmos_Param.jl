@@ -16,7 +16,7 @@ include("Lower_Boundary_Temperature.jl")
 include("PBL.jl")
 include("Spectral_Physics_Interface.jl")
 
-export Spectral_Physics!, LRF_State, Load_LRF_State, LRF!
+export Spectral_Physics!, Physics_Workspace, LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Betts_Miller_Saturation_Vapor_Pressure
 export PBL_Workspace

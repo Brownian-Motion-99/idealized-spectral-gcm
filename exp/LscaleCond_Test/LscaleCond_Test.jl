@@ -26,7 +26,7 @@ physics_params = Dict{String,Any}(
 
     # Grid scale condensation — spatially varying efficiency
     "do_Lscale_Cond" => true,
-    "L" => L_field,
+    "condensation_heating_fraction" => L_field,
 
     # PBL fluxes
     "do_Sensible_Heating" => true,

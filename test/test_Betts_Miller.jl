@@ -285,7 +285,7 @@ end
         "do_HS_Forcing" => false,
         "do_Betts_Miller" => true,
         "BM_state" => bm_state,
-        "L" => 0.2,
+        "condensation_heating_fraction" => 0.2,
         "do_LRF" => true,
         "LRF_state" => lrf_state,
     )
@@ -318,23 +318,46 @@ end
         physics_params = params,
     )
 
+    current_t = copy(dyn.grid_t_c)
+    current_q = copy(dyn.grid_q_c)
+    current_u = copy(dyn.grid_u_c)
+    current_v = copy(dyn.grid_v_c)
+    current_spe_t = copy(dyn.spe_t_c)
+    current_spe_q = copy(dyn.spe_q_c)
+
     JGCM.Atmos_Param_Module.Spectral_Physics!(config, mesh, vert, atmo, dyn, semi, params)
+    workspace = params["Physics_workspace"]::Physics_Workspace
     @test dyn.grid_δt ≈ dyn.grid_bm_t_tendency + dyn.grid_lrf_tendency
     @test dyn.grid_δq ≈ dyn.grid_bm_q_tendency
     @test dyn.grid_precip ≈ dyn.grid_bm_precip
-    @test dyn.grid_lrf_tendency ≈ 2.0 .* dyn.grid_q_c ./ config.day_to_sec
+    @test dyn.grid_lrf_tendency ≈ 2.0 .* workspace.grid_q ./ config.day_to_sec
     @test !isapprox(dyn.grid_lrf_tendency, 2.0 .* dyn.grid_q_p ./ config.day_to_sec)
+    @test 600.0 .* dyn.grid_δt ≈ workspace.grid_t .- current_t
+    @test 600.0 .* dyn.grid_δq ≈ workspace.grid_q .- current_q
+    @test dyn.grid_t_c == current_t
+    @test dyn.grid_q_c == current_q
+    @test dyn.grid_u_c == current_u
+    @test dyn.grid_v_c == current_v
+    @test dyn.spe_t_c == current_spe_t
+    @test dyn.spe_q_c == current_spe_q
 
     params["do_Lscale_Cond"] = true
     JGCM.Atmos_Param_Module.Spectral_Physics!(config, mesh, vert, atmo, dyn, semi, params)
     @test all(isfinite, dyn.grid_δt)
     @test all(isfinite, dyn.grid_δq)
     @test all(dyn.grid_precip .>= dyn.grid_bm_precip)
-    @test dyn.grid_δt ≈ dyn.grid_bm_t_tendency + dyn.grid_d_full1 + dyn.grid_lrf_tendency
-    @test dyn.grid_δq ≈ dyn.grid_bm_q_tendency + dyn.grid_d_full2
+    @test dyn.grid_δt ≈
+          dyn.grid_bm_t_tendency + workspace.grid_lscale_t_tendency +
+          dyn.grid_lrf_tendency
+    @test dyn.grid_δq ≈
+          dyn.grid_bm_q_tendency + workspace.grid_lscale_q_tendency
+    @test dyn.grid_lrf_tendency ≈ 2.0 .* workspace.grid_q ./ config.day_to_sec
+    @test 600.0 .* dyn.grid_δt ≈ workspace.grid_t .- current_t
+    @test 600.0 .* dyn.grid_δq ≈ workspace.grid_q .- current_q
+    @test dyn.grid_t_c == current_t
+    @test dyn.grid_q_c == current_q
 
-    # The combined additive tendencies must survive a complete dynamics update;
-    # in particular, the Physics scratch fields are safe to reuse in dynamics.
+    # The combined additive tendencies must survive a complete dynamics update.
     JGCM.Spectral_Dynamics_Module.Spectral_Dynamics!(config, mesh, vert, atmo, dyn, semi)
     @test all(isfinite, dyn.grid_t_c)
     @test all(isfinite, dyn.grid_q_c)

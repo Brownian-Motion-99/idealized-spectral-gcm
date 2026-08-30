@@ -6,7 +6,8 @@ using ..Dyn_Data_Module
 using ..Experiment_Configuration
 using ..Variable_Mappings_Module
 using ..Vert_Coordinate_Module
-using ..Spectral_Dynamics_Module: Spectral_Initialize_Fields!, Get_Topography!
+using ..Press_And_Geopot_Module: Pressure_Variables!
+using ..Spectral_Dynamics_Module: Get_Topography!
 using ..Restart_Manager_Module
 
 export Initialize_Atmos_State!
@@ -145,8 +146,8 @@ function Dispatch_Standard_IC!(
     elseif ic_name == :Shallow_Water_Test
         Init_Shallow_Water_Test!(mesh, dyn_data, config)
 
-    elseif ic_name == :Moist_Spinup || ic_name == :Polvani_Test
-        Init_3D_Standard!(mesh, atmo_data, dyn_data, vert_coord, config)
+    elseif ic_name == :Moist_Spinup
+        Init_Moist_Aquaplanet!(mesh, atmo_data, dyn_data, vert_coord, config)
 
     else
         error("Unknown Benchmark IC: $ic_name")
@@ -263,35 +264,268 @@ function Init_Shallow_Water_Test!(
 end
 
 # ==============================================================================
-# 3. 3D Primitive Equation Initialization
-#    (Logic extracted from exp/HSMoistt42/HS_Moist_Physics.jl)
+# 3. Moist Held--Suarez aquaplanet initialization
+#
+# Thatcher and Jablonowski (2016), Appendix A, use the shallow-atmosphere
+# balanced state of Ullrich et al. (2014), with their analytic humidity profile.
+# Pressure-coordinate models must first invert the balanced pressure relation to
+# obtain the height corresponding to each (latitude, pressure) point.
 # ==============================================================================
-function Init_3D_Standard!(
+
+const MOIST_AQUAPLANET_P0 = 1.0e5
+const MOIST_AQUAPLANET_GAMMA = 0.005
+const MOIST_AQUAPLANET_B = 2.0
+const MOIST_AQUAPLANET_K = 3.0
+const MOIST_AQUAPLANET_T_EQUATOR = 310.0
+const MOIST_AQUAPLANET_T_POLE = 240.0
+
+"""Return the Ullrich shallow-atmosphere basic state at `(latitude, pressure)`."""
+function Ullrich_Shallow_Basic_State(
+    atmo_data::Atmo_Data,
+    latitude::Float64,
+    pressure::Float64,
+)
+    pressure > 0.0 || throw(DomainError(pressure, "initial pressure must be positive"))
+
+    rdgas = atmo_data.rdgas
+    grav = atmo_data.grav
+    radius = atmo_data.radius
+    omega = atmo_data.omega
+
+    Γ = MOIST_AQUAPLANET_GAMMA
+    b = MOIST_AQUAPLANET_B
+    k = MOIST_AQUAPLANET_K
+    te = MOIST_AQUAPLANET_T_EQUATOR
+    tp = MOIST_AQUAPLANET_T_POLE
+    t0 = 0.5 * (te + tp)
+    scale_height = rdgas * t0 / grav
+
+    A = 1.0 / Γ
+    B = (te - tp) / ((te + tp) * tp)
+    C = 0.5 * (k + 2) * (te - tp) / (te * tp)
+
+    coslat = cos(latitude)
+    latitude_factor = coslat^k - (k / (k + 2)) * coslat^(k + 2)
+
+    # Ullrich et al. (2014), Appendix C.2, equations (40), (43), and
+    # (44). A hypsometric estimate is a more reliable initial guess than the
+    # fixed 10 km value suggested in the paper.
+    z = max(0.0, -(rdgas * t0 / grav) * log(pressure / MOIST_AQUAPLANET_P0))
+    for _ = 1:12
+        scaled_z = z / (b * scale_height)
+        gaussian = exp(-scaled_z^2)
+        integral_tau1 = A * (exp(Γ * z / t0) - 1.0) + B * z * gaussian
+        integral_tau2 = C * z * gaussian
+        residual =
+            log(pressure / MOIST_AQUAPLANET_P0) +
+            (grav / rdgas) * (integral_tau1 - integral_tau2 * latitude_factor)
+
+        tau1 =
+            (1.0 / t0) * exp(Γ * z / t0) +
+            B * (1.0 - 2.0 * scaled_z^2) * gaussian
+        tau2 = C * (1.0 - 2.0 * scaled_z^2) * gaussian
+        derivative = (grav / rdgas) * (tau1 - tau2 * latitude_factor)
+        step = residual / derivative
+        z -= step
+        abs(step) <= 1.0e-9 * max(1.0, z) && break
+    end
+
+    scaled_z = z / (b * scale_height)
+    gaussian = exp(-scaled_z^2)
+    tau1 =
+        (1.0 / t0) * exp(Γ * z / t0) +
+        B * (1.0 - 2.0 * scaled_z^2) * gaussian
+    tau2 = C * (1.0 - 2.0 * scaled_z^2) * gaussian
+    virtual_temperature = 1.0 / (tau1 - tau2 * latitude_factor)
+
+    integral_tau2 = C * z * gaussian
+    wind_proxy =
+        (grav * k / radius) *
+        integral_tau2 *
+        (coslat^(k - 1) - coslat^(k + 1)) *
+        virtual_temperature
+    rotation_speed = omega * radius * coslat
+    zonal_wind =
+        -rotation_speed +
+        sqrt(max(0.0, rotation_speed^2 + radius * coslat * wind_proxy))
+
+    return (; height=z, virtual_temperature, zonal_wind)
+end
+
+"""Return the rotational wind perturbation from Ullrich et al. (2014)."""
+function Ullrich_Wind_Perturbation(
+    atmo_data::Atmo_Data,
+    longitude::Float64,
+    latitude::Float64,
+    height::Float64,
+)
+    perturbation_top = 1.5e4
+    (0.0 <= height <= perturbation_top) || return (u=0.0, v=0.0)
+
+    center_lon = pi / 9.0
+    center_lat = 2.0 * pi / 9.0
+    angular_radius = 1.0 / 6.0
+    amplitude = 1.0
+
+    central_angle = acos(
+        clamp(
+            sin(center_lat) * sin(latitude) +
+            cos(center_lat) * cos(latitude) * cos(longitude - center_lon),
+            -1.0,
+            1.0,
+        ),
+    )
+    central_angle <= angular_radius || return (u=0.0, v=0.0)
+    abs(sin(central_angle)) > 1.0e-14 || return (u=0.0, v=0.0)
+
+    vertical_fraction = height / perturbation_top
+    taper = 1.0 - 3.0 * vertical_fraction^2 + 2.0 * vertical_fraction^3
+    horizontal_phase = pi * central_angle / (2.0 * angular_radius)
+    factor =
+        (16.0 * amplitude / (3.0 * sqrt(3.0))) *
+        taper *
+        cos(horizontal_phase)^3 *
+        sin(horizontal_phase) /
+        sin(central_angle)
+
+    u =
+        -factor *
+        (-sin(center_lat) * cos(latitude) +
+         cos(center_lat) * sin(latitude) * cos(longitude - center_lon))
+    v = factor * cos(center_lat) * sin(longitude - center_lon)
+    return (; u, v)
+end
+
+"""
+    Init_Moist_Aquaplanet!(mesh, atmo_data, dyn_data, vert_coord, config)
+
+Initialize the moist Held--Suarez experiment from the balanced shallow-atmosphere
+baroclinic-wave state prescribed in Appendix A of Thatcher and Jablonowski
+(2016). The dry analytic temperature is virtual temperature; actual temperature
+is therefore obtained using the model's own water-vapor gas constant.
+"""
+function Init_Moist_Aquaplanet!(
     mesh::Spectral_Spherical_Mesh,
     atmo_data::Atmo_Data,
     dyn_data::Dyn_Data,
     vert_coord::Vert_Coordinate,
     config::Model_Config,
 )
-    # Default Reference Values
-    sea_level_ps_ref = 1.0e5
-    init_t = 264.0
-
-    # 1. Set Topography (usually flat for HS, but function handles it)
     Get_Topography!(dyn_data.grid_geopots)
 
-    # 2. Call Standard Spectral Initialization
-    # This sets up T, lnps, and adds small perturbations to break symmetry
-    Spectral_Initialize_Fields!(
-        config,
-        mesh,
+    dyn_data.grid_lnps .= log(MOIST_AQUAPLANET_P0)
+    dyn_data.grid_ps_c .= MOIST_AQUAPLANET_P0
+    Pressure_Variables!(
         vert_coord,
-        atmo_data,
-        dyn_data,
-        sea_level_ps_ref,
-        init_t,
-        dyn_data.grid_geopots,
+        dyn_data.grid_ps_c,
+        dyn_data.grid_p_half,
+        dyn_data.grid_Δp,
+        dyn_data.grid_lnp_half,
+        dyn_data.grid_p_full,
+        dyn_data.grid_lnp_full,
     )
+
+    moisture_coefficient = atmo_data.rvgas / atmo_data.rdgas - 1.0
+    humidity_floor = Float64(get(config.physics_params, "initial_humidity_floor", 0.0))
+    0.0 <= humidity_floor < 1.0 ||
+        throw(ArgumentError("initial_humidity_floor must satisfy 0 <= q < 1"))
+
+    for k = 1:mesh.nd, j = 1:mesh.nθ, i = 1:mesh.nλ
+        longitude = mesh.λc[i]
+        latitude = mesh.θc[j]
+        pressure = dyn_data.grid_p_full[i, j, k]
+        basic_state = Ullrich_Shallow_Basic_State(atmo_data, latitude, pressure)
+        perturbation =
+            Ullrich_Wind_Perturbation(atmo_data, longitude, latitude, basic_state.height)
+
+        q = 0.0
+        if config.moisture_processes
+            if pressure >= 1.0e4
+                q =
+                    0.018 *
+                    exp(-(latitude / (2.0 * pi / 9.0))^4) *
+                    exp(-(((pressure / MOIST_AQUAPLANET_P0 - 1.0) *
+                           MOIST_AQUAPLANET_P0 / 3.0e4)^2))
+                q = max(q, humidity_floor)
+            end
+        end
+
+        dyn_data.grid_q_c[i, j, k] = q
+        dyn_data.grid_u_c[i, j, k] = basic_state.zonal_wind + perturbation.u
+        dyn_data.grid_v_c[i, j, k] = perturbation.v
+    end
+
+    # Store only states representable at the configured spectral truncation.
+    Trans_Grid_To_Spherical!(mesh, dyn_data.grid_lnps, dyn_data.spe_lnps_c)
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_lnps_c, dyn_data.grid_lnps)
+    dyn_data.grid_ps_c .= exp.(dyn_data.grid_lnps)
+
+    if config.moisture_processes
+        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_c, dyn_data.spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_c, dyn_data.grid_q_c)
+
+        # The steep meridional profile can acquire small negative lobes when it
+        # is truncated in spherical harmonics. Add only the level-dependent
+        # constant needed to cancel that undershoot. Unlike a fixed humidity
+        # floor, this does not create a spuriously moist upper troposphere.
+        for k = 1:mesh.nd
+            if dyn_data.grid_p_full[1, 1, k] >= 1.0e4
+                q_min = minimum(@view dyn_data.grid_q_c[:, :, k])
+                if q_min < 0.0
+                    @view(dyn_data.grid_q_c[:, :, k]) .-= q_min
+                end
+            end
+        end
+        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_c, dyn_data.spe_q_c)
+        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_c, dyn_data.grid_q_c)
+    else
+        dyn_data.grid_q_c .= 0.0
+        dyn_data.spe_q_c .= 0.0
+    end
+
+    # Use the spectrally representable humidity when converting virtual
+    # temperature to actual temperature. This preserves the intended pressure
+    # gradient balance more closely than converting the unfiltered q field.
+    for k = 1:mesh.nd, j = 1:mesh.nθ, i = 1:mesh.nλ
+        basic_state = Ullrich_Shallow_Basic_State(
+            atmo_data,
+            mesh.θc[j],
+            dyn_data.grid_p_full[i, j, k],
+        )
+        dyn_data.grid_t_c[i, j, k] =
+            basic_state.virtual_temperature /
+            (1.0 + moisture_coefficient * dyn_data.grid_q_c[i, j, k])
+    end
+    Trans_Grid_To_Spherical!(mesh, dyn_data.grid_t_c, dyn_data.spe_t_c)
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_t_c, dyn_data.grid_t_c)
+
+    Vor_Div_From_Grid_UV!(
+        mesh,
+        dyn_data.grid_u_c,
+        dyn_data.grid_v_c,
+        dyn_data.spe_vor_c,
+        dyn_data.spe_div_c,
+    )
+    UV_Grid_From_Vor_Div!(
+        mesh,
+        dyn_data.spe_vor_c,
+        dyn_data.spe_div_c,
+        dyn_data.grid_u_c,
+        dyn_data.grid_v_c,
+    )
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_vor_c, dyn_data.grid_vor)
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_div_c, dyn_data.grid_div)
+
+    dyn_data.spe_vor_p .= dyn_data.spe_vor_c
+    dyn_data.spe_div_p .= dyn_data.spe_div_c
+    dyn_data.spe_lnps_p .= dyn_data.spe_lnps_c
+    dyn_data.spe_t_p .= dyn_data.spe_t_c
+    dyn_data.spe_q_p .= dyn_data.spe_q_c
+    dyn_data.grid_u_p .= dyn_data.grid_u_c
+    dyn_data.grid_v_p .= dyn_data.grid_v_c
+    dyn_data.grid_ps_p .= dyn_data.grid_ps_c
+    dyn_data.grid_t_p .= dyn_data.grid_t_c
+    dyn_data.grid_q_p .= dyn_data.grid_q_c
 end
 
 end
