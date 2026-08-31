@@ -6,31 +6,28 @@ using ...Spectral_Spherical_Mesh_Module
 struct PBL_Workspace
     V_c::Matrix{Float64}
     za::Matrix{Float64}
-    rho::Array{Float64,3}
 end
 
-PBL_Workspace(nλ::Int, nθ::Int, nd::Int) =
-    PBL_Workspace(zeros(nλ, nθ), zeros(nλ, nθ), zeros(nλ, nθ, nd))
+PBL_Workspace(nλ::Int, nθ::Int) =
+    PBL_Workspace(zeros(nλ, nθ), zeros(nλ, nθ))
 
 
 """
-    Calculate_V_c_za_rho!(
+    Calculate_V_c_za!(
         workspace,
         atmo_data,
-        grid_p_half, grid_p_full, grid_ps,
+        grid_p_half, grid_ps,
         grid_u, grid_v,
         grid_t, grid_q
     )
 
-Calculates the surface wind speed (V_c), the height of the lowest model layer (za), 
-and the air density profile (ρ) needed for bulk aerodynamic flux calculations and 
-vertical diffusion.
+Calculates the surface wind speed (`V_c`) and hydrostatic height of the lowest
+model level (`za`) needed by the MITC bulk tendencies.
 
 ### Parameters
     - atmo_data: Structure containing physical constants (R_d, g).
     
     - grid_p_half: Pressure at layer interfaces [nλ, nθ, nd+1].
-    - grid_p_full: Pressure at layer centers [nλ, nθ, nd].
     - grid_ps: Surface pressure [nλ, nθ, 1].
     
     - grid_u, grid_v: Zonal and meridional wind components [nλ, nθ, nd].
@@ -43,14 +40,11 @@ vertical diffusion.
     - za: Geometric height of the lowest model level (anemometer height proxy) [nλ, nθ],
       calculated from the surface pressure and the interface above the lowest layer
       following Thatcher and Jablonowski (2016), Eq. (12).
-    - rho: Air density at layer centers [nλ, nθ, nd].
-
 """
-function Calculate_V_c_za_rho!(
+function Calculate_V_c_za!(
     workspace::PBL_Workspace,
     atmo_data::Atmo_Data,
     grid_p_half::Array{Float64,3},
-    grid_p_full::Array{Float64,3},
     grid_ps::Array{Float64,3},
     grid_u::Array{Float64,3},
     grid_v::Array{Float64,3},
@@ -62,9 +56,7 @@ function Calculate_V_c_za_rho!(
     Rd, grav = atmo_data.rdgas::Float64, atmo_data.grav::Float64
 
     Rd_g = Rd / grav
-    inv_Rd = 1.0 / Rd
-
-    V_c, za, rho = workspace.V_c, workspace.za, workspace.rho
+    V_c, za = workspace.V_c, workspace.za
 
     @threads for j = 1:nθ
         for i = 1:nλ
@@ -90,20 +82,10 @@ function Calculate_V_c_za_rho!(
             tvs = ts_val * tv_factor
             za[i, j] = Rd_g * tvs * log(ps_val / p_above_val) * 0.5
 
-            # Density uses the virtual temperature of each level, not the
-            # lowest-level humidity for the entire column.
-            for k = 1:nd
-                p_full_val = grid_p_full[i, j, k]
-                t_val = grid_t[i, j, k]
-                q_val = grid_q[i, j, k]
-                tv_factor_k = 1.0 + 0.608 * q_val
-                rho[i, j, k] = p_full_val * inv_Rd / (t_val * tv_factor_k)
-            end
-
         end
     end
 
-    return V_c, za, rho
+    return V_c, za
 end
 
 
@@ -111,7 +93,7 @@ end
 """
     Sensible_Heating!(
         mesh, atmo_data,
-        grid_t, grid_shflx,
+        grid_p_half, grid_t, grid_shflx,
         V_c, za,
         Δt, 
         C_H,
@@ -125,13 +107,14 @@ temperature, ensuring stability without restricting the model time step.
 ### Parameters
     - mesh: Spectral mesh properties (provides longitude λc and latitude θc).
     - atmo_data: Atmospheric constants (cₚ, nλ, nθ).
+    - grid_p_half: Layer-interface pressures used to obtain the exact mass
+      `Δp_bottom/g` of the lowest model layer.
     
     - grid_t: Temperature field [nλ, nθ, nd]. Modified in-place (lowest level updated).
     - grid_shflx: Output sensible heat flux [nλ, nθ, 1] in W/m². Modified in-place.
     
     - V_c: Surface wind speed magnitude [nλ, nθ].
     - za: Height of the lowest model level [nλ, nθ].
-    - rho: Air density at the lowest model level [nλ, nθ, nd].
     
     - Δt: Physics time step.
     
@@ -150,11 +133,11 @@ temperature, ensuring stability without restricting the model time step.
 function Sensible_Heating!(
     mesh::Spectral_Spherical_Mesh,
     atmo_data::Atmo_Data,
+    grid_p_half::Array{Float64,3},
     grid_t::Array{Float64,3},
     grid_shflx::Array{Float64,3},
     V_c::Array{Float64,2},
     za::Array{Float64,2},
-    rho::Array{Float64,3},
     Δt::Int64,
     C_H::Float64 = 0.0044,
     lower_boundary_temperature = Default_Lower_Boundary_Temperature,
@@ -162,7 +145,10 @@ function Sensible_Heating!(
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
     cp = atmo_data.cp_air::Float64
+    grav = atmo_data.grav::Float64
     λc, θc = mesh.λc, mesh.θc
+    size(grid_p_half) == (nλ, nθ, nd + 1) ||
+        throw(DimensionMismatch("sensible-heating p_half has incorrect size"))
 
     @threads for j = 1:nθ
 
@@ -179,12 +165,14 @@ function Sensible_Heating!(
             t_new = (t_old + lambda * surface_temperature) / (1 + lambda)
             grid_t[i, j, nd] = t_new
 
-            # Back-calculate sensible heat flux (W/m^2)
-            # energy diff. = mass of Col. * cp * dT
-            # mass of Col. ≈ rho * za
-            # Flux = energy diff. / Δt ≈ rho * za * cp * dT / Δt
+            # Diagnose the exact finite-volume atmospheric energy increment.
+            # The MITC tendency still uses za; only its reported flux uses the
+            # actual pressure-coordinate mass of the bottom model layer.
+            Δp_bottom = grid_p_half[i, j, nd+1] - grid_p_half[i, j, nd]
+            isfinite(Δp_bottom) && Δp_bottom > 0.0 ||
+                throw(DomainError(Δp_bottom, "bottom-layer pressure thickness must be positive"))
             grid_shflx[i, j, 1] =
-                rho[i, j, nd] * za[i, j] * cp * (t_new - t_old) / Float64(Δt)
+                (Δp_bottom / grav) * cp * (t_new - t_old) / Float64(Δt)
 
         end
 
@@ -197,9 +185,9 @@ end
 """
     Surface_Evaporation!(
         mesh, atmo_data,
-        grid_ps,
+        grid_ps, grid_p_half,
         grid_q, grid_lhflx,
-        V_c, za, rho,
+        V_c, za,
         Δt, 
         C_E,
         lower_boundary_temperature
@@ -214,13 +202,14 @@ and enforces a "no-dew" condition (evaporation only).
     - atmo_data: Atmospheric constants (Lᵥ, Rᵥ, etc.).
     
     - grid_ps: Surface pressure [nλ, nθ, 1].
+    - grid_p_half: Layer-interface pressures used to obtain the exact mass
+      `Δp_bottom/g` of the lowest model layer.
     
     - grid_q: Specific humidity field [nλ, nθ, nd]. Modified in-place (lowest level updated).
     - grid_lhflx: Output latent heat flux [nλ, nθ, 1] in W/m². Modified in-place.
     
     - V_c: Surface wind speed magnitude [nλ, nθ].
     - za: Height of the lowest model level [nλ, nθ].
-    - rho: Air density at the lowest model level [nλ, nθ, nd].
     
     - Δt: Physics time step.
     
@@ -240,11 +229,11 @@ function Surface_Evaporation!(
     mesh::Spectral_Spherical_Mesh,
     atmo_data::Atmo_Data,
     grid_ps::Array{Float64,3},
+    grid_p_half::Array{Float64,3},
     grid_q::AbstractArray{Float64,3},
     grid_lhflx::Array{Float64,3},
     V_c::Array{Float64,2},
     za::Array{Float64,2},
-    rho::Array{Float64,3},
     Δt::Int64,
     C_E::Float64 = 0.0044,
     lower_boundary_temperature = Default_Lower_Boundary_Temperature,
@@ -252,8 +241,11 @@ function Surface_Evaporation!(
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
     Lv = atmo_data.Lv::Float64
+    grav = atmo_data.grav::Float64
     epsilon = atmo_data.rdgas / atmo_data.rvgas
     λc, θc = mesh.λc, mesh.θc
+    size(grid_p_half) == (nλ, nθ, nd + 1) ||
+        throw(DimensionMismatch("surface-evaporation p_half has incorrect size"))
 
     @threads for j = 1:nθ
 
@@ -278,12 +270,14 @@ function Surface_Evaporation!(
             q_new = (q_old + lambda * q_target) / (1 + lambda)
             grid_q[i, j, nd] = q_new
 
-            # Back-calculate latent heat flux (W/m^2)
-            # water mass diff. per unit area = q diff. * mass of col.
-            # mass of col. ≈ rho * za
-            # Flux = q diff. * mass of col. * Lv / Δt ≈ q diff. * rho * za * Lv / Δt
+            # Diagnose the exact finite-volume atmospheric water increment in
+            # latent-energy units. Dry_Air_Adjustment! subsequently preserves
+            # this pre-adjustment layer-water amount exactly.
+            Δp_bottom = grid_p_half[i, j, nd+1] - grid_p_half[i, j, nd]
+            isfinite(Δp_bottom) && Δp_bottom > 0.0 ||
+                throw(DomainError(Δp_bottom, "bottom-layer pressure thickness must be positive"))
             grid_lhflx[i, j, 1] =
-                (q_new - q_old) * rho[i, j, nd] * za[i, j] * Lv / Float64(Δt)
+                (q_new - q_old) * (Δp_bottom / grav) * Lv / Float64(Δt)
 
         end
 

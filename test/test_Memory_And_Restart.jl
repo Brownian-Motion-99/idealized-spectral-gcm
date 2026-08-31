@@ -106,20 +106,18 @@ end
         mesh.sinθ;
         radius = 6.371e6,
     )
-    workspace = JGCM.Atmos_Param_Module.PBL_Workspace(64, 32, 2)
+    workspace = JGCM.Atmos_Param_Module.PBL_Workspace(64, 32)
     p_half = fill(90_000.0, 64, 32, 3)
-    p_full = fill(85_000.0, 64, 32, 2)
     ps = fill(100_000.0, 64, 32, 1)
     u = fill(3.0, 64, 32, 2)
     v = fill(4.0, 64, 32, 2)
     t = fill(280.0, 64, 32, 2)
     q = fill(0.01, 64, 32, 2)
 
-    V_c, za, rho = JGCM.Atmos_Param_Module.Calculate_V_c_za_rho!(
+    V_c, za = JGCM.Atmos_Param_Module.Calculate_V_c_za!(
         workspace,
         atmo,
         p_half,
-        p_full,
         ps,
         u,
         v,
@@ -128,8 +126,6 @@ end
     )
     @test V_c === workspace.V_c
     @test za === workspace.za
-    @test rho === workspace.rho
     @test all(V_c .== 5.0)
     @test all(isfinite, za)
-    @test all(isfinite, rho)
 end

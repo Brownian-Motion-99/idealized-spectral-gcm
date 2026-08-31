@@ -35,7 +35,7 @@ function Physics_Workspace(nλ::Int, nθ::Int, nd::Int)
         field(), field(), column(),
         field(), field(), field(), column(),
         column(), column(), field(),
-        PBL_Workspace(nλ, nθ, nd),
+        PBL_Workspace(nλ, nθ),
     )
 end
 
@@ -191,22 +191,22 @@ function Spectral_Physics!(
         end
 
         if do_sensible || do_evaporation || do_pbl_mixing
-            surface_wind, surface_height, density = Calculate_V_c_za_rho!(
-                workspace.pbl, atmo_data, grid_p_half, grid_p_full, grid_ps,
+            surface_wind, surface_height = Calculate_V_c_za!(
+                workspace.pbl, atmo_data, grid_p_half, grid_ps,
                 work_u, work_v, work_t, work_q,
             )
             if do_sensible
                 Sensible_Heating!(
-                    mesh, atmo_data, work_t, workspace.grid_shflx, surface_wind,
-                    surface_height, density, physics_dt,
+                    mesh, atmo_data, grid_p_half, work_t, workspace.grid_shflx,
+                    surface_wind, surface_height, physics_dt,
                     physics_params["C_H"]::Float64, lower_boundary_temperature,
                 )
                 @. dyn_data.grid_shflx += diagnostic_weight * workspace.grid_shflx
             end
             if do_evaporation
                 Surface_Evaporation!(
-                    mesh, atmo_data, grid_ps, work_q, workspace.grid_lhflx,
-                    surface_wind, surface_height, density, physics_dt,
+                    mesh, atmo_data, grid_ps, grid_p_half, work_q,
+                    workspace.grid_lhflx, surface_wind, surface_height, physics_dt,
                     physics_params["C_E"]::Float64, lower_boundary_temperature,
                 )
                 @. dyn_data.grid_lhflx += diagnostic_weight * workspace.grid_lhflx

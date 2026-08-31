@@ -28,7 +28,9 @@ using JGCM
     grid_shflx = zeros(nλ, nθ, 1)
     wind_speed = fill(10.0, nλ, nθ)
     lowest_level_height = fill(100.0, nλ, nθ)
-    density = fill(1.0, nλ, nθ, nd)
+    grid_p_half = zeros(nλ, nθ, nd + 1)
+    grid_p_half[:, :, 1] .= 80_000.0
+    grid_p_half[:, :, 2] .= 100_000.0
     custom_temperature(longitude, latitude) = 300.0 + cos(longitude) + sin(latitude)
 
     Δt = 10
@@ -37,11 +39,11 @@ using JGCM
     JGCM.Atmos_Param_Module.Sensible_Heating!(
         mesh,
         atmo,
+        grid_p_half,
         grid_t,
         grid_shflx,
         wind_speed,
         lowest_level_height,
-        density,
         Δt,
         C_H,
         custom_temperature,
@@ -53,7 +55,7 @@ using JGCM
             (280.0 + lambda * custom_temperature(mesh.λc[i], mesh.θc[j])) / (1.0 + lambda)
     end
     expected_shflx =
-        @. density[:, :, nd] * lowest_level_height * atmo.cp_air *
+        @. ((grid_p_half[:, :, nd+1] - grid_p_half[:, :, nd]) / atmo.grav) * atmo.cp_air *
            (expected_t[:, :, nd] - 280.0) / Δt
     @test grid_t ≈ expected_t
     @test grid_shflx[:, :, 1] ≈ expected_shflx
@@ -67,11 +69,11 @@ using JGCM
         mesh,
         atmo,
         grid_ps,
+        grid_p_half,
         grid_q,
         grid_lhflx,
         wind_speed,
         lowest_level_height,
-        density,
         Δt,
         C_E,
         custom_temperature,
@@ -89,8 +91,8 @@ using JGCM
             (0.001 + evaporation_lambda * surface_q) / (1.0 + evaporation_lambda)
     end
     expected_lhflx =
-        @. (expected_q[:, :, nd] - 0.001) * density[:, :, nd] *
-           lowest_level_height * atmo.Lv / Δt
+        @. (expected_q[:, :, nd] - 0.001) *
+           ((grid_p_half[:, :, nd+1] - grid_p_half[:, :, nd]) / atmo.grav) * atmo.Lv / Δt
     @test grid_q ≈ expected_q
     @test grid_lhflx[:, :, 1] ≈ expected_lhflx
 end
