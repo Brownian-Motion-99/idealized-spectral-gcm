@@ -37,7 +37,7 @@ makedocs(;
 
 deploydocs(;
     repo = "github.com/Brownian-Motion-99/idealized-spectral-gcm.git",
-    devbranch = "v0.2.0",
+    devbranch = "main",
     target = "build",
     push_preview = true,
     versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"],
