@@ -193,9 +193,7 @@ function _betts_miller_column!(
     tdot = work.temperature_tendency
     qdot = work.humidity_tendency
 
-    # Spherical-harmonic transforms can create tiny negative grid-point
-    # undershoots even when the spectral humidity field is physically valid.
-    # Diagnose those points as dry without mutating the prognostic state.
+    # Treat roundoff-scale negative inputs as dry without mutating the caller.
     tp .= temperature
     @. qref = max(humidity, 0.0)
     @. rp = qref / (1.0 - qref)

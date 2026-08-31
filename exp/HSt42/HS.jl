@@ -16,8 +16,8 @@ physics_params = Dict{String,Any}(
     # Corrections
     "do_mass_correction" => true,
     "do_energy_correction" => true,
-    # Post-dynamics physics carries its own water budget; the positivity
-    # projection preserves that post-physics integral.
+    # Post-dynamics physics carries its own water budget; the grid tracer
+    # correction preserves that post-physics integral.
     "do_water_correction" => true,
     "use_virtual_temperature" => true,
 
@@ -25,8 +25,7 @@ physics_params = Dict{String,Any}(
     "do_Betts_Miller" => do_betts_miller,
     "bm_tau" => 7200.0,
     "bm_relative_humidity" => 0.8,
-    # Optional physical background humidity. Spectral undershoots are handled
-    # separately by a minimal level-dependent positivity offset.
+    # Optional physical background humidity.
     "initial_humidity_floor" => 0.0,
 
     # Grid scale condensation

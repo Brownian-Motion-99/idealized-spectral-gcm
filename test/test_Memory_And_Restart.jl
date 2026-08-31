@@ -13,12 +13,29 @@ end
         source = Dyn_Data("source", 1, 2, 4, 2, 2, 0)
         source.spe_vor_p[1] = 3 + 4im
         source.grid_u_c[1] = 12.5
+        source.grid_q_c .= 0.007
         Write_Restart_File(manager, source, 600)
 
         restored = Dyn_Data("restored", 1, 2, 4, 2, 2, 0)
         @test Load_Restart_File!(restored, joinpath(dir, "restart_t600.jld2")) == 600
         @test restored.spe_vor_p == source.spe_vor_p
         @test restored.grid_u_c == source.grid_u_c
+        @test restored.grid_q_c == source.grid_q_c
+
+        # Version-2 restarts may contain obsolete spectral humidity arrays;
+        # the version-3 grid-only state loads the common grid fields and
+        # deliberately ignores those extras.
+        version2_file = joinpath(dir, "restart_v2.jld2")
+        jldopen(version2_file, "w") do file
+            file["restart_format_version"] = 2
+            file["saved_time"] = 450
+            file["dimensions"] = (1, 2, 4, 2, 2)
+            file["state/grid_q_c"] = source.grid_q_c
+            file["state/spe_q_c"] = zeros(ComplexF64, 2, 3, 2)
+        end
+        version2_restored = Dyn_Data("version2", 1, 2, 4, 2, 2, 0)
+        @test Load_Restart_File!(version2_restored, version2_file) == 450
+        @test version2_restored.grid_q_c == source.grid_q_c
 
         legacy_file = joinpath(dir, "legacy.jld2")
         legacy = LegacyRestartState(copy(source.spe_vor_p), copy(source.grid_u_c))

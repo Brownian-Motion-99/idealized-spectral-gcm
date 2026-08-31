@@ -106,7 +106,7 @@ function Lscale_Cond!(
                         "effective_dt=$effective_dt",
                     ),
                 )
-                # Spectral transport can produce small negative humidity
+                # Treat roundoff-scale negative humidity as dry
                 # undershoots. Large-scale condensation leaves all
                 # subsaturated points unchanged rather than treating those
                 # undershoots as a condensation error.

@@ -7,6 +7,7 @@ include("Core/Gauss_And_Legendre.jl")
 include("Core/Spectral_Spherical_Mesh.jl")
 include("Core/Atmo_Data.jl")
 include("Core/Vert_Coordinate.jl")
+include("Dynamics/Grid_Tracer_Transport.jl")
 include("Core/Dyn_Data.jl")
 include("Core/Variable_Mappings.jl")
 include("Core/Experiment_Configuration.jl")
@@ -62,6 +63,9 @@ export Atmo_Data
 
 using .Vert_Coordinate_Module
 export Vert_Coordinate
+
+using .Grid_Tracer_Transport_Module
+export Grid_Tracer_Workspace, Advance_Grid_Tracer!
 
 using .Dyn_Data_Module
 export Dyn_Data

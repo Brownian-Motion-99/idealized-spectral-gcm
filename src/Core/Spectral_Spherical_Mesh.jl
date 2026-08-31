@@ -149,7 +149,7 @@ function Spectral_Spherical_Mesh(
     sum_wts = 0.0
     for j = 1:nθ
         sum_wts = sum_wts + wts[j]
-        θe[j+1] = asin(sum_wts - 1.0)
+        θe[j+1] = asin(clamp(sum_wts - 1.0, -1.0, 1.0))
     end
     θe[nθ+1] = 0.5 * pi
 

@@ -334,7 +334,6 @@ end
     current_u = copy(dyn.grid_u_c)
     current_v = copy(dyn.grid_v_c)
     current_spe_t = copy(dyn.spe_t_c)
-    current_spe_q = copy(dyn.spe_q_c)
     dyn.grid_ps_n .= dyn.grid_ps_c
     dyn.grid_u_n .= dyn.grid_u_c
     dyn.grid_v_n .= dyn.grid_v_c
@@ -358,7 +357,6 @@ end
     @test dyn.grid_u_c == current_u
     @test dyn.grid_v_c == current_v
     @test dyn.spe_t_c == current_spe_t
-    @test dyn.spe_q_c == current_spe_q
 
     params["do_Lscale_Cond"] = true
     dyn.grid_u_n .= current_u

@@ -1,5 +1,7 @@
 module Dyn_Data_Module
 
+using ..Grid_Tracer_Transport_Module
+
 export Dyn_Data, Time_Advance!
 
 mutable struct Dyn_Data
@@ -37,11 +39,6 @@ mutable struct Dyn_Data
     spe_tracers_n::Array{ComplexF64,4}
     spe_tracers_c::Array{ComplexF64,4}
     spe_tracers_p::Array{ComplexF64,4}
-
-    # spectral moisture
-    spe_q_n::Array{ComplexF64,3}
-    spe_q_c::Array{ComplexF64,3}
-    spe_q_p::Array{ComplexF64,3}
 
     ##########################################################################
     # grid w-e velocity
@@ -119,7 +116,6 @@ mutable struct Dyn_Data
     grid_δtracers::Array{Float64,4}
 
     # moisture tendency
-    spe_δq::Array{ComplexF64,3}
     grid_δq::Array{Float64,3}
 
     # absolute vor
@@ -170,6 +166,8 @@ mutable struct Dyn_Data
 
     spe_zeros::Array{ComplexF64,3}
     K_E::Array{Float64,3}
+
+    tracer_workspace::Grid_Tracer_Workspace
 
 end
 
@@ -254,10 +252,6 @@ function Dyn_Data(
     spe_tracers_c = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd, num_tracers)
     spe_tracers_p = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd, num_tracers)
 
-    # spectral moisture
-    spe_q_n = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
-    spe_q_c = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
-    spe_q_p = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     #########################################################
     # grid w-e velocity
     grid_u_n = zeros(Float64, nλ, nθ, nd)
@@ -333,7 +327,6 @@ function Dyn_Data(
     grid_δtracers = zeros(Float64, nλ, nθ, nd, num_tracers)
 
     # moisture tendency
-    spe_δq = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     grid_δq = zeros(Float64, nλ, nθ, nd)
 
     # absolute vor
@@ -383,6 +376,7 @@ function Dyn_Data(
 
     spe_zeros = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
     K_E = zeros(Float64, nλ, nθ, nd + 1)
+    tracer_workspace = Grid_Tracer_Workspace(nλ, nθ, nd)
 
     Dyn_Data(
         name,
@@ -407,9 +401,6 @@ function Dyn_Data(
         spe_tracers_n,
         spe_tracers_c,
         spe_tracers_p,
-        spe_q_n,
-        spe_q_c,
-        spe_q_p,
         ########################################################################
         grid_u_n,
         grid_u_c,
@@ -453,7 +444,6 @@ function Dyn_Data(
         grid_δt,
         spe_δtracers,
         grid_δtracers,
-        spe_δq,
         grid_δq,
         grid_absvor,
         grid_w_full,
@@ -481,6 +471,7 @@ function Dyn_Data(
         grid_d_full2,
         spe_zeros,
         K_E,
+        tracer_workspace,
     )
 end
 
@@ -516,9 +507,6 @@ function Time_Advance!(dyn_data::Dyn_Data)
 
     dyn_data.spe_t_p .= dyn_data.spe_t_c
     dyn_data.spe_t_c .= dyn_data.spe_t_n
-
-    dyn_data.spe_q_p .= dyn_data.spe_q_c
-    dyn_data.spe_q_c .= dyn_data.spe_q_n
 
     if dyn_data.num_tracers > 0
         dyn_data.spe_tracers_p .= dyn_data.spe_tracers_c

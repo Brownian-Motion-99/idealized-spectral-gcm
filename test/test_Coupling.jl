@@ -104,9 +104,7 @@ using JGCM
         @test minimum(dyn.grid_q_c) >= -1.0e-14
     end
 
-    q_from_spectral = similar(dyn.grid_q_c)
-    Trans_Spherical_To_Grid!(mesh, dyn.spe_q_c, q_from_spectral)
-    @test q_from_spectral ≈ dyn.grid_q_c rtol = 1.0e-12 atol = 1.0e-14
+    @test !hasproperty(dyn, :spe_q_c)
 
     t_from_spectral = similar(dyn.grid_t_c)
     Trans_Spherical_To_Grid!(mesh, dyn.spe_t_c, t_from_spectral)

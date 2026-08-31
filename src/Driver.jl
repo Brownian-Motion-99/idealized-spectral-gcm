@@ -468,7 +468,7 @@ function status_diagnostics(
         (:W,      dyn_data.grid_w_full),
         (:P_full, dyn_data.grid_p_full),
         (:T_eq,   dyn_data.grid_t_eq),
-        (:Q,      dyn_data.grid_q_c[:, :, :, 1])
+        (:Q,      dyn_data.grid_q_c)
     ]
 
     for (name, field) in diag_vars

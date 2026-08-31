@@ -119,7 +119,7 @@ using JGCM
     @test dyn.spe_vor_p == dyn.spe_vor_c
     @test dyn.spe_div_p == dyn.spe_div_c
     @test dyn.spe_t_p == dyn.spe_t_c
-    @test dyn.spe_q_p == dyn.spe_q_c
     @test dyn.grid_t_p == dyn.grid_t_c
     @test dyn.grid_q_p == dyn.grid_q_c
+    @test !hasproperty(dyn, :spe_q_c)
 end

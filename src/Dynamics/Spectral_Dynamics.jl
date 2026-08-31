@@ -9,6 +9,7 @@ using ..Vert_Coordinate_Module
 using ..Dyn_Data_Module
 using ..Semi_Implicit_Module
 using ..Time_Integrator_Module
+using ..Grid_Tracer_Transport_Module
 using ..Press_And_Geopot_Module
 using ..Atmos_Param_Module
 using ..Experiment_Configuration
@@ -116,7 +117,6 @@ function Reset_Dynamics_Tendencies!(dyn_data::Dyn_Data)
         dyn_data.spe_δdiv,
         dyn_data.spe_δlnps,
         dyn_data.spe_δt,
-        dyn_data.spe_δq,
         dyn_data.spe_δtracers,
         dyn_data.grid_δvor,
         dyn_data.grid_δdiv,
@@ -133,94 +133,30 @@ function Reset_Dynamics_Tendencies!(dyn_data::Dyn_Data)
     return nothing
 end
 
-"""
-Project humidity to the retained spectral space while preserving positivity and
-then rescale it to the requested global water integral. A constant offset is
-band-limited, unlike gridpoint clipping, so the inverse transform cannot recreate
-the clipped Gibbs undershoots.
-"""
-function _project_positive_humidity!(
+"""Apply the Robert filter to grid humidity without changing its current-state water."""
+function _filter_grid_humidity!(
+    integrator::Filtered_Leapfrog,
     mesh::Spectral_Spherical_Mesh,
     vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data,
-    target_water::Float64,
-    grid_ps::Array{Float64,3},
-    grid_q::Array{Float64,3},
-    spe_q::Array{ComplexF64,3},
+    grid_q_p::Array{Float64,3},
+    grid_q_c::Array{Float64,3},
+    grid_q_n::Array{Float64,3},
+    grid_ps_c::Array{Float64,3},
 )
-    isfinite(target_water) && target_water >= 0.0 || throw(
-        DomainError(
-            target_water,
-            "target atmospheric water must be finite and non-negative",
-        ),
-    )
-
-    if iszero(target_water)
-        fill!(grid_q, 0.0)
-        fill!(spe_q, 0.0)
-        return nothing
+    target_water = atmo_data.do_water_correction ?
+        Mass_Weighted_Global_Integral(vert_coord, mesh, atmo_data, grid_q_c, grid_ps_c) : 0.0
+    α = integrator.robert_coef
+    if integrator.init_step
+        @. grid_q_c += α * (-grid_q_c + grid_q_n)
+    else
+        @. grid_q_c += α * (grid_q_p - 2grid_q_c + grid_q_n)
     end
-
-    Trans_Grid_To_Spherical!(mesh, grid_q, spe_q)
-    Trans_Spherical_To_Grid!(mesh, spe_q, grid_q)
-
-    # Retain the predicted vertical water distribution wherever a level has a
-    # positive integral. A single global rescaling after adding positivity
-    # offsets would otherwise move water spuriously into initially dry levels.
-    level_water = zeros(Float64, size(grid_q, 3))
-    for k in axes(grid_q, 3)
-        @. vert_coord.mass_Δp =
-            vert_coord.Δbk[k] * grid_ps + vert_coord.Δak[k]
-        @views @. vert_coord.mass_integrand =
-            grid_q[:, :, k] * vert_coord.mass_Δp[:, :, 1]
-        level_water[k] =
-            Area_Weighted_Global_Mean(mesh, vert_coord.mass_integrand) / atmo_data.grav
+    if atmo_data.do_water_correction
+        Restore_Grid_Tracer_Integral!(
+            grid_q_c, grid_ps_c, target_water, vert_coord, mesh, atmo_data,
+        )
     end
-    positive_water = sum(max(water, 0.0) for water in level_water)
-    positive_water > 0.0 ||
-        error("Cannot apply water correction: projected atmospheric water is non-positive")
-    level_targets = max.(level_water, 0.0) .* (target_water / positive_water)
-
-    # Adding a levelwise constant only changes the retained degree-zero mode;
-    # a positive levelwise scaling then restores that level's water target.
-    for k in axes(grid_q, 3)
-        qk = @view grid_q[:, :, k]
-        if iszero(level_targets[k])
-            fill!(qk, 0.0)
-            continue
-        end
-        qmin = minimum(qk)
-        if qmin < 0.0
-            margin = 64.0 * eps(max(maximum(abs, qk), 1.0))
-            qk .+= -qmin + margin
-        end
-        @. vert_coord.mass_Δp =
-            vert_coord.Δbk[k] * grid_ps + vert_coord.Δak[k]
-        @views @. vert_coord.mass_integrand =
-            grid_q[:, :, k] * vert_coord.mass_Δp[:, :, 1]
-        adjusted_water =
-            Area_Weighted_Global_Mean(mesh, vert_coord.mass_integrand) / atmo_data.grav
-        isfinite(adjusted_water) && adjusted_water > 0.0 ||
-            error("Cannot apply water correction: level $k has non-positive water")
-        qk .*= level_targets[k] / adjusted_water
-    end
-    Trans_Grid_To_Spherical!(mesh, grid_q, spe_q)
-    Trans_Spherical_To_Grid!(mesh, spe_q, grid_q)
-
-    minimum(grid_q) >= -1.0e-14 ||
-        error("humidity positivity projection failed")
-    current_water = Mass_Weighted_Global_Integral(
-        vert_coord,
-        mesh,
-        atmo_data,
-        grid_q,
-        grid_ps,
-    )
-    isfinite(current_water) && current_water > 0.0 ||
-        error("Cannot apply water correction: projected atmospheric water is non-positive")
-    factor = target_water / current_water
-    grid_q .*= factor
-    spe_q .*= factor
     return nothing
 end
 
@@ -231,7 +167,7 @@ function _synchronize_physics_next!(
     atmo_data::Atmo_Data,
     dyn_data::Dyn_Data,
 )
-    mean_ps, mean_energy, mean_water = Compute_Corrections_Init(
+    mean_ps, mean_energy, _ = Compute_Corrections_Init(
         mesh,
         vert_coord,
         atmo_data,
@@ -241,6 +177,9 @@ function _synchronize_physics_next!(
         dyn_data.grid_v_n,
         dyn_data.grid_t_n,
         dyn_data.grid_q_n,
+    )
+    mean_water = Mass_Weighted_Global_Integral(
+        vert_coord, mesh, atmo_data, dyn_data.grid_q_n, dyn_data.grid_ps_n,
     )
 
     all(isfinite, dyn_data.grid_ps_n) && minimum(dyn_data.grid_ps_n) > 0.0 ||
@@ -266,11 +205,6 @@ function _synchronize_physics_next!(
     )
     Trans_Grid_To_Spherical!(mesh, dyn_data.grid_t_n, dyn_data.spe_t_n)
     Trans_Spherical_To_Grid!(mesh, dyn_data.spe_t_n, dyn_data.grid_t_n)
-    if !atmo_data.do_water_correction
-        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_n, dyn_data.spe_q_n)
-        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_n, dyn_data.grid_q_n)
-    end
-
     Compute_Corrections!(
         mesh,
         vert_coord,
@@ -286,7 +220,19 @@ function _synchronize_physics_next!(
         dyn_data.spe_t_n,
         mean_water,
         dyn_data.grid_q_n,
-        dyn_data.spe_q_n,
+        ;
+        correct_water = false,
+    )
+
+    # Pressure projection and the mass/energy fixers are now complete. Humidity
+    # is grid-only, and this must be its last synchronization operation.
+    Restore_Grid_Tracer_Integral!(
+        dyn_data.grid_q_n,
+        dyn_data.grid_ps_n,
+        mean_water,
+        vert_coord,
+        mesh,
+        atmo_data,
     )
 
     all(isfinite, dyn_data.grid_u_n) && all(isfinite, dyn_data.grid_v_n) &&
@@ -295,7 +241,7 @@ function _synchronize_physics_next!(
     minimum(dyn_data.grid_t_n) > 0.0 ||
         error("spectral projection produced a non-positive temperature")
     minimum(dyn_data.grid_q_n) >= -1.0e-14 ||
-        error("spectral projection produced negative specific humidity")
+        error("post-physics synchronization produced negative specific humidity")
     return nothing
 end
 
@@ -307,7 +253,7 @@ end
         mean_ps_p, grid_ps_n, spe_lnps_n, 
         mean_energy_p, grid_energy_temp, 
         grid_u_n, grid_v_n, grid_t_n, spe_t_n,
-        mean_moisture_p, grid_q_n, spe_q_n
+        mean_moisture_p, grid_q_n
     )
 
 Adjusts the updated atmospheric state fields (grid_*_n) to strictly enforce global 
@@ -332,7 +278,6 @@ multiplicatively for mass and moisture, and additively for temperature (energy).
     
     - mean_moisture_p: Target global moisture integral.
     - grid_q_n: Updated specific humidity field at (t+Δt). Modified in-place.
-    - spe_q_n: Spectral coefficients of specific humidity. Modified in-place.
 
 ### Returns
     - nothing
@@ -343,7 +288,6 @@ multiplicatively for mass and moisture, and additively for temperature (energy).
     - grid_t_n
     - spe_t_n
     - grid_q_n
-    - spe_q_n
 
 """
 function Compute_Corrections!(
@@ -361,7 +305,8 @@ function Compute_Corrections!(
     spe_t_n::Array{ComplexF64,3},
     mean_moisture_p::Float64,
     grid_q_n::Array{Float64,3},
-    spe_q_n::Array{ComplexF64,3},
+    ;
+    correct_water::Bool = true,
 )
 
     do_mass_correction, do_energy_correction, do_water_correction =
@@ -396,15 +341,9 @@ function Compute_Corrections!(
         spe_t_n[1, 1, :] .+= temperature_correction
     end
 
-    if (do_water_correction)
-        _project_positive_humidity!(
-            mesh,
-            vert_coord,
-            atmo_data,
-            mean_moisture_p,
-            grid_ps_n,
-            grid_q_n,
-            spe_q_n,
+    if do_water_correction && correct_water
+        Restore_Grid_Tracer_Integral!(
+            grid_q_n, grid_ps_n, mean_moisture_p, vert_coord, mesh, atmo_data,
         )
     end
 
@@ -706,16 +645,10 @@ function Spectral_Dynamics!(
 
     grid_energy_full, spe_energy = dyn_data.grid_energy_full, dyn_data.spe_energy
 
-    # moisture pre-process
-    spe_q_n = dyn_data.spe_q_n
-    spe_q_c = dyn_data.spe_q_c
-    spe_q_p = dyn_data.spe_q_p
-
     grid_q_n = dyn_data.grid_q_n
     grid_q_c = dyn_data.grid_q_c
     grid_q_p = dyn_data.grid_q_p
 
-    spe_δq = dyn_data.spe_δq
     grid_δq = dyn_data.grid_δq
 
     grid_virtual_t = vert_coord.virtual_temperature
@@ -870,23 +803,35 @@ function Spectral_Dynamics!(
         end
     end
 
-    # moisture
+    # Moisture is a grid-only prognostic. The finite-volume transport starts
+    # from q_c during startup and q_p during leapfrog, then applies H followed
+    # by V over the same effective interval as the dry dynamical core.
     if config.moisture_processes
-        Vert_Advection!(
-            vert_coord,
-            grid_q_c,
+        grid_q_base = integrator.init_step ? grid_q_c : grid_q_p
+        Advance_Grid_Tracer!(
+            dyn_data.tracer_workspace,
+            mesh,
+            grid_q_n,
+            grid_q_base,
+            grid_u,
+            grid_v,
             grid_Δp,
             grid_M_half,
             Δt,
-            vert_coord.vert_advect_scheme,
-            grid_δQ,
         )
-        grid_δq .+= grid_δQ
-        Add_Horizontal_Advection!(mesh, spe_q_c, grid_u, grid_v, grid_δq)
-        Trans_Grid_To_Spherical!(mesh, grid_δq, spe_δq)
-        Compute_Spectral_Damping!(integrator, spe_q_c, spe_q_p, spe_δq)
-        Filtered_Leapfrog!(integrator, spe_δq, spe_q_p, spe_q_c, spe_q_n)
-        Trans_Spherical_To_Grid!(mesh, spe_q_n, grid_q_n)
+        @. grid_δq = (grid_q_n - grid_q_base) / Δt
+        _filter_grid_humidity!(
+            integrator,
+            mesh,
+            vert_coord,
+            atmo_data,
+            grid_q_p,
+            grid_q_c,
+            grid_q_n,
+            grid_ps,
+        )
+    else
+        copyto!(grid_q_n, integrator.init_step ? grid_q_c : grid_q_p)
     end
 
     # temperature
@@ -966,7 +911,6 @@ function Spectral_Dynamics!(
         spe_t_n,
         mean_moisture_p,
         grid_q_n,
-        spe_q_n,
     )
     # --- Conservation Fixer --- #
 
@@ -1048,8 +992,8 @@ by small-amplitude noise in the vorticity field to initiate baroclinic wave grow
     the spectral state.
     
     - **Moisture:**
-    If `config.moisture_processes` is enabled, it calls `Initialize_Analytic_Moisture!` 
-    to set up an idealized specific humidity profile.
+    This legacy initializer is dry. Moist benchmark humidity is initialized by
+    `Initialize_Atmos_State!`.
 
 """
 function Spectral_Initialize_Fields!(
@@ -1150,102 +1094,11 @@ function Spectral_Initialize_Fields!(
     grid_ps_p .= grid_ps
     grid_t_p .= grid_t
 
-    # moisture initialization
-    if config.moisture_processes
-        humidity_floor = Float64(get(config.physics_params, "initial_humidity_floor", 0.0))
-        Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data, humidity_floor)
-    end
+    # This legacy dry initializer is retained only for the dry public API. The
+    # moist benchmark is initialized by `Initialize_Atmos_State!`.
+    fill!(dyn_data.grid_q_c, 0.0)
+    copyto!(dyn_data.grid_q_p, dyn_data.grid_q_c)
 
-end
-
-
-
-"""
-    Initialize_Analytic_Moisture!(mesh, atmo_data, dyn_data)
-
-Initializes the specific humidity field (q) with an idealized, analytically defined 
-profile. This function sets up a symmetric moisture distribution centered at the 
-equator and the surface, which decays with both latitude and height.
-
-### Parameters
-    - mesh: Spectral spherical mesh properties (nλ, nθ).
-    - atmo_data: Atmospheric constants (constants used in profile definition).
-    - dyn_data: The main data container. Modified in-place to store the moisture fields.
-
-### Returns
-    - nothing
-
-### Modified
-    - dyn_data.grid_q_c
-    - dyn_data.spe_q_c
-    - dyn_data.grid_q_p
-    - dyn_data.spe_q_p
-
-### Notes
-    - **Profile Definition:**
-    The moisture field is defined by:
-    q(λ, θ, p) = qv₀ ⋅ exp( -((p/pₛ - 1) ⋅ (p₀/p_hw))² ) ⋅ exp( -(θ/φ_hw)⁴ )
-
-    Where:
-    - qv₀ = 0.018 kg/kg (Maximum surface specific humidity at equator)
-    - p_hw = 30000 Pa (Vertical decay scale parameter)
-    - φ_hw ≈ 40° (Meridional decay scale parameter)
-    - p₀ = 100000 Pa (Reference pressure)
-    - θ_c = latitude
-
-    - **Spectral Consistency:**
-    After computing the analytic values on the grid, the function performs a forward 
-    transform (`Trans_Grid_To_Spherical!`) followed by a backward transform 
-    (`Trans_Spherical_To_Grid!`). This ensures the initial field is consistent with 
-    the spectral truncation of the model, removing sub-grid scale features that 
-    cannot be represented.
-
-    - **Boundary Condition:**
-    Moisture at the model top (level k=1) is explicitly forced to 0.0.
-
-"""
-function Initialize_Analytic_Moisture!(
-    mesh::Spectral_Spherical_Mesh,
-    atmo_data::Atmo_Data,
-    dyn_data::Dyn_Data,
-    humidity_floor::Float64 = 0.0,
-)
-
-    nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
-
-    spe_q_p, spe_q_c = dyn_data.spe_q_p, dyn_data.spe_q_c
-    grid_q_p, grid_q_c = dyn_data.grid_q_p, dyn_data.grid_q_c
-    grid_p_full, grid_ps = dyn_data.grid_p_full, dyn_data.grid_ps_c
-
-    0 <= humidity_floor < 1 ||
-        throw(ArgumentError("initial_humidity_floor must satisfy 0 <= q < 1"))
-    qv0 = 0.018
-    θc = mesh.θc # lat
-    phi_hw = 2 * pi / 9
-    p_hw = 30000.0
-    phi = LinRange(-90, 90, nθ)
-    p0 = 100000.0
-
-    for k = 1:nd
-        for j = 1:nθ
-            for i = 1:nλ
-                grid_q_c[i, j, k] =
-                    humidity_floor +
-                    qv0 *
-                    exp(
-                        -((grid_p_full[i, j, k] / grid_ps[i, j, 1] - 1.0) * (p0 / p_hw))^2,
-                    ) *
-                    exp(-((θc[j]) / phi_hw)^4)
-            end
-        end
-    end
-    dyn_data.grid_q_c[:, :, 1] .= humidity_floor
-
-    Trans_Grid_To_Spherical!(mesh, grid_q_c, spe_q_c)
-    Trans_Spherical_To_Grid!(mesh, spe_q_c, grid_q_c)
-
-    grid_q_p .= grid_q_c
-    spe_q_p .= spe_q_c
 end
 
 

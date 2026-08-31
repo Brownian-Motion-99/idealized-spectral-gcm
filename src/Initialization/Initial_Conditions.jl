@@ -455,37 +455,18 @@ function Init_Moist_Aquaplanet!(
         dyn_data.grid_v_c[i, j, k] = perturbation.v
     end
 
-    # Store only states representable at the configured spectral truncation.
+    # The dry dynamical fields remain spectrally truncated. Specific humidity is
+    # grid-only and retains the analytic Thatcher--Jablonowski initial profile.
     Trans_Grid_To_Spherical!(mesh, dyn_data.grid_lnps, dyn_data.spe_lnps_c)
     Trans_Spherical_To_Grid!(mesh, dyn_data.spe_lnps_c, dyn_data.grid_lnps)
     dyn_data.grid_ps_c .= exp.(dyn_data.grid_lnps)
 
-    if config.moisture_processes
-        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_c, dyn_data.spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_c, dyn_data.grid_q_c)
-
-        # The steep meridional profile can acquire small negative lobes when it
-        # is truncated in spherical harmonics. Add only the level-dependent
-        # constant needed to cancel that undershoot. Unlike a fixed humidity
-        # floor, this does not create a spuriously moist upper troposphere.
-        for k = 1:mesh.nd
-            if dyn_data.grid_p_full[1, 1, k] >= 1.0e4
-                q_min = minimum(@view dyn_data.grid_q_c[:, :, k])
-                if q_min < 0.0
-                    @view(dyn_data.grid_q_c[:, :, k]) .-= q_min
-                end
-            end
-        end
-        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_c, dyn_data.spe_q_c)
-        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_c, dyn_data.grid_q_c)
-    else
+    if !config.moisture_processes
         dyn_data.grid_q_c .= 0.0
-        dyn_data.spe_q_c .= 0.0
     end
 
-    # Use the spectrally representable humidity when converting virtual
-    # temperature to actual temperature. This preserves the intended pressure
-    # gradient balance more closely than converting the unfiltered q field.
+    # Convert the prescribed virtual temperature with the same grid humidity
+    # used by the moist equation of state.
     for k = 1:mesh.nd, j = 1:mesh.nθ, i = 1:mesh.nλ
         basic_state = Ullrich_Shallow_Basic_State(
             atmo_data,
@@ -520,7 +501,6 @@ function Init_Moist_Aquaplanet!(
     dyn_data.spe_div_p .= dyn_data.spe_div_c
     dyn_data.spe_lnps_p .= dyn_data.spe_lnps_c
     dyn_data.spe_t_p .= dyn_data.spe_t_c
-    dyn_data.spe_q_p .= dyn_data.spe_q_c
     dyn_data.grid_u_p .= dyn_data.grid_u_c
     dyn_data.grid_v_p .= dyn_data.grid_v_c
     dyn_data.grid_ps_p .= dyn_data.grid_ps_c

@@ -5,7 +5,7 @@ using ..Dyn_Data_Module
 
 export Restart_Manager, Write_Restart_File, Load_Restart_File!, Cleanup_Old_Restarts
 
-const RESTART_FORMAT_VERSION = 2
+const RESTART_FORMAT_VERSION = 3
 
 
 struct Restart_Manager
@@ -68,6 +68,9 @@ function Load_Restart_File!(dyn_data::Dyn_Data, filename::String)
     return jldopen(filename, "r") do file
         saved_time = file["saved_time"]
         if haskey(file, "restart_format_version")
+            version = Int(file["restart_format_version"])
+            version in (2, RESTART_FORMAT_VERSION) ||
+                error("Unsupported restart format version $version")
             expected =
                 (dyn_data.num_fourier, dyn_data.num_spherical, dyn_data.nλ, dyn_data.nθ, dyn_data.nd)
             file["dimensions"] == expected ||
