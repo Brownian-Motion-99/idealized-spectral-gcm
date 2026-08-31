@@ -24,6 +24,8 @@ end
 @testset "Physics Parameterizations" begin
     include("test_HS_Forcing.jl")
     include("test_PBL.jl")
+    include("test_Virtual_Temperature_Dynamics.jl")
+    include("test_Dry_Air_Adjustment.jl")
     include("test_Corrections.jl")
 end
 

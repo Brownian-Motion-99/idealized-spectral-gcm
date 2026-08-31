@@ -345,9 +345,11 @@ end
     workspace = params["Physics_workspace"]::Physics_Workspace
     @test (dyn.grid_t_n .- current_t) ./ 600.0 ≈
           dyn.grid_bm_t_tendency + dyn.grid_lrf_tendency
-    @test (dyn.grid_q_n .- current_q) ./ 600.0 ≈ dyn.grid_bm_q_tendency
+    q_after_physics = current_q .+ 600.0 .* dyn.grid_bm_q_tendency
+    @test dyn.grid_q_n .* dyn.grid_Δp ≈
+          q_after_physics .* workspace.grid_Δp_before
     @test dyn.grid_precip ≈ dyn.grid_bm_precip
-    @test dyn.grid_lrf_tendency ≈ 2.0 .* workspace.grid_q ./ config.day_to_sec
+    @test dyn.grid_lrf_tendency ≈ 2.0 .* q_after_physics ./ config.day_to_sec
     @test !isapprox(dyn.grid_lrf_tendency, 2.0 .* dyn.grid_q_p ./ config.day_to_sec)
     @test dyn.grid_t_n ≈ workspace.grid_t
     @test dyn.grid_q_n ≈ workspace.grid_q
@@ -370,9 +372,12 @@ end
     @test (dyn.grid_t_n .- current_t) ./ 600.0 ≈
           dyn.grid_bm_t_tendency + workspace.grid_lscale_t_tendency +
           dyn.grid_lrf_tendency
-    @test (dyn.grid_q_n .- current_q) ./ 600.0 ≈
-          dyn.grid_bm_q_tendency + workspace.grid_lscale_q_tendency
-    @test dyn.grid_lrf_tendency ≈ 2.0 .* workspace.grid_q ./ config.day_to_sec
+    q_after_physics = current_q .+ 600.0 .* (
+        dyn.grid_bm_q_tendency + workspace.grid_lscale_q_tendency
+    )
+    @test dyn.grid_q_n .* dyn.grid_Δp ≈
+          q_after_physics .* workspace.grid_Δp_before
+    @test dyn.grid_lrf_tendency ≈ 2.0 .* q_after_physics ./ config.day_to_sec
     @test dyn.grid_t_n ≈ workspace.grid_t
     @test dyn.grid_q_n ≈ workspace.grid_q
     @test dyn.grid_t_c == current_t

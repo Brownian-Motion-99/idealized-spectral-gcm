@@ -112,6 +112,10 @@ using JGCM
     Trans_Spherical_To_Grid!(mesh, dyn.spe_t_c, t_from_spectral)
     @test t_from_spectral ≈ dyn.grid_t_c rtol = 1.0e-12 atol = 1.0e-12
 
+    lnps_from_spectral = similar(dyn.grid_ps_c)
+    Trans_Spherical_To_Grid!(mesh, dyn.spe_lnps_c, lnps_from_spectral)
+    @test exp.(lnps_from_spectral) ≈ dyn.grid_ps_c rtol = 1.0e-12 atol = 1.0e-9
+
     u_from_spectral = similar(dyn.grid_u_c)
     v_from_spectral = similar(dyn.grid_v_c)
     UV_Grid_From_Vor_Div!(

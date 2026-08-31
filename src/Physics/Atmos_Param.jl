@@ -14,9 +14,11 @@ include("Lscale_Cond.jl")
 include("Moist_Physics.jl")
 include("Lower_Boundary_Temperature.jl")
 include("PBL.jl")
+include("Dry_Air_Adjustment.jl")
 include("Spectral_Physics_Interface.jl")
 
-export Spectral_Physics!, Physics_Workspace, LRF_State, Load_LRF_State, LRF!
+export Dry_Air_Adjustment!, Spectral_Physics!, Physics_Workspace
+export LRF_State, Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Saturation_Vapor_Pressure, Saturation_Mixing_Ratio, Saturation_Specific_Humidity
 export PBL_Workspace

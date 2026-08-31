@@ -174,7 +174,7 @@ end
             "do_mass_correction"      => false,
             "do_energy_correction"    => false,
             "do_water_correction"     => false,
-            "use_virtual_temperature" => false,
+            "use_virtual_temperature" => true,
             "do_Lscale_Cond"          => false,
             "do_Sensible_Heating"     => false,
             "do_Surface_Evaporation"  => false,

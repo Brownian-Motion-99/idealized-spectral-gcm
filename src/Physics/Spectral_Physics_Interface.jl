@@ -4,6 +4,7 @@ using ...Vert_Coordinate_Module
 using ...Atmo_Data_Module
 using ...Dyn_Data_Module
 using ...Semi_Implicit_Module
+using ...Press_And_Geopot_Module
 
 """Persistent storage for the sequential, time-split gridpoint physics."""
 struct Physics_Workspace
@@ -11,6 +12,8 @@ struct Physics_Workspace
     grid_v::Array{Float64,3}
     grid_t::Array{Float64,3}
     grid_q::Array{Float64,3}
+    grid_q_before::Array{Float64,3}
+    grid_Δp_before::Array{Float64,3}
     grid_bm_t_tendency::Array{Float64,3}
     grid_bm_q_tendency::Array{Float64,3}
     grid_bm_precip::Array{Float64,3}
@@ -28,7 +31,7 @@ function Physics_Workspace(nλ::Int, nθ::Int, nd::Int)
     field() = zeros(Float64, nλ, nθ, nd)
     column() = zeros(Float64, nλ, nθ, 1)
     return Physics_Workspace(
-        field(), field(), field(), field(),
+        field(), field(), field(), field(), field(), field(),
         field(), field(), column(),
         field(), field(), field(), column(),
         column(), column(), field(),
@@ -162,6 +165,11 @@ function Spectral_Physics!(
 
     for _ in 1:nsubsteps
         _reset_substep_diagnostics!(workspace)
+        copyto!(workspace.grid_q_before, work_q)
+        @inbounds for k in 1:atmo_data.nd
+            @views @. workspace.grid_Δp_before[:, :, k] =
+                grid_p_half[:, :, k+1] - grid_p_half[:, :, k]
+        end
 
         if do_betts_miller || do_lscale_cond
             Moist_Physics!(
@@ -241,6 +249,26 @@ function Spectral_Physics!(
         minimum(work_t) > 0.0 || error("physics produced a non-positive temperature")
         minimum(work_q) >= -1.0e-14 || error("physics produced negative specific humidity")
         work_q .= max.(work_q, 0.0)
+        maximum(work_q) < 1.0 || error("physics produced specific humidity >= 1")
+
+        if config.moisture_processes
+            Dry_Air_Adjustment!(
+                vert_coord,
+                grid_ps,
+                workspace.grid_q_before,
+                work_q,
+                workspace.grid_Δp_before,
+            )
+            Pressure_Variables!(
+                vert_coord,
+                grid_ps,
+                dyn_data.grid_p_half,
+                dyn_data.grid_Δp,
+                dyn_data.grid_lnp_half,
+                dyn_data.grid_p_full,
+                dyn_data.grid_lnp_full,
+            )
+        end
     end
 
     copyto!(dyn_data.grid_u_n, work_u)

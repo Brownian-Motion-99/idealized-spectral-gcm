@@ -243,6 +243,13 @@ function _synchronize_physics_next!(
         dyn_data.grid_q_n,
     )
 
+    all(isfinite, dyn_data.grid_ps_n) && minimum(dyn_data.grid_ps_n) > 0.0 ||
+        error("physics produced invalid surface pressure")
+    @. dyn_data.grid_lnps = log(dyn_data.grid_ps_n)
+    Trans_Grid_To_Spherical!(mesh, dyn_data.grid_lnps, dyn_data.spe_lnps_n)
+    Trans_Spherical_To_Grid!(mesh, dyn_data.spe_lnps_n, dyn_data.grid_lnps)
+    @. dyn_data.grid_ps_n = exp(dyn_data.grid_lnps)
+
     Vor_Div_From_Grid_UV!(
         mesh,
         dyn_data.grid_u_n,
@@ -259,6 +266,10 @@ function _synchronize_physics_next!(
     )
     Trans_Grid_To_Spherical!(mesh, dyn_data.grid_t_n, dyn_data.spe_t_n)
     Trans_Spherical_To_Grid!(mesh, dyn_data.spe_t_n, dyn_data.grid_t_n)
+    if !atmo_data.do_water_correction
+        Trans_Grid_To_Spherical!(mesh, dyn_data.grid_q_n, dyn_data.spe_q_n)
+        Trans_Spherical_To_Grid!(mesh, dyn_data.spe_q_n, dyn_data.grid_q_n)
+    end
 
     Compute_Corrections!(
         mesh,
@@ -407,9 +418,9 @@ end
         grid_div, grid_u, grid_v, 
         grid_ps, grid_Δp, grid_lnp_half, grid_lnp_full, grid_p_full,
         grid_dλ_ps, grid_dθ_ps, 
-        grid_t, 
+        grid_virtual_t,
         grid_M_half, grid_w_full, 
-        grid_δu, grid_δv, grid_δps, grid_δt, grid_δq
+        grid_δu, grid_δv, grid_δps, grid_δt
     )
 
 Simultaneously computes the vertical mass flux (M), pressure vertical velocity (ω), 
@@ -430,7 +441,7 @@ on the adiabatic primitive equations.
     
     - grid_dλ_ps, grid_dθ_ps: Zonal and meridional gradients of surface pressure.
     
-    - grid_t: Temperature field.
+    - grid_virtual_t: Equation-of-state temperature field.
     
     - grid_M_half: Output vertical mass flux at interfaces [nλ, nθ, nd+1].
     - grid_w_full: Output vertical velocity (ω = dp/dt) at layer centers [nλ, nθ, nd].
@@ -438,8 +449,6 @@ on the adiabatic primitive equations.
     - grid_δu, grid_δv: Momentum tendencies. Modified in-place (pressure gradient force subtracted).
     - grid_δps: Surface pressure tendency. Modified in-place (continuity equation).
     - grid_δt: Temperature tendency. Modified in-place (energy conversion added).
-    - grid_δq: Moisture tendency (passed but currently unused in this kernel).
-
 ### Returns
     - nothing
 
@@ -488,14 +497,13 @@ function Four_In_One!(
     grid_p_full::Array{Float64,3},
     grid_dλ_ps::Array{Float64,3},
     grid_dθ_ps::Array{Float64,3},
-    grid_t::Array{Float64,3},
+    grid_virtual_t::Array{Float64,3},
     grid_M_half::Array{Float64,3},
     grid_w_full::Array{Float64,3},
     grid_δu::Array{Float64,3},
     grid_δv::Array{Float64,3},
     grid_δps::Array{Float64,3},
     grid_δt::Array{Float64,3},
-    grid_δq::Array{Float64,3},
 )
 
     # Unpack parameters
@@ -529,10 +537,10 @@ function Four_In_One!(
                     dlnp_dλ = x1 * grid_dλ_ps[i, j, 1]
                     dlnp_dθ = x1 * grid_dθ_ps[i, j, 1]
 
-                    # (grid_δu, grid_δv) -= RT/p * ∇p
-                    t_k = grid_t[i, j, k]
-                    grid_δu[i, j, k] -= rdgas * t_k * dlnp_dλ
-                    grid_δv[i, j, k] -= rdgas * t_k * dlnp_dθ
+                    # (grid_δu, grid_δv) -= R*T_v/p * ∇p
+                    virtual_t_k = grid_virtual_t[i, j, k]
+                    grid_δu[i, j, k] -= rdgas * virtual_t_k * dlnp_dλ
+                    grid_δv[i, j, k] -= rdgas * virtual_t_k * dlnp_dθ
 
                     # dmean = ∇⋅(v_k * Δp_k) = div_k * Δp_k + v_k * (Δbk_k * ∇p_s)
                     dmean =
@@ -560,8 +568,8 @@ function Four_In_One!(
                         grid_u[i, j, k] * dlnp_dλ +
                         grid_v[i, j, k] * dlnp_dθ
 
-                    # grid_δt += κT w/p
-                    grid_δt[i, j, k] += kappa * grid_t[i, j, k] * x5
+                    # Constant-cp moist pressure work: grid_δt += κ*T_v*w/p
+                    grid_δt[i, j, k] += kappa * virtual_t_k * x5
 
                     # grid_w_full[:,:,k] = dp/dt vertical velocity 
                     grid_w_full[i, j, k] = x5 * grid_p_full[i, j, k]
@@ -630,7 +638,8 @@ combined with a semi-implicit semi-Lagrangian (or Eulerian) time integration sch
     - **Algorithm Sequence:**
     1. **Conservation Check:** Computes global mass/energy integrals of the previous state.
     2. **Pressure-related:** Updates pressure variables and computes gradients ∇pₛ.
-    3. **Adiabatic Tendencies:** Calls `Four_In_One!` to compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
+    3. **Adiabatic Tendencies:** Calls `Four_In_One!` to compute vertical velocity,
+       the moist pressure-gradient force, and constant-cp pressure work.
     4. **Vertical Advection:** Explicitly computes vertical advection for u, v, T, and tracers.
     5. **Horizontal Advection:** Computes non-linear advection terms.
     6. **Vector Invariant Formulation:** Computes vorticity and divergence tendencies (ηv, ηu) and kinetic energy (E = Φ + ½(u² + v²)).
@@ -709,16 +718,8 @@ function Spectral_Dynamics!(
     spe_δq = dyn_data.spe_δq
     grid_δq = dyn_data.grid_δq
 
-    grid_z_full = dyn_data.grid_z_full
-    grid_z_half = dyn_data.grid_z_half
+    grid_virtual_t = vert_coord.virtual_temperature
     grid_w_full = dyn_data.grid_w_full
-
-    grav = atmo_data.grav
-    integrator = semi_implicit.integrator
-    Δt = Get_Δt(integrator)
-
-    grid_z_full = dyn_data.grid_z_full
-    grid_z_half = dyn_data.grid_z_half
 
     K_E = dyn_data.K_E
     # pressure difference
@@ -765,10 +766,11 @@ function Spectral_Dynamics!(
     Compute_Gradients!(mesh, spe_lnps_c, grid_dλ_ps, grid_dθ_ps)
     grid_dλ_ps .*= grid_ps
     grid_dθ_ps .*= grid_ps
+    Compute_Virtual_Temperature!(grid_virtual_t, atmo_data, grid_t, grid_q_c)
     # --- Pressure-related --- #
 
     # --- Adiabatic Tendencies --- #
-    # Compute vertical velocity (ω, M) and linear adiabatic terms (κTω/p, ∇Φ).
+    # Compute vertical velocity and moist equation-of-state pressure work.
     # Pressure gradient forces are included here.
     Four_In_One!(
         vert_coord,
@@ -783,14 +785,13 @@ function Spectral_Dynamics!(
         grid_p_full,
         grid_dλ_ps,
         grid_dθ_ps,
-        grid_t,
+        grid_virtual_t,
         grid_M_half,
         grid_w_full,
         grid_δu,
         grid_δv,
         grid_δps,
         grid_δt,
-        grid_δq,
     )
 
     Compute_Geopotential!(
@@ -798,11 +799,10 @@ function Spectral_Dynamics!(
         atmo_data,
         grid_lnp_half,
         grid_lnp_full,
-        grid_t,
+        grid_virtual_t,
         grid_geopots,
         grid_geopot_full,
         grid_geopot_half,
-        grid_q_c,
     )
 
     grid_δlnps .= grid_δps ./ grid_ps

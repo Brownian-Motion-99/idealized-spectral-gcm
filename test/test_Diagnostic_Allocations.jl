@@ -170,19 +170,26 @@ end
         )
         geopot_full = similar(geopot_full_ref)
         geopot_half = similar(geopot_half_ref)
+        computed_virtual_t = similar(virtual_t)
 
+        Pressure_Geopot.Compute_Virtual_Temperature!(
+            computed_virtual_t,
+            atmo,
+            grid_t,
+            grid_q,
+        )
         Pressure_Geopot.Compute_Geopotential!(
             vert,
             atmo,
             lnp_half,
             lnp_full,
-            grid_t,
+            computed_virtual_t,
             grid_geopots,
             geopot_full,
             geopot_half,
-            grid_q,
         )
 
+        @test computed_virtual_t == virtual_t
         @test geopot_full == geopot_full_ref
         @test geopot_half == geopot_half_ref
 
@@ -200,17 +207,23 @@ end
                   (lnp_half[:, :, k+1] - lnp_full[:, :, k])
         end
 
+        virtual_temperature_allocations = @allocated Pressure_Geopot.Compute_Virtual_Temperature!(
+            computed_virtual_t,
+            atmo,
+            grid_t,
+            grid_q,
+        )
         geopotential_allocations = @allocated Pressure_Geopot.Compute_Geopotential!(
             vert,
             atmo,
             lnp_half,
             lnp_full,
-            grid_t,
+            computed_virtual_t,
             grid_geopots,
             geopot_full,
             geopot_half,
-            grid_q,
         )
+        @test virtual_temperature_allocations == 0
         @test geopotential_allocations == 0
     end
 end

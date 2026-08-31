@@ -251,7 +251,7 @@ Mathematical formulation:
     - nothing
 
 """
-function Transition(nd::Float64, p::Array{Float64,1}, p_sigma::Float64, p_press::Float64)
+function Transition(nd::Integer, p::Array{Float64,1}, p_sigma::Float64, p_press::Float64)
 
     trans = zeros(Float64, nd + 1)
 

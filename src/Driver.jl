@@ -115,6 +115,11 @@ function JGCM_Simulate(config::Model_Config)
     do_energy = get(config.physics_params, "do_energy_correction", true)
     do_water  = get(config.physics_params, "do_water_correction",  true)
     use_virt  = get(config.physics_params, "use_virtual_temperature", true)
+    if is_3d && config.moisture_processes && !use_virt
+        throw(ArgumentError(
+            "moist primitive-equation simulations require use_virtual_temperature = true",
+        ))
+    end
 
     atmo_data = Atmo_Data(
         config.name,

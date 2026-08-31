@@ -5,7 +5,8 @@ using ..Atmo_Data_Module
 using ..Vert_Coordinate_Module
 
 export Compute_Pressures_And_Heights!,
-    Half_Level_Pressures!, Pressure_Variables!, Compute_Geopotential!
+    Half_Level_Pressures!, Pressure_Variables!, Compute_Virtual_Temperature!,
+    Compute_Geopotential!
 
 
 
@@ -83,16 +84,21 @@ function Compute_Pressures_And_Heights!(
         grid_lnp_full,
     )
 
+    Compute_Virtual_Temperature!(
+        vert_coord.virtual_temperature,
+        atmo_data,
+        grid_t,
+        grid_q,
+    )
     Compute_Geopotential!(
         vert_coord,
         atmo_data,
         grid_lnp_half,
         grid_lnp_full,
-        grid_t,
+        vert_coord.virtual_temperature,
         grid_geopots,
         grid_z_full,
         grid_z_half,
-        grid_q,
     )
 
     grid_z_full ./= grav
@@ -242,16 +248,52 @@ end
 
 
 """
+    Compute_Virtual_Temperature!(grid_tv, atmo_data, grid_t, grid_q)
+
+Compute the equation-of-state temperature from actual temperature and specific
+humidity. With `q` defined per unit mass of moist air, the exact relation is
+`T_v = T * (1 + (R_v/R_d - 1)q)`. Dry configurations copy `T` unchanged.
+"""
+function Compute_Virtual_Temperature!(
+    grid_tv::Array{Float64,3},
+    atmo_data::Atmo_Data,
+    grid_t::Array{Float64,3},
+    grid_q::Array{Float64,3},
+)
+    size(grid_tv) == size(grid_t) == size(grid_q) ||
+        throw(DimensionMismatch("temperature, humidity, and virtual temperature must match"))
+
+    use_virtual_temperature = atmo_data.use_virtual_temperature
+    virtual_temperature_coefficient = atmo_data.rvgas / atmo_data.rdgas - 1.0
+    @inbounds for k in axes(grid_t, 3), j in axes(grid_t, 2), i in axes(grid_t, 1)
+        temperature = grid_t[i, j, k]
+        isfinite(temperature) && temperature > 0.0 ||
+            throw(DomainError(temperature, "temperature must be finite and positive"))
+        if use_virtual_temperature
+            humidity = grid_q[i, j, k]
+            isfinite(humidity) && -1.0e-14 <= humidity < 1.0 ||
+                throw(DomainError(humidity, "specific humidity must satisfy 0 <= q < 1"))
+            grid_tv[i, j, k] =
+                temperature * (1.0 + virtual_temperature_coefficient * humidity)
+        else
+            grid_tv[i, j, k] = temperature
+        end
+    end
+    return nothing
+end
+
+
+
+"""
     Compute_Geopotential!(
         vert_coord, atmo_data,
         grid_lnp_half, grid_lnp_full,
-        grid_t,
-        grid_geopots, grid_geopot_full, grid_geopot_half,
-        grid_q
+        grid_virtual_t,
+        grid_geopots, grid_geopot_full, grid_geopot_half
     )
 
 Integrates the hydrostatic relation vertically to compute the geopotential field (Φ) at both layer interfaces and layer centers, 
-accounting for moisture effects via virtual temperature.
+using an already computed equation-of-state temperature.
 
 ### Parameters
     - vert_coord: Configuration for the vertical grid.
@@ -259,13 +301,11 @@ accounting for moisture effects via virtual temperature.
     - grid_lnp_half: Logarithm pressure at interfaces [nλ, nθ, nd+1]
     - grid_lnp_full: Logarithm pressure at layer centers [nλ, nθ, nd]
 
-    - grid_t: Atmospheric temperature [nλ, nθ, nd].
+    - grid_virtual_t: Equation-of-state temperature [nλ, nθ, nd].
 
     - grid_geopots: Surface geopotential [nλ, nθ, 1].
     - grid_geopot_full: Geopotential at layer centers [nλ, nθ, nd].
     - grid_geopots: Geopotential at interfaces [nλ, nθ, nd+1].
-
-    - grid_q: Moisture [nλ, nθ, nd].
 
 ### Returns
     - nothing
@@ -273,69 +313,51 @@ accounting for moisture effects via virtual temperature.
 ### Modified
     - grid_geopot_full
     - grid_geopot_half
-    - vert_coord.virtual_temperature
-
 """
 function Compute_Geopotential!(
     vert_coord::Vert_Coordinate,
     atmo_data::Atmo_Data,
     grid_lnp_half::Array{Float64,3},
     grid_lnp_full::Array{Float64,3},
-    grid_t::Array{Float64,3},
+    grid_virtual_t::Array{Float64,3},
     grid_geopots::Array{Float64,3},
     grid_geopot_full::Array{Float64,3},
     grid_geopot_half::Array{Float64,3},
-    grid_q::Array{Float64,3},
 )
 
-    use_virtual_temperature = atmo_data.use_virtual_temperature
-    rvgas, rdgas = atmo_data.rvgas, atmo_data.rdgas
+    rdgas = atmo_data.rdgas
     zero_top = vert_coord.zero_top
     nd = vert_coord.nd
 
-    virtual_t = vert_coord.virtual_temperature
-    @inbounds for j in axes(grid_t, 2), i in axes(grid_t, 1)
+    @inbounds for j in axes(grid_virtual_t, 2), i in axes(grid_virtual_t, 1)
         grid_geopot_half[i, j, nd+1] = grid_geopots[i, j, 1]
     end
 
     if zero_top  #todo (pk(1).eq.0.0) then
         k_top = 2
-        @inbounds for j in axes(grid_t, 2), i in axes(grid_t, 1)
+        @inbounds for j in axes(grid_virtual_t, 2), i in axes(grid_virtual_t, 1)
             grid_geopot_half[i, j, 1] = 0.0
         end
     else
         k_top = 1
     end
 
-    if (use_virtual_temperature)
-        virtual_temperature_coefficient = rvgas / rdgas - 1.0
-        @inbounds for k = 1:nd
-            for j in axes(grid_t, 2), i in axes(grid_t, 1)
-                virtual_t[i, j, k] =
-                    grid_t[i, j, k] *
-                    (1.0 + virtual_temperature_coefficient * grid_q[i, j, k])
-            end
-        end
-    else
-        copyto!(virtual_t, grid_t)
-    end
-
     @inbounds for k = nd:-1:k_top
         #Φ_{k-1/2} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k-1})
-        for j in axes(grid_t, 2), i in axes(grid_t, 1)
+        for j in axes(grid_virtual_t, 2), i in axes(grid_virtual_t, 1)
             grid_geopot_half[i, j, k] =
                 grid_geopot_half[i, j, k+1] +
-                rdgas * virtual_t[i, j, k] *
+                rdgas * grid_virtual_t[i, j, k] *
                 (grid_lnp_half[i, j, k+1] - grid_lnp_half[i, j, k])
         end
     end
 
     @inbounds for k = 1:nd
         #Φ_{k} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k})
-        for j in axes(grid_t, 2), i in axes(grid_t, 1)
+        for j in axes(grid_virtual_t, 2), i in axes(grid_virtual_t, 1)
             grid_geopot_full[i, j, k] =
                 grid_geopot_half[i, j, k+1] +
-                rdgas * virtual_t[i, j, k] *
+                rdgas * grid_virtual_t[i, j, k] *
                 (grid_lnp_half[i, j, k+1] - grid_lnp_full[i, j, k])
         end
     end
