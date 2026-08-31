@@ -208,7 +208,7 @@ end
     @test all(isfinite, bm_dq)
     @test all(bm_precip .> 0)
 
-    dyn_data = Dyn_Data("bm_storage", 1, 2, 4, 2, nd, 1)
+    dyn_data = Dyn_Data("bm_storage", 1, 2, 4, 2, nd)
     live_data =
         JGCM.Variable_Mappings_Module.Get_Dyn_Var_Map(dyn_data, Val(:PrimitiveEquation))
     @test live_data[:bm_dt] === dyn_data.grid_bm_t_tendency
@@ -265,7 +265,7 @@ end
         fill(300.0, nd),
         mesh.wave_numbers,
     )
-    dyn = Dyn_Data("bm_interface", num_fourier, num_spherical, nλ, nθ, nd, 1)
+    dyn = Dyn_Data("bm_interface", num_fourier, num_spherical, nλ, nθ, nd)
 
     p_half_column = collect(range(0.0, 1.0e5; length = nd + 1))
     p_full_column = 0.5 .* (p_half_column[1:end-1] .+ p_half_column[2:end])

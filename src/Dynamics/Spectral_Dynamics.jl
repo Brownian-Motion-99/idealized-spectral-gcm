@@ -117,7 +117,6 @@ function Reset_Dynamics_Tendencies!(dyn_data::Dyn_Data)
         dyn_data.spe_δdiv,
         dyn_data.spe_δlnps,
         dyn_data.spe_δt,
-        dyn_data.spe_δtracers,
         dyn_data.grid_δvor,
         dyn_data.grid_δdiv,
         dyn_data.grid_δu,
@@ -126,7 +125,6 @@ function Reset_Dynamics_Tendencies!(dyn_data::Dyn_Data)
         dyn_data.grid_δlnps,
         dyn_data.grid_δt,
         dyn_data.grid_δq,
-        dyn_data.grid_δtracers,
     )
         fill!(field, zero(eltype(field)))
     end
@@ -611,24 +609,12 @@ function Spectral_Dynamics!(
         dyn_data.spe_div_p, dyn_data.spe_div_c, dyn_data.spe_div_n, dyn_data.spe_δdiv
     spe_t_p, spe_t_c, spe_t_n, spe_δt =
         dyn_data.spe_t_p, dyn_data.spe_t_c, dyn_data.spe_t_n, dyn_data.spe_δt
-    spe_tracers_p, spe_tracers_c, spe_tracers_n, spe_δtracers = dyn_data.spe_tracers_p,
-    dyn_data.spe_tracers_c,
-    dyn_data.spe_tracers_n,
-    dyn_data.spe_δtracers
-
-
     # grid quantities
     grid_u_p, grid_u, grid_u_n = dyn_data.grid_u_p, dyn_data.grid_u_c, dyn_data.grid_u_n
     grid_v_p, grid_v, grid_v_n = dyn_data.grid_v_p, dyn_data.grid_v_c, dyn_data.grid_v_n
     grid_ps_p, grid_ps, grid_ps_n =
         dyn_data.grid_ps_p, dyn_data.grid_ps_c, dyn_data.grid_ps_n
     grid_t_p, grid_t, grid_t_n = dyn_data.grid_t_p, dyn_data.grid_t_c, dyn_data.grid_t_n
-    grid_tracers_p, grid_tracers, grid_tracers_n, grid_δtracers = dyn_data.grid_tracers_p,
-    dyn_data.grid_tracers_c,
-    dyn_data.grid_tracers_n,
-    dyn_data.grid_δtracers
-
-
     # related quanties
     grid_p_half, grid_lnp_half, grid_p_full, grid_lnp_full = dyn_data.grid_p_half,
     dyn_data.grid_lnp_half,
@@ -774,34 +760,6 @@ function Spectral_Dynamics!(
         grid_δQ,
     )
     grid_δt .+= grid_δQ
-
-    # passive tracers
-    for i = 1:dyn_data.num_tracers
-        @views begin
-            spe_p = spe_tracers_p[:, :, :, i]
-            spe_c = spe_tracers_c[:, :, :, i]
-            spe_n = spe_tracers_n[:, :, :, i]
-            spe_δ = spe_δtracers[:, :, :, i]
-            grid_c = grid_tracers[:, :, :, i]
-            grid_n = grid_tracers_n[:, :, :, i]
-            grid_δ = grid_δtracers[:, :, :, i]
-            Vert_Advection!(
-                vert_coord,
-                grid_c,
-                grid_Δp,
-                grid_M_half,
-                Δt,
-                vert_coord.vert_advect_scheme,
-                grid_δQ,
-            )
-            grid_δ .+= grid_δQ
-            Add_Horizontal_Advection!(mesh, spe_c, grid_u, grid_v, grid_δ)
-            Trans_Grid_To_Spherical!(mesh, grid_δ, spe_δ)
-            Compute_Spectral_Damping!(integrator, spe_c, spe_p, spe_δ)
-            Filtered_Leapfrog!(integrator, spe_δ, spe_p, spe_c, spe_n)
-            Trans_Spherical_To_Grid!(mesh, spe_n, grid_n)
-        end
-    end
 
     # Moisture is a grid-only prognostic. The finite-volume transport starts
     # from q_c during startup and q_p during leapfrog, then applies H followed

@@ -62,7 +62,6 @@ config = Model_Config(
     implicit_coef = 0.5,
     initial_condition = :Moist_Spinup,
     moisture_processes = true,
-    num_tracers = 1,
     output_path = output_path,
     output_filename = joinpath(output_path, "output.nc"),
     logger = joinpath(output_path, "logger.log"),

@@ -65,7 +65,6 @@ function make_barotropic_config(;
         saving_frequency  = saving_frequency,
 
         moisture_processes = false,
-        num_tracers        = 0,
 
         output_path     = output_path_base,
         output_filename = joinpath(output_path_base, "output.nc"),
@@ -156,7 +155,6 @@ end
         saving_frequency  = 0,
 
         moisture_processes = true,
-        num_tracers        = 1,
 
         output_path     = output_path_base,
         output_filename = joinpath(output_path_base, "output.nc"),
@@ -296,7 +294,6 @@ end
         saving_frequency = 172800,  # 2 days — will not trigger during 1-day run
 
         moisture_processes = false,
-        num_tracers        = 0,
 
         output_path     = warm_path,
         output_filename = joinpath(warm_path, "output.nc"),

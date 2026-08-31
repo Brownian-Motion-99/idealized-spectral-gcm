@@ -61,7 +61,6 @@ using JGCM
         robert_coef = 0.04,
         implicit_coef = 0.5,
         moisture_processes = true,
-        num_tracers = 0,
         initial_condition = :Moist_Spinup,
         output_path = "/tmp",
         output_filename = "/tmp/coupling_smoke.nc",
@@ -74,9 +73,7 @@ using JGCM
         "coupling_smoke", nλ, nθ, nd, true, true, true, true, mesh.sinθ;
         radius = radius, omega = config.omega, grav = config.grav,
     )
-    dyn = Dyn_Data(
-        "coupling_smoke", num_fourier, num_spherical, nλ, nθ, nd, 0,
-    )
+    dyn = Dyn_Data("coupling_smoke", num_fourier, num_spherical, nλ, nθ, nd)
     Initialize_Atmos_State!(mesh, atmo, dyn, vert, config)
     integrator = JGCM.Time_Integrator_Module.Filtered_Leapfrog(
         config.robert_coef, config.damping_order, config.damping_coef,

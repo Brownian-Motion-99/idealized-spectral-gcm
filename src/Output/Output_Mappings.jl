@@ -151,12 +151,6 @@ function Get_Var_Info(::Val{:PrimitiveEquation})
         ),
     )
 
-    # Additional passive tracers
-    for i = 1:10
-        sym = Symbol("tr$i")
-        base_dict[sym] = VarMeta("tr$i", "1", "Passive Tracer $i", "passive_tracer_$i", 3)
-    end
-
     return base_dict
 end
 

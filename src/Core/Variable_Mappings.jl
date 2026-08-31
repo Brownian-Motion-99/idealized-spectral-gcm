@@ -86,19 +86,6 @@ function Get_Data_Pointer(dyn_data::Dyn_Data, var_name::Symbol)
         return dyn_data.grid_bm_precip
     end
 
-    # Handle :tr1, :tr2, etc.
-    s_str = string(var_name)
-    if startswith(s_str, "tr")
-        try
-            idx = parse(Int, s_str[3:end])
-            if idx <= size(dyn_data.grid_tracers_c, 4)
-                return view(dyn_data.grid_tracers_c, :, :, :, idx)
-            end
-        catch
-            return nothing
-        end
-    end
-
     return nothing
 end
 
@@ -143,12 +130,6 @@ function Get_Dyn_Var_Map(dyn_data::Dyn_Data, ::Val{:PrimitiveEquation})
         :dps => dyn_data.grid_δps,
         :dq => dyn_data.grid_δq,
     )
-
-    # Inject :tr1, :tr2...
-    for i = 1:size(dyn_data.grid_tracers_c, 4)
-        sym = Symbol("tr$i")
-        base_map[sym] = view(dyn_data.grid_tracers_c, :, :, :, i)
-    end
 
     return base_map
 end

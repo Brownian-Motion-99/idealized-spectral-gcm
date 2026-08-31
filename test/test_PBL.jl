@@ -29,7 +29,9 @@
         workspace, atmo, p_half, ps, u, v, temperature, humidity,
     )
 
-    expected_za = (atmo.rdgas / atmo.grav) * 280.0 * (1.0 + 0.608 * 0.010) *
+    virtual_coefficient = atmo.rvgas / atmo.rdgas - 1.0
+    expected_za = (atmo.rdgas / atmo.grav) * 280.0 *
+                  (1.0 + virtual_coefficient * 0.010) *
                   log(100_000.0 / 90_000.0) / 2.0
     @test all(wind .== 5.0)
     @test all(za .≈ expected_za)
@@ -64,8 +66,9 @@ end
         "PBL_Top_Value" => 0.0,
     )
 
-    tv_upper = temperature[1] * (1.0 + 0.608 * humidity[1])
-    tv_lower = temperature[2] * (1.0 + 0.608 * humidity[2])
+    virtual_coefficient = atmo.rvgas / atmo.rdgas - 1.0
+    tv_upper = temperature[1] * (1.0 + virtual_coefficient * humidity[1])
+    tv_lower = temperature[2] * (1.0 + virtual_coefficient * humidity[2])
     rho_interface = p_half[2] / (atmo.rdgas * 0.5 * (tv_upper + tv_lower))
     diffusivity = coefficient * surface_wind[1] * surface_height[1]
     ca =

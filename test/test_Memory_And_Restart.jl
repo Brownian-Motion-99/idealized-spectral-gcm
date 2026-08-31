@@ -10,13 +10,13 @@ end
 @testset "Restart compatibility" begin
     mktempdir() do dir
         manager = Restart_Manager(dir, 600)
-        source = Dyn_Data("source", 1, 2, 4, 2, 2, 0)
+        source = Dyn_Data("source", 1, 2, 4, 2, 2)
         source.spe_vor_p[1] = 3 + 4im
         source.grid_u_c[1] = 12.5
         source.grid_q_c .= 0.007
         Write_Restart_File(manager, source, 600)
 
-        restored = Dyn_Data("restored", 1, 2, 4, 2, 2, 0)
+        restored = Dyn_Data("restored", 1, 2, 4, 2, 2)
         @test Load_Restart_File!(restored, joinpath(dir, "restart_t600.jld2")) == 600
         @test restored.spe_vor_p == source.spe_vor_p
         @test restored.grid_u_c == source.grid_u_c
@@ -33,14 +33,14 @@ end
             file["state/grid_q_c"] = source.grid_q_c
             file["state/spe_q_c"] = zeros(ComplexF64, 2, 3, 2)
         end
-        version2_restored = Dyn_Data("version2", 1, 2, 4, 2, 2, 0)
+        version2_restored = Dyn_Data("version2", 1, 2, 4, 2, 2)
         @test Load_Restart_File!(version2_restored, version2_file) == 450
         @test version2_restored.grid_q_c == source.grid_q_c
 
         legacy_file = joinpath(dir, "legacy.jld2")
         legacy = LegacyRestartState(copy(source.spe_vor_p), copy(source.grid_u_c))
         jldsave(legacy_file; dyn_data_state = legacy, saved_time = 300)
-        legacy_restored = Dyn_Data("legacy", 1, 2, 4, 2, 2, 0)
+        legacy_restored = Dyn_Data("legacy", 1, 2, 4, 2, 2)
         @test Load_Restart_File!(legacy_restored, legacy_file) == 300
         @test legacy_restored.spe_vor_p == source.spe_vor_p
         @test legacy_restored.grid_u_c == source.grid_u_c
@@ -52,6 +52,10 @@ end
     @test !hasfield(Dyn_Data, :spec_δv)
     @test !hasfield(Dyn_Data, :grid_d_half1)
     @test !hasfield(Dyn_Data, :grid_d_half2)
+    @test !hasfield(Dyn_Data, :spe_tracers_c)
+    @test !hasfield(Dyn_Data, :grid_tracers_c)
+    @test !hasfield(Dyn_Data, :spe_δtracers)
+    @test !hasfield(Dyn_Data, :grid_δtracers)
 
     mesh = Spectral_Spherical_Mesh(3, 4, 64, 32, 2, 6.371e6)
     vert = Vert_Coordinate(

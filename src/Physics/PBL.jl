@@ -53,9 +53,11 @@ function Calculate_V_c_za!(
 )
 
     nλ, nθ, nd = atmo_data.nλ::Int64, atmo_data.nθ::Int64, atmo_data.nd::Int64
-    Rd, grav = atmo_data.rdgas::Float64, atmo_data.grav::Float64
+    Rd, Rv, grav =
+        atmo_data.rdgas::Float64, atmo_data.rvgas::Float64, atmo_data.grav::Float64
 
     Rd_g = Rd / grav
+    virtual_coefficient = Rv / Rd - 1.0
     V_c, za = workspace.V_c, workspace.za
 
     @threads for j = 1:nθ
@@ -70,7 +72,7 @@ function Calculate_V_c_za!(
             ps_val = grid_ps[i, j, 1]
 
             # tv
-            tv_factor = 1.0 + 0.608 * qs_val
+            tv_factor = 1.0 + virtual_coefficient * qs_val
 
             # Surface wind speed
             V_c[i, j] = sqrt(us_val^2 + vs_val^2)
@@ -391,6 +393,7 @@ function Implicit_PBL_Mixing!(
 
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
     Rd, cp, grav = atmo_data.rdgas, atmo_data.cp_air, atmo_data.grav
+    virtual_coefficient = atmo_data.rvgas / Rd - 1.0
 
     p_scale = 10000.0
     p0 = 100000.0
@@ -458,10 +461,10 @@ function Implicit_PBL_Mixing!(
             for k = 1:nd-1
                 rpdel_k = 1 / (grid_p_half[i, j, k+1] - grid_p_half[i, j, k])
                 rpdel_kp1 = 1 / (grid_p_half[i, j, k+2] - grid_p_half[i, j, k+1])
-                tv_upper =
-                    grid_t[i, j, k] * (1.0 + 0.608 * grid_q[i, j, k])
-                tv_lower =
-                    grid_t[i, j, k+1] * (1.0 + 0.608 * grid_q[i, j, k+1])
+                tv_upper = grid_t[i, j, k] *
+                           (1.0 + virtual_coefficient * grid_q[i, j, k])
+                tv_lower = grid_t[i, j, k+1] *
+                           (1.0 + virtual_coefficient * grid_q[i, j, k+1])
                 rho_interface =
                     grid_p_half[i, j, k+1] / (Rd * 0.5 * (tv_upper + tv_lower))
                 isfinite(rho_interface) && rho_interface > 0 || throw(

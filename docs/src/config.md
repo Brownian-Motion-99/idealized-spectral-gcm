@@ -214,7 +214,6 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 | `:ddiv` | `ddiv_dt` | s-2 | `tendency_of_divergence_of_wind` | 3D |
 | `:dq` | `dq_dt` | s-1 | `tendency_of_specific_humidity` | 3D |
 | **Tracers** |  |  |  |  |
-| `:tr1` ... `:tr10` | `tr#` | kg/kg | Passive Tracers 1-10 | 3D |
 
 #### Shallow Water (`:ShallowWater`)
 
@@ -333,7 +332,6 @@ config = Model_Config(
 
     # Physics
     moisture_processes = true,
-    num_tracers = 1,
     
     # IO
     output_path     = output_path_base,

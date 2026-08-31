@@ -45,7 +45,7 @@ using JLD2
 end
 
 @testset "LRF persistent storage and output registration" begin
-    dyn_data = Dyn_Data("lrf_test", 1, 2, 4, 2, 2, 1)
+    dyn_data = Dyn_Data("lrf_test", 1, 2, 4, 2, 2)
     @test size(dyn_data.grid_lrf_tendency) == (4, 2, 2)
     @test all(iszero, dyn_data.grid_lrf_tendency)
 

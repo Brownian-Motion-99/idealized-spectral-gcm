@@ -45,7 +45,6 @@ config = Model_Config(
 
     # Physics / Tracers
     moisture_processes = false,
-    num_tracers = 0,
 
     # IO Settings
     output_path = output_path_base,

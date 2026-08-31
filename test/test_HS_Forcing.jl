@@ -113,7 +113,6 @@ end
         nλ,
         nθ,
         nd,
-        0,
     )
 
     dyn.grid_ps_c .= 1.0e5
@@ -171,7 +170,6 @@ end
         robert_coef=0.04,
         implicit_coef=0.5,
         moisture_processes=false,
-        num_tracers=0,
         initial_condition=:Moist_Spinup,
         output_path="/tmp",
         output_filename="/tmp/hs_coupling.nc",

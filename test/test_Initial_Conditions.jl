@@ -39,7 +39,6 @@ using JGCM
         nλ,
         nθ,
         nd,
-        0,
     )
     config = Model_Config(
         name="moist_initial_condition",
@@ -61,7 +60,6 @@ using JGCM
         robert_coef=0.04,
         implicit_coef=0.5,
         moisture_processes=true,
-        num_tracers=0,
         initial_condition=:Moist_Spinup,
         output_path="/tmp",
         output_filename="/tmp/moist_initial_condition.nc",

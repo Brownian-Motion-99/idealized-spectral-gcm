@@ -46,7 +46,6 @@ config = Model_Config(
     saving_frequency  = 0,   # no rotation for this test
 
     moisture_processes = false,
-    num_tracers        = 0,
 
     output_path     = output_path_base,
     output_filename = joinpath(output_path_base, "output.nc"),

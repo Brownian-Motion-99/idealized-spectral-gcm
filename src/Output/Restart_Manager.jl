@@ -98,8 +98,6 @@ end
 function _copy_restart_array!(dest::Array, src::Array, name::Symbol)
     if size(dest) == size(src)
         copyto!(dest, src)
-    elseif length(dest) == 0 && occursin("tracer", String(name))
-        return
     else
         error("Restart field $name has size $(size(src)); expected $(size(dest))")
     end

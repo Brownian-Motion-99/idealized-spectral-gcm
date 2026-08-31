@@ -149,7 +149,6 @@ function JGCM_Simulate(config::Model_Config)
         config.name,
         config.num_fourier, num_spherical,
         nλ, config.nθ, config.nd,
-        config.num_tracers
     )
 
     # Load static LRF data once, before the time loop.
@@ -460,7 +459,6 @@ function status_diagnostics(
     end
 
     # Define variables to monitor
-    # Using Views for tracers to avoid allocation
     diag_vars = [
         (:U,      dyn_data.grid_u_c),
         (:V,      dyn_data.grid_v_c),

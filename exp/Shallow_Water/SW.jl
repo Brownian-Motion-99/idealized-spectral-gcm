@@ -58,7 +58,6 @@ config = Model_Config(
 
     # Physics / Tracers
     moisture_processes = false,
-    num_tracers = 1, # Kept as 1 for potential vorticity tracer if needed
 
     # IO
     output_path = output_path_base,

@@ -12,9 +12,7 @@
         mesh.sinθ;
         radius = 6.371e6,
     )
-    data = Dyn_Data(
-        "water correction test", num_fourier, num_spherical, nλ, nθ, nd, 1,
-    )
+    data = Dyn_Data("water correction test", num_fourier, num_spherical, nλ, nθ, nd)
 
     data.grid_ps_n .= 100_000.0
     for k = 1:nd, j = 1:nθ, i = 1:nλ
@@ -91,9 +89,7 @@ end
         mesh.sinθ;
         radius = 6.371e6,
     )
-    data = Dyn_Data(
-        "zero-water correction test", num_fourier, num_spherical, nλ, nθ, nd, 1,
-    )
+    data = Dyn_Data("zero-water correction test", num_fourier, num_spherical, nλ, nθ, nd)
     data.grid_ps_n .= 100_000.0
     data.grid_q_n .= 0.001
 

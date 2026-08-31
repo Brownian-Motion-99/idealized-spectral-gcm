@@ -63,8 +63,6 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     moisture_processes::Bool = true
 
-    num_tracers::Int64 = 1
-
     initial_condition::Any
 
     # -------------------------------------------------------
