@@ -26,6 +26,7 @@ mutable struct Vert_Coordinate
     vert_advect_scheme::String
 
     p_ref::Float64
+    # Derived from ak/bk: true only when the top interface pressure is zero.
     zero_top::Bool
 
     # ak[nd+1] = 0, bk[nd+1] = 1, bk[1] = 0
@@ -67,7 +68,8 @@ Constructs a `Vert_Coordinate` struct, initializing the vertical coordinate conf
     - vert_advect_scheme: Selector for vertical advection algorithm.
     
     - p_ref: Reference pressure (for hybrid coordinate).
-    - zero_top: Flag to enforce zero pressure at the top.
+    - zero_top: Selects a zero-pressure top for configurable uneven-sigma grids.
+      Fixed coordinate tables retain their prescribed top pressure.
 
     - scale_heights: Parameter for grid stretching/clustering.
     - surf_res: Parameter for surface layer resolution control.
@@ -108,6 +110,7 @@ function Vert_Coordinate(
         p_press,
         p_sigma,
         exponent,
+        zero_top,
     )
     length(ak) == nd + 1 && length(bk) == nd + 1 || throw(
         DimensionMismatch(
@@ -123,6 +126,10 @@ function Vert_Coordinate(
     mass_Δp = zeros(Float64, nλ, nθ, 1)
     mass_integrand = zeros(Float64, nλ, nθ, 1)
 
+    # The coefficients, rather than the requested coordinate option, are the
+    # source of truth used by the pressure and hydrostatic kernels.
+    coefficient_zero_top = iszero(ak[1]) && iszero(bk[1])
+
     Vert_Coordinate(
         nλ,
         nθ,
@@ -131,7 +138,7 @@ function Vert_Coordinate(
         vert_difference_option,
         vert_advect_scheme,
         p_ref,
-        zero_top,
+        coefficient_zero_top,
         ak,
         bk,
         Δak,
@@ -152,7 +159,7 @@ end
         nd, vert_coord_option,
         p_ref,
         scale_heights, surf_res,
-        p_press, p_sigma, exponent
+        p_press, p_sigma, exponent, zero_top
     )
 
 Generates the vertical coordinate coefficients (Ak and Bk) that define the model interfaces.
@@ -169,6 +176,8 @@ Generates the vertical coordinate coefficients (Ak and Bk) that define the model
     - p_press: Upper transition threshold for hybrid coordinate.
     - p_sigma: Lower transition threshold for hybrid coordinate.
     - exponent: Power exponent for grid stretching function.
+    - zero_top: Whether configurable uneven-sigma coordinates use a
+      zero-pressure top. Fixed coordinate tables retain their prescribed top.
 
 ### Returns
     - a (Array{Float64, 1}): The pressure-dependent interface coefficients (Ak), 
@@ -190,13 +199,14 @@ function Compute_Vert_Coord(
     p_press::Float64 = 0.1,
     p_sigma::Float64 = 0.3,
     exponent::Float64 = 2.5,
+    zero_top::Bool = true,
 )
 
     if (vert_coord_option == "even_sigma")
         a, b = Compute_Even_Sigma(nd)
 
     elseif (vert_coord_option == "uneven_sigma")
-        a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, true)
+        a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, zero_top)
 
     elseif (vert_coord_option == "simmons_and_burridge")
         a, b = Compute_Simmons_Burridge()

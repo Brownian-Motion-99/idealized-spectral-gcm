@@ -94,7 +94,7 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     mesh_λc::Vector{Float64}        # longitude grid in radians (for file re-creation on rotation)
     mesh_θc::Vector{Float64}        # latitude grid in radians
     vert_coord_cache::Any           # Vert_Coordinate or nothing
-    global_meta::Dict{String, String}  # NC global attributes
+    global_meta::Dict{String, Any}  # NC global attributes
 end
 
 # ==============================================================================
@@ -104,7 +104,7 @@ function _Init_Single_File(
     filename, mesh, var_info_map,
     requested_vars, file_type::Symbol, target_levels=Float64[];
     vert_coord=nothing,
-    global_meta::Dict{String, String}=Dict{String, String}()
+    global_meta::Dict{String, Any}=Dict{String, Any}()
 )
     if isfile(filename); rm(filename); end
     ds = NCDataset(filename, "c")
@@ -240,7 +240,11 @@ function Output_Manager(
         "title"       => "Output of idealized-spectral-gcm",
         "institution" => institute,
         "experiment"  => experiment_id,
-        "references"  => "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+        "references"  => "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git",
+        "gravity" => atmo_data.grav,
+        "gravity_units" => "m s-2",
+        "dry_air_gas_constant" => atmo_data.rdgas,
+        "dry_air_gas_constant_units" => "J kg-1 K-1",
     )
 
     # Define Buffers (Initialize as empty by default)

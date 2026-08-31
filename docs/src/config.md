@@ -155,6 +155,12 @@ The `Output_Manager` writes time-averaged snapshots to NetCDF files at `output_i
 * **Pressure-level output (optional):** Set `do_plev_output = true` together with `pressure_levels` to also produce interpolated output on pressure levels (e.g., `output_t0_plev.nc`). An error is raised if `do_plev_output = true` but `pressure_levels` is empty.
 * **Final chunk:** `Driver.jl` does not rotate to a new NC chunk on the final saving boundary of the run. The rotation is skipped when `integrator.time >= segment_end_time` (the absolute model time at the end of the current invocation, i.e. `start_time + end_time`). This correctly handles both cold starts (where `segment_end_time == end_time`) and warm restarts (where `segment_end_time > end_time`). The last interval's data stays in the previously-opened chunk rather than being moved to a fresh, empty file.
 
+#### Future work: native-coordinate CF interoperability
+
+Pressure-level files have explicit `plev` coordinates and are the recommended output for analysis. Native model-level files retain Isca-style `pfull`, `phalf`, `pk`, `bk`, and `ps` metadata, which is sufficient for this project's postprocessor but does not fully describe the nonlinear Simmons--Burridge full-level pressure calculation to generic CF software.
+
+This is currently a low-priority interoperability limitation because it does not affect model calculations or pressure-level output. A future implementation should use a CF sigma coordinate for pure-sigma configurations and provide an exact auxiliary pressure coordinate for hybrid Simmons--Burridge configurations.
+
 ### Runtime Logging
 
 The driver prints a status summary to `logger.log` periodically.
@@ -197,7 +203,7 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 | `:vor` | `vor` | s-1 | `atmosphere_relative_vorticity` | 3D |
 | `:div` | `div` | s-1 | `divergence_of_wind` | 3D |
 | `:p` | `p` | Pa | `air_pressure` | 3D |
-| `:z` | `zg` | m2 s-2 | `geopotential` | 3D |
+| `:z` | `zg` | m | `geopotential_height` | 3D |
 | `:t_eq` | `teq` | K | `held_suarez_equilibrium_temperature` | 3D |
 | **Surface & Fluxes** | | | | |
 | `:ps` | `ps` | Pa | `surface_air_pressure` | 2D |

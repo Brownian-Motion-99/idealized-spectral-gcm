@@ -46,7 +46,16 @@ function Interpolate_File(
     bk = Float64.(ds_in["bk"][:])
     @printf("Grid: Detected Isca-style interface coefficients (pk/bk)\n")
 
-    # 3. Setup Physics Context
+    # 3. Setup Physics Context. Native files record the constants used by the
+    # model so offline geopotential-height interpolation matches online output.
+    gravity = haskey(ds_in.attrib, "gravity") ? Float64(ds_in.attrib["gravity"]) : 9.80
+    rdgas = haskey(ds_in.attrib, "dry_air_gas_constant") ?
+            Float64(ds_in.attrib["dry_air_gas_constant"]) : 287.04
+    isfinite(gravity) && gravity > 0.0 ||
+        throw(DomainError(gravity, "gravity metadata must be finite and positive"))
+    isfinite(rdgas) && rdgas > 0.0 || throw(
+        DomainError(rdgas, "dry-air gas-constant metadata must be finite and positive"),
+    )
     phys = Atmo_Data(
         "PostProcess",
         1,
@@ -58,6 +67,8 @@ function Interpolate_File(
         false,
         [0.0];
         radius = 6371.0e3,
+        grav = gravity,
+        rdgas = rdgas,
     )
 
     # 4. Prepare Output File

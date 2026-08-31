@@ -126,7 +126,7 @@ mutable struct Dyn_Data
     grid_liquid_water_content::Array{Float64,3}
     grid_precip::Array{Float64,3}
 
-    # z coordinate
+    # geopotential height [m]
     grid_z_full::Array{Float64,3}
     grid_z_half::Array{Float64,3}
 

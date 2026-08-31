@@ -38,8 +38,8 @@ ensuring hydrostatic balance consistent with the provided vertical coordinate sy
     - grid_p_full: Pressure at layer centers [nλ, nθ, nd].
     - grid_lnp_full: Logarithm pressure at layer centers [nλ, nθ, nd].
 
-    - grid_z_full: Geopotentail at layer centers [nλ, nθ, nd].
-    - grid_z_half: Geopotentail at interfaces [nλ, nθ, nd+1].
+    - grid_z_full: Geopotential height at layer centers [m; nλ, nθ, nd].
+    - grid_z_half: Geopotential height at interfaces [m; nλ, nθ, nd+1].
 
     - grid_q: Moisture [nλ, nθ, nd].
     
@@ -333,7 +333,7 @@ function Compute_Geopotential!(
         grid_geopot_half[i, j, nd+1] = grid_geopots[i, j, 1]
     end
 
-    if zero_top  #todo (pk(1).eq.0.0) then
+    if zero_top
         k_top = 2
         @inbounds for j in axes(grid_virtual_t, 2), i in axes(grid_virtual_t, 1)
             grid_geopot_half[i, j, 1] = 0.0

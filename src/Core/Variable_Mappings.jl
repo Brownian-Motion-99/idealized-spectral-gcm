@@ -112,7 +112,7 @@ function Get_Dyn_Var_Map(dyn_data::Dyn_Data, ::Val{:PrimitiveEquation})
         :w => dyn_data.grid_w_full,
         :p => dyn_data.grid_p_full,
         :q => dyn_data.grid_q_c,
-        :z => dyn_data.grid_geopot_full,
+        :z => dyn_data.grid_z_full,
         :lnps => dyn_data.grid_lnps,
         :t_eq => dyn_data.grid_t_eq,
         :lrf_dt => dyn_data.grid_lrf_tendency,

@@ -65,7 +65,7 @@ physics_params = Dict{String,Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name = "ctrl"
+experiment_name = "test"
 output_path_base = joinpath("/data92/garywu/undergrad_proposal", experiment_name)
 mkpath(output_path_base)
 
@@ -93,7 +93,7 @@ config = Model_Config(
 
     # Time Integration
     Δt = 600,
-    end_time = 86400 * 10000,
+    end_time = 86400 * 10,
     spinup_day = 0.0,
 
     # Numerics
@@ -108,8 +108,8 @@ config = Model_Config(
     restart_file = "",
     # is_restart = true,
     # restart_file = "/data92/garywu/undergrad_proposal/ctrl/restart/restart_t1728000000.jld2",
-    saving_frequency = 86400 * 100,
-    # saving_frequency = 0,    # disable saving restarts
+    # saving_frequency = 86400 * 100,
+    saving_frequency = 0,    # disable saving restarts
 
     # Cold start (disabled if is_restart is true)
     initial_condition = :Moist_Spinup,
