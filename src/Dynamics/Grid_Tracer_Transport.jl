@@ -92,7 +92,7 @@ function _face_velocities!(workspace, u, v)
     return nothing
 end
 
-function _horizontal_substeps(workspace, mesh, dt, cfl_limit)
+function _horizontal_substeps(workspace, mesh, v, dt, cfl_limit)
     max_cfl = 0.0
     nλ, nθ, nd = size(workspace.u_face)
     Δλ = 2π / nλ
@@ -104,28 +104,46 @@ function _horizontal_substeps(workspace, mesh, dt, cfl_limit)
         east_volume = uf[ie, j, k] * zonal_length
         south_volume = vf[i, j, k] * mesh.radius * cos(mesh.θe[j]) * Δλ
         north_volume = vf[i, j+1, k] * mesh.radius * cos(mesh.θe[j+1]) * Δλ
-        incoming = max(west_volume, 0.0) + max(-east_volume, 0.0) +
-                   max(south_volume, 0.0) + max(-north_volume, 0.0)
+        # Meridional Van Leer remains a one-cell operator, while zonal Van
+        # Leer can sweep arbitrary distances. Subcycle zonal flow only when
+        # its deformation would make neighboring departure faces cross.
+        limiting_volume = max(south_volume, 0.0) + max(-north_volume, 0.0) +
+                          max(east_volume - west_volume, 0.0)
         area = mesh.radius^2 * Δλ * (sin(mesh.θe[j+1]) - sin(mesh.θe[j]))
-        max_cfl = max(max_cfl, dt * incoming / area)
+        max_cfl = max(max_cfl, dt * limiting_volume / area)
+
+        if v[i, j, k] >= 0.0
+            distance = j == 1 ? mesh.radius * 2(mesh.θc[1] + π / 2) :
+                       mesh.radius * (mesh.θc[j] - mesh.θc[j-1])
+        else
+            distance = j == nθ ? mesh.radius * 2(π / 2 - mesh.θc[nθ]) :
+                       mesh.radius * (mesh.θc[j+1] - mesh.θc[j])
+        end
+        max_cfl = max(max_cfl, dt * abs(v[i, j, k]) / distance)
     end
     return max(1, ceil(Int, max_cfl / cfl_limit))
 end
 
 function _vertical_substeps(M, Δp, dt, cfl_limit)
     nλ, nθ, nd = size(Δp)
-    max_cfl = 0.0
+    max_deformation = 0.0
     @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        incoming = max(M[i, j, k], 0.0) + max(-M[i, j, k+1], 0.0)
-        max_cfl = max(max_cfl, dt * incoming / Δp[i, j, k])
+        # Large coherent throughflow is handled by swept-layer PPM. Only
+        # subcycle when the lower departure interface would cross the upper
+        # one, i.e. when a layer's departure thickness ceases to be positive.
+        deformation = max(M[i, j, k+1] - M[i, j, k], 0.0)
+        max_deformation = max(max_deformation, dt * deformation / Δp[i, j, k])
     end
-    return max(1, ceil(Int, max_cfl / cfl_limit))
+    return max(1, ceil(Int, max_deformation / cfl_limit))
 end
 
 """
 Advance a scalar with spherical multidimensional Van Leer transport followed by
-nonuniform monotone PPM vertical transport. Winds, mass fluxes, and layer
-thicknesses are held fixed while the two operators subcycle independently.
+nonuniform monotone PPM vertical transport. Zonal Van Leer and vertical PPM
+integrate across every fully swept cell, as in Isca/FMS. Subcycling is needed
+only by the one-cell meridional operator or to prevent departure-interface
+crossing under strongly deformational flow. Winds, mass fluxes, and layer
+thicknesses are held fixed during the transport step.
 """
 function Advance_Grid_Tracer!(
     workspace::Grid_Tracer_Workspace,
@@ -153,7 +171,7 @@ function Advance_Grid_Tracer!(
     _face_velocities!(workspace, u, v)
     copyto!(workspace.q_work, tracer_in)
 
-    nh = _horizontal_substeps(workspace, mesh, dt, cfl_limit)
+    nh = _horizontal_substeps(workspace, mesh, v, dt, cfl_limit)
     dt_h = dt / nh
     for _ = 1:nh
         Horizontal_Tracer_Advection!(workspace, mesh, workspace.q_stage, workspace.q_work, u, v, dt_h)
@@ -217,10 +235,15 @@ function _transverse_states!(workspace, mesh, q, u, v, dt)
     nλ, nθ, nd = size(q)
     Δλ = 2π / nλ
     @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+        # Isca's zonal transverse predictor: linearly interpolate q at the
+        # semi-Lagrangian departure point. Unlike a one-cell upwind predictor,
+        # this remains well-defined when the half-step crosses several cells.
         c = 0.5dt * u[i, j, k] / (mesh.radius * mesh.cosθ[j] * Δλ)
-        qx[i, j, k] = c >= 0.0 ?
-            q[i, j, k] + c * (q[_west(i, nλ), j, k] - q[i, j, k]) :
-            q[i, j, k] - c * (q[_east(i, nλ), j, k] - q[i, j, k])
+        offset = floor(Int, c)
+        fraction = c - offset
+        ileft = mod1(i - 1 - offset, nλ)
+        iright = _east(ileft, nλ)
+        qx[i, j, k] = fraction * q[ileft, j, k] + (1 - fraction) * q[iright, j, k]
 
         if v[i, j, k] >= 0.0
             qm = j == 1 ? q[_pole_shift(i, nλ), 1, k] : q[i, j-1, k]
@@ -237,7 +260,38 @@ function _transverse_states!(workspace, mesh, q, u, v, dt)
     return nothing
 end
 
-"""One CFL-limited multidimensional spherical Van Leer substep."""
+"""
+Return low- and high-order averages over the zonal interval swept through a
+face. Fully crossed cells contribute their exact cell means; Van Leer is used
+only in the fractional terminal donor cell.
+"""
+@inline function _zonal_swept_averages(q_high, q_low, slope, i, j, k, courant, nλ)
+    distance = abs(courant)
+    iszero(distance) && return q_low[i, j, k], q_high[i, j, k]
+    direction = courant > 0.0 ? -1 : 1
+    donor = courant > 0.0 ? _west(i, nλ) : i
+    whole = floor(Int, distance)
+    fraction = distance - whole
+    low_integral = 0.0
+    high_integral = 0.0
+    @inbounds for _ = 1:whole
+        low_integral += q_low[donor, j, k]
+        high_integral += q_high[donor, j, k]
+        donor = mod1(donor + direction, nλ)
+    end
+    if fraction > 0.0
+        low_value = q_low[donor, j, k]
+        high_value = q_high[donor, j, k]
+        face_average = courant > 0.0 ?
+            high_value + 0.5 * slope[donor, j, k] * (1 - fraction) :
+            high_value - 0.5 * slope[donor, j, k] * (1 - fraction)
+        low_integral += fraction * low_value
+        high_integral += fraction * face_average
+    end
+    return low_integral / distance, high_integral / distance
+end
+
+"""One multidimensional spherical Van Leer step with swept-cell zonal fluxes."""
 function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
     nλ, nθ, nd = size(q)
     Δλ = 2π / nλ
@@ -254,20 +308,14 @@ function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
     workspace.volume_flux_phi
 
     @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        im = _west(i, nλ)
-        if uf[i, j, k] >= 0.0
-            donor = im
-            c = uf[i, j, k] * dt / (mesh.radius * mesh.cosθ[j] * Δλ)
-            qface = workspace.q_half_phi[donor, j, k] + 0.5 * workspace.slope_lambda[donor, j, k] * (1 - c)
-        else
-            donor = i
-            c = -uf[i, j, k] * dt / (mesh.radius * mesh.cosθ[j] * Δλ)
-            qface = workspace.q_half_phi[donor, j, k] - 0.5 * workspace.slope_lambda[donor, j, k] * (1 - c)
-        end
+        c = uf[i, j, k] * dt / (mesh.radius * mesh.cosθ[j] * Δλ)
+        low_average, high_average = _zonal_swept_averages(
+            workspace.q_half_phi, q, workspace.slope_lambda, i, j, k, c, nλ,
+        )
         face_length = mesh.radius * (mesh.θe[j+1] - mesh.θe[j])
         fvλ[i, j, k] = uf[i, j, k] * face_length
-        fqλ[i, j, k] = fvλ[i, j, k] * qface
-        flλ[i, j, k] = fvλ[i, j, k] * q[donor, j, k]
+        fqλ[i, j, k] = fvλ[i, j, k] * high_average
+        flλ[i, j, k] = fvλ[i, j, k] * low_average
     end
 
     fill!(fqφ, 0.0)
@@ -387,7 +435,60 @@ function _ppm_reconstruction!(workspace, q, dz)
     return nothing
 end
 
-"""One CFL-limited monotone nonuniform-PPM vertical substep."""
+"""
+Return low- and high-order averages over the pressure mass swept through a
+vertical interface. Complete donor layers use their exact mass-weighted means;
+the terminal partial layer uses its monotone PPM parabola.
+"""
+@inline function _vertical_swept_averages(workspace, q, Δp, i, j, h, swept_mass)
+    total_mass = abs(swept_mass)
+    if iszero(total_mass)
+        value = q[i, j, clamp(h, 1, size(q, 3))]
+        return value, value
+    end
+    nd = size(q, 3)
+    positive = swept_mass > 0.0
+    donor = positive ? h - 1 : h
+    direction = positive ? -1 : 1
+    remaining = total_mass
+    low_integral = 0.0
+    high_integral = 0.0
+    tolerance = 32eps(max(total_mass, 1.0))
+
+    @inbounds while 1 <= donor <= nd && remaining >= Δp[i, j, donor]
+        layer_mass = Δp[i, j, donor]
+        value = q[i, j, donor]
+        low_integral += layer_mass * value
+        high_integral += layer_mass * value
+        remaining -= layer_mass
+        remaining <= tolerance && return low_integral / total_mass, high_integral / total_mass
+        donor += direction
+    end
+    1 <= donor <= nd || error(
+        "vertical swept mass crosses the model boundary at interface $h: swept_mass=$swept_mass",
+    )
+
+    fraction = remaining / Δp[i, j, donor]
+    fraction <= 1.0 + tolerance || error("invalid terminal vertical swept fraction: $fraction")
+    fraction = min(fraction, 1.0)
+    value = q[i, j, donor]
+    if positive
+        edge_average = workspace.q_right[i, j, donor] - 0.5fraction * (
+            workspace.q_right[i, j, donor] - workspace.q_left[i, j, donor] -
+            (1 - 2fraction / 3) * workspace.q6[i, j, donor]
+        )
+    else
+        edge_average = workspace.q_left[i, j, donor] + 0.5fraction * (
+            workspace.q_right[i, j, donor] - workspace.q_left[i, j, donor] +
+            (1 - 2fraction / 3) * workspace.q6[i, j, donor]
+        )
+    end
+    low_integral += remaining * value
+    high_integral += remaining * edge_average
+    return low_integral / total_mass, high_integral / total_mass
+end
+
+"""One monotone nonuniform-PPM step with multi-layer swept-mass fluxes."""
 function Vertical_Tracer_Advection!(workspace, q_out, q, Δp, M, dt)
     nλ, nθ, nd = size(q)
     _ppm_reconstruction!(workspace, q, Δp)
@@ -395,23 +496,11 @@ function Vertical_Tracer_Advection!(workspace, q_out, q, Δp, M, dt)
     fill!(flux, 0.0)
     fill!(low_flux, 0.0)
     @inbounds for h = 2:nd, j = 1:nθ, i = 1:nλ
-        if M[i, j, h] >= 0.0
-            donor = h - 1
-            c = M[i, j, h] * dt / Δp[i, j, donor]
-            swept = workspace.q_right[i, j, donor] - 0.5c * (
-                workspace.q_right[i, j, donor] - workspace.q_left[i, j, donor] -
-                (1 - 2c / 3) * workspace.q6[i, j, donor]
-            )
-        else
-            donor = h
-            c = -M[i, j, h] * dt / Δp[i, j, donor]
-            swept = workspace.q_left[i, j, donor] + 0.5c * (
-                workspace.q_right[i, j, donor] - workspace.q_left[i, j, donor] +
-                (1 - 2c / 3) * workspace.q6[i, j, donor]
-            )
-        end
-        flux[i, j, h] = M[i, j, h] * swept
-        low_flux[i, j, h] = M[i, j, h] * q[i, j, donor]
+        low_average, high_average = _vertical_swept_averages(
+            workspace, q, Δp, i, j, h, dt * M[i, j, h],
+        )
+        flux[i, j, h] = M[i, j, h] * high_average
+        low_flux[i, j, h] = M[i, j, h] * low_average
     end
 
     ratio = workspace.positivity_ratio

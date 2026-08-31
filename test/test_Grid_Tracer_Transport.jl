@@ -42,8 +42,50 @@ using JGCM
     @test maximum(q1) <= maximum(q0) + 2e-15
     @test final_mean ≈ initial_mean rtol = 2e-14
 
+    # Isca-style large-Courant zonal transport crosses whole cells without
+    # subcycling when the flow is coherent (neighboring departure faces do
+    # not cross). The transverse half-step uses the same departure-point
+    # interpolation for either wind direction.
+    transverse! = JGCM.Grid_Tracer_Transport_Module._transverse_states!
+    for k = 1:nd, j = 1:nθ, i = 1:nλ
+        q0[i, j, k] = i
+        u[i, j, k] = 2.5 * radius * mesh.cosθ[j] * (2π / nλ) / 600.0
+    end
+    transverse!(workspace, mesh, q0, u, v, 600.0)
+    i = 10
+    @test workspace.q_half_lambda[i, 8, 3] ≈ 0.25q0[i-2, 8, 3] + 0.75q0[i-1, 8, 3]
+    u .*= -1
+    transverse!(workspace, mesh, q0, u, v, 600.0)
+    @test workspace.q_half_lambda[i, 8, 3] ≈ 0.75q0[i+1, 8, 3] + 0.25q0[i+2, 8, 3]
+
+    for k = 1:nd, j = 1:nθ, i = 1:nλ
+        q0[i, j, k] = 0.002 + 0.01exp(-8sin(mesh.λc[i] - π)^2) * mesh.cosθ[j]^2
+        u[i, j, k] = 2.4 * radius * mesh.cosθ[j] * (2π / nλ) / 600.0
+    end
+    initial_mean = sum(q0 .* reshape(mesh.wts, 1, nθ, 1))
+    steps = Advance_Grid_Tracer!(workspace, mesh, q1, q0, u, v, Δp, M, 600.0)
+    final_mean = sum(q1 .* reshape(mesh.wts, 1, nθ, 1))
+    @test steps.horizontal_substeps == 1
+    @test minimum(q1) >= 0.0
+    @test final_mean ≈ initial_mean rtol = 3e-14
+
+    # Multi-layer PPM weights fully crossed nonuniform layers by their mass,
+    # then reconstructs only the terminal layer fraction.
+    ppm! = JGCM.Grid_Tracer_Transport_Module._ppm_reconstruction!
+    swept = JGCM.Grid_Tracer_Transport_Module._vertical_swept_averages
+    Δp_nonuniform = similar(Δp)
+    for k = 1:nd
+        Δp_nonuniform[:, :, k] .= 10_000k
+        q0[:, :, k] .= 0.001k
+    end
+    ppm!(workspace, q0, Δp_nonuniform)
+    low_average, high_average = swept(workspace, q0, Δp_nonuniform, 1, 1, 4, 55_000.0)
+    expected = (30_000q0[1, 1, 3] + 20_000q0[1, 1, 2] + 5_000q0[1, 1, 1]) / 55_000
+    @test low_average ≈ expected
+    @test high_average ≈ expected
+
     # Exercise both vertical donor directions, boundary-adjacent PPM cells,
-    # and vertical CFL subcycling.
+    # and deformation-only safety subcycling.
     fill!(u, 0.0)
     q0 .= 0.001
     q0[:, :, 3] .= 0.018
