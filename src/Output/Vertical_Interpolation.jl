@@ -5,150 +5,163 @@ using ..Atmo_Data_Module
 
 export Compute_Pressure_Grid!, Interpolate_Field!
 
+const MIN_EXTRAPOLATION_WEIGHT = -0.5
+const MAX_EXTRAPOLATION_WEIGHT = 1.5
 
+@inline pressure_log_pressure(p::Float64) = iszero(p) ? 0.0 : p * log(p)
 
+"""
+    Compute_Pressure_Grid!(p_full, ak, bk, ps)
+
+Reconstruct full-level pressure using the same hybrid-interface and
+Simmons--Burridge definitions used by Isca. `ak` and `bk` are the `nd + 1`
+interface coefficients, not arithmetic midpoint coefficients.
+"""
 function Compute_Pressure_Grid!(
-    p_3d::AbstractArray{Float64,3},
-    ak::Vector{Float64},
-    bk::Vector{Float64},
+    p_full::AbstractArray{Float64,3},
+    ak::AbstractVector{Float64},
+    bk::AbstractVector{Float64},
     ps::AbstractArray{Float64,2},
 )
-    nλ, nθ, nd = size(p_3d)
+    nλ, nθ, nd = size(p_full)
+    size(ps) == (nλ, nθ) ||
+        throw(DimensionMismatch("surface pressure must match the horizontal pressure grid"))
+    length(ak) == nd + 1 && length(bk) == nd + 1 ||
+        throw(DimensionMismatch("hybrid interface coefficients must have nd + 1 entries"))
+    all(isfinite, ak) && all(isfinite, bk) ||
+        throw(ArgumentError("hybrid interface coefficients must be finite"))
+    all(p -> isfinite(p) && p > 0.0, ps) ||
+        throw(DomainError(ps, "surface pressure must be finite and positive"))
 
-    # Parallelize over latitude (outer loop) to minimize overhead
     @threads for j = 1:nθ
         for i = 1:nλ
-            @inbounds ps_val = ps[i, j]
+            @inbounds ps_value = ps[i, j]
             @inbounds for k = 1:nd
-                p_3d[i, j, k] = ak[k] + bk[k] * ps_val
+                p_top = ak[k] + bk[k] * ps_value
+                p_bottom = ak[k+1] + bk[k+1] * ps_value
+                Δp = p_bottom - p_top
+                if !(p_top >= 0.0 && p_bottom > 0.0 && Δp > 0.0)
+                    throw(
+                        DomainError(
+                            (p_top, p_bottom),
+                            "hybrid interface pressures must be non-negative and strictly increasing",
+                        ),
+                    )
+                end
+
+                # This form naturally gives p_bottom/e in a zero-pressure top
+                # layer because lim(p*log(p), p -> 0+) = 0.
+                log_p_full =
+                    (pressure_log_pressure(p_bottom) - pressure_log_pressure(p_top)) / Δp -
+                    1.0
+                p_full[i, j, k] = exp(log_p_full)
             end
         end
     end
+    return nothing
 end
 
-using Base.Threads
+"""
+    Interpolate_Field!(out, input, p_full, ps, log_targets, var_name, atmo, temperature)
 
+Interpolate a model-level field linearly in log pressure following Isca's
+pressure-level postprocessor. Targets below the lowest model full level are
+masked with `NaN`; limited extrapolation is retained above the top model level.
+Geopotential height uses Isca's hydrostatic interpolation when temperature is
+available.
 
-
+The `ps` argument is retained for API compatibility and to document that
+`p_full` was reconstructed from the surface pressure for the same output
+record. Temporal averaging is deliberately performed by `Output_Manager`
+before this routine is called.
+"""
 function Interpolate_Field!(
     out_3d::AbstractArray{Float64,3},
     in_3d::AbstractArray{Float64,3},
     p_3d::AbstractArray{Float64,3},
     ps_2d::AbstractArray{Float64,2},
-    log_targets::Vector{Float64},
+    log_targets::AbstractVector{Float64},
     var_name::Symbol,
     atmo_data::Atmo_Data,
     t_3d::Union{AbstractArray{Float64,3},Nothing} = nothing,
 )
     nλ, nθ, n_plev = size(out_3d)
     nd = size(in_3d, 3)
-
-    # 1. Extract Constants
-    R_d = atmo_data.rdgas
-    ALPHA = atmo_data.alpha
-
-    # 2. Determine Strategy
-    strategy = :constant
-    if var_name in (:t, :t_eq)
-        strategy = :lapse_rate
-    elseif var_name == :z
-        strategy = :hydrostatic
+    size(in_3d) == size(p_3d) ||
+        throw(DimensionMismatch("field and full-level pressure grids must match"))
+    size(in_3d, 1) == nλ && size(in_3d, 2) == nθ ||
+        throw(DimensionMismatch("input and output horizontal grids must match"))
+    size(ps_2d) == (nλ, nθ) ||
+        throw(DimensionMismatch("surface pressure must match the horizontal grid"))
+    length(log_targets) == n_plev ||
+        throw(DimensionMismatch("target pressure count must match output levels"))
+    if var_name == :z
+        isnothing(t_3d) &&
+            throw(ArgumentError("temperature is required to interpolate height"))
+        size(t_3d) == size(in_3d) ||
+            throw(DimensionMismatch("temperature and height grids must match"))
     end
+
+    rd_over_grav = atmo_data.rdgas / atmo_data.grav
 
     @threads for j = 1:nθ
         for i = 1:nλ
-            # Lightweight views
-            col_in = view(in_3d, i, j, :)
-            col_p = view(p_3d, i, j, :)
+            @inbounds begin
+                if nd == 1
+                    for n = 1:n_plev
+                        out_3d[i, j, n] =
+                            log_targets[n] <= log(p_3d[i, j, 1]) ? in_3d[i, j, 1] : NaN
+                    end
+                    continue
+                end
 
-            # True Surface Pressure for this column (from prognostic variable)
-            ps_true = ps_2d[i, j]
+                for n = 1:n_plev
+                    log_target = log_targets[n]
 
-            # For Hydrostatic strategy, we need the T column
-            col_t =
-                (strategy == :hydrostatic && !isnothing(t_3d)) ? view(t_3d, i, j, :) :
-                nothing
+                    # As in Isca's default plevel.sh path, pressure levels below
+                    # the lowest model full level are treated as missing.
+                    if log_target > log(p_3d[i, j, nd])
+                        out_3d[i, j, n] = NaN
+                        continue
+                    end
 
-            # Check direction (Standard: p[1] is Top, p[end] is Bottom)
-            is_down = col_p[end] > col_p[1]
-
-            for k_tgt = 1:n_plev
-                lt = log_targets[k_tgt]
-                p_target = exp(lt)
-
-                # --- EXTRAPOLATION (Underground) ---
-                # Strictly check against True Surface Pressure
-                if p_target > ps_true
-                    # Variables at the Lowest Model Level (e.g. sigma = 0.99)
-                    val_lowest_level = col_in[end]
-                    p_lowest_level = col_p[end]
-
-                    if strategy == :constant
-                        out_3d[i, j, k_tgt] = val_lowest_level
-
-                    elseif strategy == :lapse_rate
-                        # Extrapolate T from the lowest model level down to target
-                        out_3d[i, j, k_tgt] =
-                            val_lowest_level * (p_target / p_lowest_level)^ALPHA
-
-                    elseif strategy == :hydrostatic
-                        # Geopotential Extrapolation
-                        if isnothing(col_t)
-                            out_3d[i, j, k_tgt] = NaN
-                        else
-                            T_lowest = col_t[end]
-                            T_tgt = T_lowest * (p_target / p_lowest_level)^ALPHA
-                            T_mean = 0.5 * (T_lowest + T_tgt)
-
-                            # Hydrostatic Integral from lowest model level to target
-                            # Phi_tgt = Phi_lowest - R*T_mean*ln(P_tgt/P_lowest)
-                            out_3d[i, j, k_tgt] =
-                                val_lowest_level -
-                                (R_d * T_mean) * (lt - log(p_lowest_level))
+                    k_bottom = 2
+                    for k = 2:nd
+                        if log_target <= log(p_3d[i, j, k])
+                            k_bottom = k
+                            break
                         end
+                    end
+
+                    log_p_bottom = log(p_3d[i, j, k_bottom])
+                    log_p_top = log(p_3d[i, j, k_bottom-1])
+                    weight = (log_target - log_p_bottom) / (log_p_top - log_p_bottom)
+                    weight =
+                        clamp(weight, MIN_EXTRAPOLATION_WEIGHT, MAX_EXTRAPOLATION_WEIGHT)
+
+                    value_bottom = in_3d[i, j, k_bottom]
+                    value_top = in_3d[i, j, k_bottom-1]
+                    interpolated = value_bottom + weight * (value_top - value_bottom)
+
+                    if var_name == :z
+                        temperature_bottom = t_3d[i, j, k_bottom]
+                        temperature_top = t_3d[i, j, k_bottom-1]
+                        temperature_target =
+                            temperature_bottom +
+                            weight * (temperature_top - temperature_bottom)
+                        out_3d[i, j, n] =
+                            value_bottom +
+                            (log_p_bottom - log_target) *
+                            (temperature_target + temperature_bottom) *
+                            (0.5 * rd_over_grav)
                     else
-                        out_3d[i, j, k_tgt] = val_lowest_level
+                        out_3d[i, j, n] = interpolated
                     end
-                    continue
-                end
-
-                # --- INTERPOLATION (In Air) ---
-                min_lp = log(is_down ? col_p[1] : col_p[end])
-
-                if lt < min_lp # Above Top
-                    out_3d[i, j, k_tgt] = NaN
-                    continue
-                end
-
-                k_found = -1
-                for k = 1:nd-1
-                    p_k = max(col_p[k], 1e-10)
-                    p_kp1 = max(col_p[k+1], 1e-10)
-                    lp1 = log(p_k)
-                    lp2 = log(p_kp1)
-                    if (lp1 <= lt <= lp2) || (lp2 <= lt <= lp1)
-                        k_found = k
-                        break
-                    end
-                end
-
-                if k_found != -1
-                    p_k = max(col_p[k_found], 1e-10)
-                    p_kp1 = max(col_p[k_found+1], 1e-10)
-                    lp1 = log(p_k)
-                    lp2 = log(p_kp1)
-                    v1 = col_in[k_found]
-                    v2 = col_in[k_found+1]
-                    w = (lt - lp1) / (lp2 - lp1)
-                    out_3d[i, j, k_tgt] = v1 + w * (v2 - v1)
-                else
-                    # Fallback for the thin layer between P_lowest_level and Ps_true
-                    # (Where p_target < Ps_true but > P_lowest_level)
-                    out_3d[i, j, k_tgt] = col_in[end]
                 end
             end
         end
     end
+    return nothing
 end
 
 end

@@ -64,8 +64,8 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     p3d_buffer::Array{Float64, 3}
     interp_buffer::Array{Float64, 3}
 
-    vert_ak_mid::Vector{Float64}
-    vert_bk_mid::Vector{Float64}
+    vert_ak::Vector{Float64}
+    vert_bk::Vector{Float64}
 
     # --- Time Control ---
     day_to_sec::Int64
@@ -146,26 +146,31 @@ function _Init_Single_File(
         v_lev[:] = target_levels
 
     elseif file_type == :raw && vert_coord !== nothing
-        # Hybrid-Sigma coordinate definition
-        defDim(ds, "lev", mesh.nd)
-        v_lev = defVar(ds, "lev", Float64, ("lev",))
-        v_lev[:] = collect(1:mesh.nd)
+        # Isca-style native vertical metadata. These one-dimensional pressure
+        # axes are approximate reference values; exact column pressure is
+        # reconstructed from interface pk, bk, and the output-record ps.
+        defDim(ds, "pfull", mesh.nd)
+        defDim(ds, "phalf", mesh.nd + 1)
 
-        # Attributes that tell post-processors how to compute 3D Pressure
-        v_lev.attrib["standard_name"] = "atmosphere_hybrid_sigma_pressure_coordinate"
-        v_lev.attrib["formula_terms"] = "ap: hyam b: hybm ps: ps p0: p0"
-        v_lev.attrib["positive"]      = "down"
+        reference_ps = fill(Float64(vert_coord.p_ref), 1, 1)
+        reference_pfull = zeros(Float64, 1, 1, mesh.nd)
+        Compute_Pressure_Grid!(reference_pfull, vert_coord.ak, vert_coord.bk, reference_ps)
+        reference_phalf = vert_coord.ak .+ vert_coord.bk .* vert_coord.p_ref
 
-        # Reference Pressure
-        v_p0 = defVar(ds, "p0", Float64, (), attrib=Dict("units"=>"Pa"))
-        v_p0[:] = vert_coord.p_ref
+        v_pfull = defVar(ds, "pfull", Float64, ("pfull",), attrib=Dict(
+            "units"=>"hPa", "long_name"=>"approx full pressure level",
+            "positive"=>"down", "axis"=>"Z"))
+        v_pfull[:] = vec(reference_pfull) .* 0.01
 
-        # Interface coefficients (Mid-points for data layers)
-        ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
-        bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
+        v_phalf = defVar(ds, "phalf", Float64, ("phalf",), attrib=Dict(
+            "units"=>"hPa", "long_name"=>"approx half pressure level",
+            "positive"=>"down", "axis"=>"Z"))
+        v_phalf[:] = reference_phalf .* 0.01
 
-        defVar(ds, "hyam", Float64, ("lev",), attrib=Dict("units"=>"Pa", "long_name"=>"hybrid A coefficient at layer midpoints"))[1:end] = ak_m
-        defVar(ds, "hybm", Float64, ("lev",), attrib=Dict("units"=>"1",  "long_name"=>"hybrid B coefficient at layer midpoints"))[1:end] = bk_m
+        defVar(ds, "pk", Float64, ("phalf",), attrib=Dict(
+            "units"=>"Pa", "long_name"=>"vertical coordinate pressure values"))[:] = vert_coord.ak
+        defVar(ds, "bk", Float64, ("phalf",), attrib=Dict(
+            "units"=>"1", "long_name"=>"vertical coordinate sigma values"))[:] = vert_coord.bk
     end
     # --- Coordinate Variables & Vertical Metadata --- #
 
@@ -175,7 +180,7 @@ function _Init_Single_File(
         meta = var_info_map[sym]
 
         dims = if meta.dims == 3
-            (file_type == :plev) ? ("lon", "lat", "plev", "time") : ("lon", "lat", "lev", "time")
+            (file_type == :plev) ? ("lon", "lat", "plev", "time") : ("lon", "lat", "pfull", "time")
         else
             ("lon", "lat", "time")
         end
@@ -241,8 +246,8 @@ function Output_Manager(
     # Define Buffers (Initialize as empty by default)
     p3d_buf    = zeros(Float64, 0, 0, 0)
     interp_buf = zeros(Float64, 0, 0, 0)
-    ak_m       = Float64[]
-    bk_m       = Float64[]
+    vert_ak    = Float64[]
+    vert_bk    = Float64[]
     # --- Instantiate the Mode Type --- #
 
     # --- 3D Specific Initialization --- #
@@ -260,8 +265,8 @@ function Output_Manager(
         p3d_buf    = zeros(Float64, nλ, nθ, nd)
         interp_buf = zeros(Float64, nλ, nθ, max(n_plev, 1))
 
-        ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
-        bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
+        vert_ak = copy(vert_coord.ak)
+        vert_bk = copy(vert_coord.bk)
     end
 
     # Fetch variable info
@@ -309,7 +314,7 @@ function Output_Manager(
     return Output_Manager(
         nλ, nθ, nd, atmo_data, mode_obj,
         do_plev_output, pressure_levels, log.(max.(pressure_levels, 1.0)),
-        p3d_buf, interp_buf, ak_m, bk_m,
+        p3d_buf, interp_buf, vert_ak, vert_bk,
         day_to_sec, start_time, start_time, spinup_time, output_interval, 0, 1,
         ds_plev, ds_raw, acc_plev, acc_raw, active_symbols, var_info_map,
         base_fn, collect(mesh.λc), collect(mesh.θc), vert_coord, global_meta
@@ -419,7 +424,7 @@ function _write_core!(::PrimitiveEquationMode, mgr)
         raw_mean = mgr.acc_raw[sym]
         raw_mean ./= sample_count
 
-        if ndims(nc_var) == 4  # (lon, lat, lev, time)
+        if ndims(nc_var) == 4  # (lon, lat, pfull, time)
             nc_var[:, :, :, t_idx] = raw_mean
         elseif ndims(nc_var) == 3  # (lon, lat, time)
             nc_var[:, :, t_idx] = (ndims(raw_mean) == 3) ? view(raw_mean, :, :, 1) : raw_mean
@@ -436,7 +441,7 @@ function _write_core!(::PrimitiveEquationMode, mgr)
             accumulator ./= sample_count
         end
         ps_avg_2d = mgr.acc_plev[:ps]
-        Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak_mid, mgr.vert_bk_mid, ps_avg_2d)
+        Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak, mgr.vert_bk, ps_avg_2d)
 
         for sym in keys(mgr.acc_plev)
             haskey(var_info_map, sym) || continue

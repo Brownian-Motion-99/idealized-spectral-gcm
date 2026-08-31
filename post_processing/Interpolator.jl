@@ -1,10 +1,10 @@
 using NCDatasets
-using Base.Threads
 using Printf
 using JGCM
 
 import JGCM.Atmo_Data_Module: Atmo_Data
-import JGCM.Vertical_Interpolation_Module: Interpolate_Field!
+import JGCM.Output_Mappings_Module: Get_Var_Info
+import JGCM.Vertical_Interpolation_Module: Compute_Pressure_Grid!, Interpolate_Field!
 
 """
     Interpolate_File(input_path, output_path, target_levels_Pa; var_names)
@@ -15,6 +15,18 @@ function Interpolate_File(
     target_levels::Vector{Float64};
     var_names::Vector{Symbol} = [:u, :v, :t, :z, :q, :vor, :div],
 )
+    isempty(target_levels) && throw(ArgumentError("at least one pressure level is required"))
+    all(p -> isfinite(p) && p > 0.0, target_levels) ||
+        throw(ArgumentError("pressure levels must be positive and finite"))
+
+    var_info = Get_Var_Info(Val(:PrimitiveEquation))
+    requested_symbols = unique(var_names)
+    unknown_symbols = setdiff(requested_symbols, keys(var_info))
+    isempty(unknown_symbols) || throw(
+        ArgumentError("unsupported primitive-equation variables: $unknown_symbols"),
+    )
+    requested_variables = [(sym, var_info[sym].nc_name) for sym in requested_symbols]
+
     @printf("--- Starting Post-Processing ---\n")
     @printf("Input:  %s\n", input_path)
     @printf("Output: %s\n", output_path)
@@ -23,27 +35,16 @@ function Interpolate_File(
     # 1. Open Input File
     ds_in = NCDataset(input_path, "r")
 
-    # 2. Reconstruct Vertical Grid
-    ak_mid, bk_mid = Float64[], Float64[]
-
-    if haskey(ds_in, "hyam") && haskey(ds_in, "hybm")
-        @printf("Grid: Detected Midpoint Coefficients (hyam/hybm)\n")
-        ak_mid = ds_in["hyam"][:]
-        bk_mid = ds_in["hybm"][:]
-
-    elseif haskey(ds_in, "hyai") && haskey(ds_in, "hybi")
-        @printf(
-            "Grid: Detected Interface Coefficients (hyai/hybi) -> Calculating Midpoints\n"
-        )
-        ak_int = ds_in["hyai"][:]
-        bk_int = ds_in["hybi"][:]
-        ak_mid = 0.5 .* (ak_int[1:end-1] .+ ak_int[2:end])
-        bk_mid = 0.5 .* (bk_int[1:end-1] .+ bk_int[2:end])
-    else
-        error(
-            "Vertical grid coefficients not found. Need ('hyam', 'hybm') or ('hyai', 'hybi').",
-        )
-    end
+    # 2. Read Isca-style interface coefficients. Arithmetic midpoint
+    # coefficients are intentionally unsupported because they do not reproduce
+    # the model's Simmons--Burridge full-level pressure.
+    haskey(ds_in, "pk") && haskey(ds_in, "bk") ||
+        error("Vertical grid coefficients not found. Need interface variables 'pk' and 'bk'.")
+    haskey(ds_in.dim, "pfull") ||
+        error("Full-level dimension 'pfull' is missing from the input file.")
+    ak = Float64.(ds_in["pk"][:])
+    bk = Float64.(ds_in["bk"][:])
+    @printf("Grid: Detected Isca-style interface coefficients (pk/bk)\n")
 
     # 3. Setup Physics Context
     phys = Atmo_Data(
@@ -75,7 +76,8 @@ function Interpolate_File(
     for coord in ["lon", "lat", "time"]
         if haskey(ds_in, coord)
             v_dst = defVar(ds_out, coord, Float64, (coord,), attrib = ds_in[coord].attrib)
-            v_dst[:] = ds_in[coord][:]
+            coord_values = ds_in[coord][:]
+            v_dst[1:length(coord_values)] = coord_values
         end
     end
 
@@ -96,15 +98,14 @@ function Interpolate_File(
     end
 
     # Define 3D Interpolated Variables
-    for var_sym in var_names
-        var_str = String(var_sym)
-        if haskey(ds_in, var_str) && ndims(ds_in[var_str]) == 4
+    for (_, nc_name) in requested_variables
+        if haskey(ds_in, nc_name) && ndims(ds_in[nc_name]) == 4
             defVar(
                 ds_out,
-                var_str,
+                nc_name,
                 Float64,
                 ("lon", "lat", "plev", "time"),
-                attrib = ds_in[var_str].attrib,
+                attrib = ds_in[nc_name].attrib,
             )
         end
     end
@@ -112,7 +113,10 @@ function Interpolate_File(
     # 5. Initialize Buffers
     nλ = ds_in.dim["lon"]
     nθ = ds_in.dim["lat"]
-    nd = ds_in.dim["lev"]
+    nd = ds_in.dim["pfull"]
+    length(ak) == nd + 1 && length(bk) == nd + 1 || throw(
+        DimensionMismatch("pk and bk must each contain pfull + 1 interface values"),
+    )
     n_tgt = length(target_levels)
     log_targets = log.(target_levels)
 
@@ -134,34 +138,27 @@ function Interpolate_File(
         # Write ps to output (2D copy)
         ds_out["ps"][:, :, t] = ps_slice
 
-        # B. Reconstruct 3D Pressure Field
-        @threads for j = 1:nθ
-            for i = 1:nλ
-                ps_val = ps_slice[i, j]
-                for k = 1:nd
-                    p3d_buffer[i, j, k] = ak_mid[k] + bk_mid[k] * ps_val
-                end
-            end
-        end
+        # B. Reconstruct exact Simmons--Burridge full-level pressure.
+        Compute_Pressure_Grid!(p3d_buffer, ak, bk, ps_slice)
 
         # C. Read Temperature (for Hydrostatic calc if needed)
         t_ref = nothing
-        if haskey(ds_in, "t")
-            t_ref = ds_in["t"][:, :, :, t]
+        temperature_name = var_info[:t].nc_name
+        if haskey(ds_in, temperature_name)
+            t_ref = ds_in[temperature_name][:, :, :, t]
         end
 
         # D. Process 3D Variables
-        for var_sym in var_names
-            var_str = String(var_sym)
-            if !haskey(ds_in, var_str)
+        for (var_sym, nc_name) in requested_variables
+            if !haskey(ds_in, nc_name)
                 continue
             end
 
-            if ndims(ds_in[var_str]) != 4
+            if ndims(ds_in[nc_name]) != 4
                 continue
             end
 
-            raw_data = ds_in[var_str][:, :, :, t]
+            raw_data = ds_in[nc_name][:, :, :, t]
 
             Interpolate_Field!(
                 interp_buffer,
@@ -174,7 +171,7 @@ function Interpolate_File(
                 t_ref,
             )
 
-            ds_out[var_str][:, :, :, t] = interp_buffer
+            ds_out[nc_name][:, :, :, t] = interp_buffer
         end
 
         if t % 10 == 0

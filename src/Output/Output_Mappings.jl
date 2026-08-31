@@ -40,7 +40,7 @@ function Get_Var_Info(::Val{:PrimitiveEquation})
             3,
         ),
         :p => VarMeta("p", "Pa", "Air Pressure", "air_pressure", 3),
-        :z => VarMeta("zg", "m2 s-2", "Geopotential", "geopotential", 3),
+        :z => VarMeta("zg", "m", "Geopotential Height", "geopotential_height", 3),
         :precip =>
             VarMeta("pr", "kg m-2 s-1", "Precipitation Rate", "precipitation_flux", 2),
         :shflx => VarMeta(
