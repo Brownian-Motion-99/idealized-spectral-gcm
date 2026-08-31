@@ -217,10 +217,10 @@ function Spectral_Spherical_Mesh(
     grid_ds2 = zeros(Float64, nλ, nθ, 1)
     area_weighted_field = zeros(Float64, nλ, nθ)
     area_weighted_sums = zeros(Float64, nλ)
-    spherical_d1 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd)
-    spherical_d2 = zeros(Float64, num_fourier + 1, num_spherical + 1, nd)
-    spherical_ds1 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1)
-    spherical_ds2 = zeros(Float64, num_fourier + 1, num_spherical + 1, 1)
+    spherical_d1 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
+    spherical_d2 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, nd)
+    spherical_ds1 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, 1)
+    spherical_ds2 = zeros(ComplexF64, num_fourier + 1, num_spherical + 1, 1)
 
     # Pre-computed fft & ifft
     dummy_vec = zeros(ComplexF64, nλ)

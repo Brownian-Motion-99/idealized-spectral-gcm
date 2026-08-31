@@ -36,7 +36,7 @@ mutable struct Vert_Coordinate
     Δbk::Array{Float64,1}
 
     # memory container
-    flux::Array{ComplexF64,3}
+    flux::Array{Float64,3}
     vert_integral::Array{Float64,3}
     virtual_temperature::Array{Float64,3}
     mass_Δp::Array{Float64,3}
@@ -108,6 +108,12 @@ function Vert_Coordinate(
         p_press,
         p_sigma,
         exponent,
+    )
+    length(ak) == nd + 1 && length(bk) == nd + 1 || throw(
+        DimensionMismatch(
+            "vertical coordinate $(repr(vert_coord_option)) provides " *
+            "$(length(ak) - 1) levels, but nd=$nd",
+        ),
     )
     Δak, Δbk = ak[2:nd+1] - ak[1:nd], bk[2:nd+1] - bk[1:nd]
 
@@ -193,7 +199,7 @@ function Compute_Vert_Coord(
         a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, true)
 
     elseif (vert_coord_option == "simmons_and_burridge")
-        a, b = Base.invokelatest(Compute_Simmons_Burridge)
+        a, b = Compute_Simmons_Burridge()
 
     elseif (vert_coord_option == "hybrid")
         a_sigma, b_sigma =

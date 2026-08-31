@@ -3,7 +3,6 @@ module Output_Manager_Module
 using Base
 using Dates
 using NCDatasets
-using Statistics
 
 using ..Spectral_Spherical_Mesh_Module
 using ..Atmo_Data_Module
@@ -88,6 +87,7 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     acc_raw::Dict{Symbol, Array{Float64}}
 
     active_symbols::Vector{Symbol}
+    var_info_map::Dict{Symbol, VarMeta}
 
     # --- Chunk I/O State ---
     base_filename::String            # base path without extension, e.g. "exp/HSt42/output"
@@ -206,10 +206,26 @@ function Output_Manager(
     institute::String = "My Research Lab",
     experiment_id::String = "Simulation_v1"
 )
+    day_to_sec > 0 || throw(ArgumentError("day_to_sec must be positive"))
+    output_interval > 0 || throw(ArgumentError("output_interval must be positive"))
+    spinup_day >= 0 || throw(ArgumentError("spinup_day must be non-negative"))
+    if do_plev_output
+        !isempty(pressure_levels) || throw(
+            ArgumentError("pressure-level output requires at least one pressure level"),
+        )
+        all(p -> isfinite(p) && p > 0, pressure_levels) || throw(
+            ArgumentError("pressure levels must be positive and finite"),
+        )
+    end
+
     # --- Instantiate the Mode Type --- #
     mode_obj    = Mode_Factory(model_mode)
+    if do_plev_output && !isa(mode_obj, PrimitiveEquationMode)
+        throw(ArgumentError("pressure-level output is only available for PrimitiveEquation"))
+    end
     nλ, nθ, nd  = mesh.nλ, mesh.nθ, mesh.nd
     spinup_time = start_time + Int64(spinup_day * day_to_sec)
+    active_symbols = unique(copy(requested_vars))
 
     # Derive base filename (strip ".nc" extension)
     base_fn = splitext(filename)[1]
@@ -232,8 +248,8 @@ function Output_Manager(
     # --- 3D Specific Initialization --- #
     if isa(mode_obj, PrimitiveEquationMode)
         # Validation
-        if !(:ps in requested_vars); push!(requested_vars, :ps); end
-        if (:z in requested_vars) && !(:t in requested_vars); error("Need :t for :z"); end
+        if !(:ps in active_symbols); push!(active_symbols, :ps); end
+        if (:z in active_symbols) && !(:t in active_symbols); error("Need :t for :z"); end
 
         if vert_coord === nothing
              error("Output_Manager: vert_coord is required for :PrimitiveEquation mode")
@@ -249,13 +265,17 @@ function Output_Manager(
     end
 
     # Fetch variable info
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(mode_obj)))
+    var_info_map = Get_Var_Info(Val(mode_symbol(mode_obj)))
+    unknown_symbols = setdiff(active_symbols, keys(var_info_map))
+    isempty(unknown_symbols) || throw(
+        ArgumentError("unsupported output variables for $(mode_symbol(mode_obj)): $unknown_symbols"),
+    )
     # --- 3D Specific Initialization --- #
 
     # --- Initialize Accumulators --- #
     # acc_raw: always allocated (native grid accumulator for all model types)
     acc_raw = Dict{Symbol, Array{Float64}}()
-    for sym in requested_vars
+    for sym in active_symbols
         haskey(var_info_map, sym) || continue
         meta = var_info_map[sym]
         acc_raw[sym] = (meta.dims == 3) ? zeros(Float64, nλ, nθ, nd) : zeros(Float64, nλ, nθ)
@@ -269,20 +289,18 @@ function Output_Manager(
     # --- Initialize Files --- #
     # ds_raw: always created for all model types (primary/native output)
     raw_file_type = isa(mode_obj, PrimitiveEquationMode) ? :raw : :simple_2d
-    ds_raw = Base.invokelatest(
-        _Init_Single_File,
+    ds_raw = _Init_Single_File(
         "$(base_fn)_t$(start_time).nc", mesh,
-        var_info_map, requested_vars, raw_file_type;
+        var_info_map, active_symbols, raw_file_type;
         vert_coord=vert_coord, global_meta=global_meta
     )
 
     # ds_plev: only for 3D with do_plev_output = true
     ds_plev = nothing
     if do_plev_output && isa(mode_obj, PrimitiveEquationMode)
-        ds_plev = Base.invokelatest(
-            _Init_Single_File,
+        ds_plev = _Init_Single_File(
             "$(base_fn)_t$(start_time)_plev.nc", mesh,
-            var_info_map, requested_vars, :plev, pressure_levels;
+            var_info_map, active_symbols, :plev, pressure_levels;
             vert_coord=vert_coord, global_meta=global_meta
         )
     end
@@ -293,7 +311,7 @@ function Output_Manager(
         do_plev_output, pressure_levels, log.(max.(pressure_levels, 1.0)),
         p3d_buf, interp_buf, ak_m, bk_m,
         day_to_sec, start_time, start_time, spinup_time, output_interval, 0, 1,
-        ds_plev, ds_raw, acc_plev, acc_raw, requested_vars,
+        ds_plev, ds_raw, acc_plev, acc_raw, active_symbols, var_info_map,
         base_fn, collect(mesh.λc), collect(mesh.θc), vert_coord, global_meta
     )
 end
@@ -388,8 +406,8 @@ end
 # --- Writer: Primitive Equation ---
 function _write_core!(::PrimitiveEquationMode, mgr)
     t_idx        = mgr.output_index
-    N            = Float64(mgr.sample_counter)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(:PrimitiveEquation))
+    sample_count = Float64(mgr.sample_counter)
+    var_info_map = mgr.var_info_map
 
     # =========================================================================
     # PRIMARY: Native sigma/hybrid output (acc_raw → ds_raw, always)
@@ -398,7 +416,8 @@ function _write_core!(::PrimitiveEquationMode, mgr)
         haskey(var_info_map, sym) || continue
         meta     = var_info_map[sym]
         nc_var   = mgr.ds_raw[meta.nc_name]
-        raw_mean = mgr.acc_raw[sym] ./ N
+        raw_mean = mgr.acc_raw[sym]
+        raw_mean ./= sample_count
 
         if ndims(nc_var) == 4  # (lon, lat, lev, time)
             nc_var[:, :, :, t_idx] = raw_mean
@@ -413,24 +432,29 @@ function _write_core!(::PrimitiveEquationMode, mgr)
     # OPTIONAL: Pressure-level interpolated output (acc_plev → ds_plev)
     # =========================================================================
     if mgr.do_plev_output && mgr.ds_plev !== nothing
-        ps_avg_2d = mgr.acc_plev[:ps] ./ N
+        for accumulator in values(mgr.acc_plev)
+            accumulator ./= sample_count
+        end
+        ps_avg_2d = mgr.acc_plev[:ps]
         Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak_mid, mgr.vert_bk_mid, ps_avg_2d)
 
         for sym in keys(mgr.acc_plev)
             haskey(var_info_map, sym) || continue
             meta        = var_info_map[sym]
             nc_var      = mgr.ds_plev[meta.nc_name]
-            native_mean = mgr.acc_plev[sym] ./ N
+            native_mean = mgr.acc_plev[sym]
 
             if ndims(nc_var) == 4  # (lon, lat, plev, time)
-                t_ref = haskey(mgr.acc_plev, :t) ? (mgr.acc_plev[:t] ./ N) : nothing
+                t_ref = get(mgr.acc_plev, :t, nothing)
                 Interpolate_Field!(mgr.interp_buffer, native_mean, mgr.p3d_buffer, ps_avg_2d,
                                    mgr.log_targets, sym, mgr.atmo_data, t_ref)
                 nc_var[:, :, :, t_idx] = mgr.interp_buffer
             else
                 nc_var[:, :, t_idx] = (ndims(native_mean) == 3) ? view(native_mean, :, :, 1) : native_mean
             end
-            fill!(mgr.acc_plev[sym], 0.0)
+        end
+        for accumulator in values(mgr.acc_plev)
+            fill!(accumulator, 0.0)
         end
         NCDatasets.sync(mgr.ds_plev)
     end
@@ -439,14 +463,16 @@ end
 # --- Writer: 2D Modes (Barotropic/ShallowWater) ---
 function _write_core!(::AbstractModelMode, mgr)
     t_idx        = mgr.output_index
-    N            = Float64(mgr.sample_counter)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(mgr.mode)))
+    sample_count = Float64(mgr.sample_counter)
+    var_info_map = mgr.var_info_map
 
     for sym in keys(mgr.acc_raw)
         if !haskey(var_info_map, sym); continue; end
         nc_name = var_info_map[sym].nc_name
-        mgr.ds_raw[nc_name][:, :, t_idx] = mgr.acc_raw[sym] ./ N
-        fill!(mgr.acc_raw[sym], 0.0)
+        accumulator = mgr.acc_raw[sym]
+        accumulator ./= sample_count
+        mgr.ds_raw[nc_name][:, :, t_idx] = accumulator
+        fill!(accumulator, 0.0)
     end
     NCDatasets.sync(mgr.ds_raw)
 end
@@ -462,7 +488,7 @@ Internal helper: open a new pair of NC output files for the given chunk start ti
 Uses a NamedTuple mesh proxy so the full mesh object need not be stored in the manager.
 """
 function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(manager.mode)))
+    var_info_map = manager.var_info_map
 
     # NamedTuple acts as a mesh proxy (supports dot-notation like a struct)
     mesh_proxy = (
@@ -475,8 +501,7 @@ function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
 
     # ds_raw: always (primary output for all model types)
     raw_file_type = isa(manager.mode, PrimitiveEquationMode) ? :raw : :simple_2d
-    manager.ds_raw = Base.invokelatest(
-        _Init_Single_File,
+    manager.ds_raw = _Init_Single_File(
         "$(manager.base_filename)_t$(chunk_time).nc", mesh_proxy,
         var_info_map, manager.active_symbols, raw_file_type;
         vert_coord=manager.vert_coord_cache, global_meta=manager.global_meta
@@ -484,8 +509,7 @@ function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
 
     # ds_plev: optional (3D with do_plev_output = true only)
     if manager.do_plev_output && isa(manager.mode, PrimitiveEquationMode)
-        manager.ds_plev = Base.invokelatest(
-            _Init_Single_File,
+        manager.ds_plev = _Init_Single_File(
             "$(manager.base_filename)_t$(chunk_time)_plev.nc", mesh_proxy,
             var_info_map, manager.active_symbols, :plev, manager.target_levels;
             vert_coord=manager.vert_coord_cache, global_meta=manager.global_meta
@@ -530,6 +554,9 @@ end
 # ==============================================================================
 
 function Finalize_Output!(manager::Output_Manager)
+    if manager.sample_counter > 0
+        Flush_to_Disk!(manager)
+    end
     if manager.ds_plev !== nothing; close(manager.ds_plev); end
     if manager.ds_raw  !== nothing; close(manager.ds_raw);  end
 end

@@ -14,8 +14,6 @@ using ..Press_And_Geopot_Module
 using ..Atmos_Param_Module
 using ..Experiment_Configuration
 
-using Statistics
-using Interpolations
 export Compute_Corrections_Init,
     Compute_Corrections!,
     Reset_Dynamics_Tendencies!,

@@ -1,6 +1,6 @@
 module Output_Mappings_Module
 
-export Get_Var_Info
+export Get_Var_Info, VarMeta
 
 struct VarMeta
     nc_name::String

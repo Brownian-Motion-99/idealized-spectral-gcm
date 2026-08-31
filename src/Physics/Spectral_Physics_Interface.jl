@@ -75,6 +75,33 @@ function _reset_substep_diagnostics!(workspace::Physics_Workspace)
     return nothing
 end
 
+function _validate_and_clean_physics_state!(work_u, work_v, work_t, work_q)
+    finite_state = true
+    minimum_temperature = Inf
+    minimum_humidity = Inf
+    maximum_humidity = -Inf
+
+    @inbounds @simd for index in eachindex(work_u, work_v, work_t, work_q)
+        u = work_u[index]
+        v = work_v[index]
+        temperature = work_t[index]
+        humidity = work_q[index]
+
+        finite_state &=
+            isfinite(u) & isfinite(v) & isfinite(temperature) & isfinite(humidity)
+        minimum_temperature = min(minimum_temperature, temperature)
+        minimum_humidity = min(minimum_humidity, humidity)
+        maximum_humidity = max(maximum_humidity, humidity)
+        work_q[index] = max(humidity, 0.0)
+    end
+
+    finite_state || error("physics produced a non-finite prognostic state")
+    minimum_temperature > 0.0 || error("physics produced a non-positive temperature")
+    minimum_humidity >= -1.0e-14 || error("physics produced negative specific humidity")
+    maximum_humidity < 1.0 || error("physics produced specific humidity >= 1")
+    return nothing
+end
+
 """
     Spectral_Physics!(config, mesh, vert_coord, atmo_data, dyn_data,
                       semi_implicit, physics_params)
@@ -243,13 +270,7 @@ function Spectral_Physics!(
                 diagnostic_weight * workspace.grid_lrf_tendency
         end
 
-        all(isfinite, work_u) && all(isfinite, work_v) && all(isfinite, work_t) &&
-            all(isfinite, work_q) ||
-            error("physics produced a non-finite prognostic state")
-        minimum(work_t) > 0.0 || error("physics produced a non-positive temperature")
-        minimum(work_q) >= -1.0e-14 || error("physics produced negative specific humidity")
-        work_q .= max.(work_q, 0.0)
-        maximum(work_q) < 1.0 || error("physics produced specific humidity >= 1")
+        _validate_and_clean_physics_state!(work_u, work_v, work_t, work_q)
 
         if config.moisture_processes
             Dry_Air_Adjustment!(

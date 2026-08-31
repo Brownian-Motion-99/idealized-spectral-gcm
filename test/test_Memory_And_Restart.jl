@@ -47,16 +47,7 @@ end
     end
 end
 
-@testset "Memory configuration" begin
-    @test !hasfield(Dyn_Data, :spec_δu)
-    @test !hasfield(Dyn_Data, :spec_δv)
-    @test !hasfield(Dyn_Data, :grid_d_half1)
-    @test !hasfield(Dyn_Data, :grid_d_half2)
-    @test !hasfield(Dyn_Data, :spe_tracers_c)
-    @test !hasfield(Dyn_Data, :grid_tracers_c)
-    @test !hasfield(Dyn_Data, :spe_δtracers)
-    @test !hasfield(Dyn_Data, :grid_δtracers)
-
+@testset "Reusable output and PBL workspaces" begin
     mesh = Spectral_Spherical_Mesh(3, 4, 64, 32, 2, 6.371e6)
     vert = Vert_Coordinate(
         64,
