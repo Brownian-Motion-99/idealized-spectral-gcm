@@ -1,5 +1,6 @@
 module Grid_Tracer_Transport_Module
 
+using Base.Threads
 using ..Spectral_Spherical_Mesh_Module
 using ..Vert_Coordinate_Module
 using ..Atmo_Data_Module
@@ -12,6 +13,7 @@ export Grid_Tracer_Workspace,
 
 const DEFAULT_TRACER_CFL = 0.8
 const TRACER_ROUNDOFF_FACTOR = 1024.0
+const TRACER_THREAD_THRESHOLD = 32_768
 
 """Preallocated storage for gridpoint finite-volume tracer transport."""
 mutable struct Grid_Tracer_Workspace
@@ -37,6 +39,21 @@ mutable struct Grid_Tracer_Workspace
     q6::Array{Float64,3}
     vertical_flux::Array{Float64,3}
     low_vertical_flux::Array{Float64,3}
+    zonal_cell_width::Vector{Float64}
+    zonal_face_length::Vector{Float64}
+    meridional_face_length::Vector{Float64}
+    cell_area::Vector{Float64}
+    southward_distance::Vector{Float64}
+    northward_distance::Vector{Float64}
+    horizontal_cfl_by_level::Vector{Float64}
+    vertical_cfl_by_level::Vector{Float64}
+    chunk_minimum::Vector{Float64}
+    chunk_maximum::Vector{Float64}
+    pressure_minimum_by_level::Vector{Float64}
+    chunk_isfinite::Vector{Bool}
+    pressure_isfinite_by_level::Vector{Bool}
+    metrics_radius::Float64
+    metrics_ready::Bool
 end
 
 function Grid_Tracer_Workspace(nλ::Int, nθ::Int, nd::Int)
@@ -48,12 +65,17 @@ function Grid_Tracer_Workspace(nλ::Int, nθ::Int, nd::Int)
         cell(), cell(), cell(), cell(), cell(), cell(), cell(),
         lonface(), latface(), lonface(), lonface(), lonface(), latface(), latface(), latface(),
         cell(), cell(), cell(), cell(), cell(), vertface(), vertface(),
+        zeros(nθ), zeros(nθ), zeros(nθ + 1), zeros(nθ), zeros(nθ), zeros(nθ),
+        zeros(nd), zeros(nd), zeros(max(nθ, nd)), zeros(max(nθ, nd)),
+        zeros(nd), fill(true, max(nθ, nd)), fill(true, nd), NaN, false,
     )
 end
 
 @inline _west(i, nλ) = i == 1 ? nλ : i - 1
 @inline _east(i, nλ) = i == nλ ? 1 : i + 1
 @inline _pole_shift(i, nλ) = mod1(i + div(nλ, 2), nλ)
+@inline _use_tracer_threads(ncells, nchunks) =
+    nthreads() > 1 && ncells >= TRACER_THREAD_THRESHOLD && nchunks > 1
 
 """
 Remove only floating-point-scale negative values before they enter another
@@ -72,6 +94,20 @@ function _remove_roundoff_undershoots!(tracer, stage)
     return nothing
 end
 
+function _finish_transport_stage!(workspace, tracer, stage, nchunks)
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    values_are_finite = true
+    @inbounds for chunk = 1:nchunks
+        tracer_minimum = min(tracer_minimum, workspace.chunk_minimum[chunk])
+        tracer_maximum = max(tracer_maximum, workspace.chunk_maximum[chunk])
+        values_are_finite &= workspace.chunk_isfinite[chunk]
+    end
+    values_are_finite || error("$stage grid tracer transport produced non-finite values")
+    tracer_minimum < 0.0 && _remove_roundoff_undershoots!(tracer, stage)
+    return tracer_maximum
+end
+
 @inline function _limited_slope(center, backward, forward)
     raw = 0.5 * (forward - backward)
     lower = min(backward, center, forward)
@@ -79,71 +115,155 @@ end
     return copysign(min(abs(raw), 2.0 * (center - lower), 2.0 * (upper - center)), raw)
 end
 
-function _face_velocities!(workspace, u, v)
-    nλ, nθ, nd = size(u)
-    uf, vf = workspace.u_face, workspace.v_face
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        uf[i, j, k] = 0.5 * (u[_west(i, nλ), j, k] + u[i, j, k])
+function _prepare_tracer_metrics!(workspace, mesh)
+    nθ = length(mesh.θc)
+    size(workspace.u_face) == (mesh.nλ, mesh.nθ, mesh.nd) ||
+        throw(DimensionMismatch("grid tracer workspace does not match the mesh"))
+    workspace.metrics_ready && workspace.metrics_radius == mesh.radius && return nothing
+    radius = mesh.radius
+    Δλ = 2π / mesh.nλ
+    @inbounds for j = 1:nθ
+        workspace.zonal_cell_width[j] = radius * mesh.cosθ[j] * Δλ
+        workspace.zonal_face_length[j] = radius * (mesh.θe[j+1] - mesh.θe[j])
+        workspace.cell_area[j] =
+            radius^2 * Δλ * (sin(mesh.θe[j+1]) - sin(mesh.θe[j]))
+        workspace.southward_distance[j] = j == 1 ?
+            radius * 2(mesh.θc[1] + π / 2) : radius * (mesh.θc[j] - mesh.θc[j-1])
+        workspace.northward_distance[j] = j == nθ ?
+            radius * 2(π / 2 - mesh.θc[nθ]) : radius * (mesh.θc[j+1] - mesh.θc[j])
     end
-    fill!(vf, 0.0)
-    @inbounds for k = 1:nd, j = 2:nθ, i = 1:nλ
+    @inbounds for h = 1:nθ+1
+        workspace.meridional_face_length[h] = radius * cos(mesh.θe[h]) * Δλ
+    end
+    workspace.metrics_radius = radius
+    workspace.metrics_ready = true
+    return nothing
+end
+
+function _prepare_horizontal_faces_level!(workspace, u, v, k)
+    nλ, nθ, _ = size(u)
+    uf, vf = workspace.u_face, workspace.v_face
+    fvλ, fvφ = workspace.volume_flux_lambda, workspace.volume_flux_phi
+    @inbounds for j = 1:nθ, i = 1:nλ
+        uf[i, j, k] = 0.5 * (u[_west(i, nλ), j, k] + u[i, j, k])
+        fvλ[i, j, k] = uf[i, j, k] * workspace.zonal_face_length[j]
+    end
+    @inbounds for i = 1:nλ
+        vf[i, 1, k] = 0.0
+        vf[i, nθ+1, k] = 0.0
+        fvφ[i, 1, k] = 0.0
+        fvφ[i, nθ+1, k] = 0.0
+    end
+    @inbounds for j = 2:nθ, i = 1:nλ
         vf[i, j, k] = 0.5 * (v[i, j-1, k] + v[i, j, k])
+        fvφ[i, j, k] = vf[i, j, k] * workspace.meridional_face_length[j]
     end
     return nothing
 end
 
-function _horizontal_substeps(workspace, mesh, v, dt, cfl_limit)
-    max_cfl = 0.0
-    nλ, nθ, nd = size(workspace.u_face)
-    Δλ = 2π / nλ
-    uf, vf = workspace.u_face, workspace.v_face
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        ie = _east(i, nλ)
-        zonal_length = mesh.radius * (mesh.θe[j+1] - mesh.θe[j])
-        west_volume = uf[i, j, k] * zonal_length
-        east_volume = uf[ie, j, k] * zonal_length
-        south_volume = vf[i, j, k] * mesh.radius * cos(mesh.θe[j]) * Δλ
-        north_volume = vf[i, j+1, k] * mesh.radius * cos(mesh.θe[j+1]) * Δλ
-        # Meridional Van Leer remains a one-cell operator, while zonal Van
-        # Leer can sweep arbitrary distances. Subcycle zonal flow only when
-        # its deformation would make neighboring departure faces cross.
-        limiting_volume = max(south_volume, 0.0) + max(-north_volume, 0.0) +
-                          max(east_volume - west_volume, 0.0)
-        area = mesh.radius^2 * Δλ * (sin(mesh.θe[j+1]) - sin(mesh.θe[j]))
-        max_cfl = max(max_cfl, dt * limiting_volume / area)
+function _prepare_transport_level!(workspace, tracer, u, v, Δp, M, dt, k)
+    nλ, nθ, _ = size(u)
+    _prepare_horizontal_faces_level!(workspace, u, v, k)
+    fvλ, fvφ = workspace.volume_flux_lambda, workspace.volume_flux_phi
 
-        if v[i, j, k] >= 0.0
-            distance = j == 1 ? mesh.radius * 2(mesh.θc[1] + π / 2) :
-                       mesh.radius * (mesh.θc[j] - mesh.θc[j-1])
+    horizontal_cfl = 0.0
+    vertical_cfl = 0.0
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    pressure_minimum = Inf
+    tracer_isfinite = true
+    pressure_isfinite = true
+    @inbounds for j = 1:nθ, i = 1:nλ
+        ie = _east(i, nλ)
+        west_volume = fvλ[i, j, k]
+        east_volume = fvλ[ie, j, k]
+        south_volume = fvφ[i, j, k]
+        north_volume = fvφ[i, j+1, k]
+        incoming_volume = max(west_volume, 0.0) + max(-east_volume, 0.0) +
+                          max(south_volume, 0.0) + max(-north_volume, 0.0)
+        horizontal_cfl =
+            max(horizontal_cfl, dt * incoming_volume / workspace.cell_area[j])
+
+        distance = v[i, j, k] >= 0.0 ?
+            workspace.southward_distance[j] : workspace.northward_distance[j]
+        horizontal_cfl = max(horizontal_cfl, dt * abs(v[i, j, k]) / distance)
+
+        layer_pressure = Δp[i, j, k]
+        incoming_mass = max(M[i, j, k], 0.0) + max(-M[i, j, k+1], 0.0)
+        vertical_cfl = max(vertical_cfl, dt * incoming_mass / layer_pressure)
+
+        tracer_value = tracer[i, j, k]
+        if isfinite(tracer_value)
+            tracer_minimum = min(tracer_minimum, tracer_value)
+            tracer_maximum = max(tracer_maximum, abs(tracer_value))
         else
-            distance = j == nθ ? mesh.radius * 2(π / 2 - mesh.θc[nθ]) :
-                       mesh.radius * (mesh.θc[j+1] - mesh.θc[j])
+            tracer_isfinite = false
         end
-        max_cfl = max(max_cfl, dt * abs(v[i, j, k]) / distance)
+        if isfinite(layer_pressure)
+            pressure_minimum = min(pressure_minimum, layer_pressure)
+        else
+            pressure_isfinite = false
+        end
     end
-    return max(1, ceil(Int, max_cfl / cfl_limit))
+    workspace.horizontal_cfl_by_level[k] = horizontal_cfl
+    workspace.vertical_cfl_by_level[k] = vertical_cfl
+    workspace.chunk_minimum[k] = tracer_minimum
+    workspace.chunk_maximum[k] = tracer_maximum
+    workspace.pressure_minimum_by_level[k] = pressure_minimum
+    workspace.chunk_isfinite[k] = tracer_isfinite
+    workspace.pressure_isfinite_by_level[k] = pressure_isfinite
+    return nothing
 end
 
-function _vertical_substeps(M, Δp, dt, cfl_limit)
-    nλ, nθ, nd = size(Δp)
-    max_deformation = 0.0
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        # Large coherent throughflow is handled by swept-layer PPM. Only
-        # subcycle when the lower departure interface would cross the upper
-        # one, i.e. when a layer's departure thickness ceases to be positive.
-        deformation = max(M[i, j, k+1] - M[i, j, k], 0.0)
-        max_deformation = max(max_deformation, dt * deformation / Δp[i, j, k])
+function _prepare_transport!(workspace, mesh, tracer, u, v, Δp, M, dt, cfl_limit)
+    _prepare_tracer_metrics!(workspace, mesh)
+    _, _, nd = size(tracer)
+    if _use_tracer_threads(length(tracer), nd)
+        @threads for k = 1:nd
+            _prepare_transport_level!(workspace, tracer, u, v, Δp, M, dt, k)
+        end
+    else
+        for k = 1:nd
+            _prepare_transport_level!(workspace, tracer, u, v, Δp, M, dt, k)
+        end
     end
-    return max(1, ceil(Int, max_deformation / cfl_limit))
+
+    horizontal_cfl = 0.0
+    vertical_cfl = 0.0
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    pressure_minimum = Inf
+    tracer_isfinite = true
+    pressure_isfinite = true
+    @inbounds for k = 1:nd
+        horizontal_cfl = max(horizontal_cfl, workspace.horizontal_cfl_by_level[k])
+        vertical_cfl = max(vertical_cfl, workspace.vertical_cfl_by_level[k])
+        tracer_minimum = min(tracer_minimum, workspace.chunk_minimum[k])
+        tracer_maximum = max(tracer_maximum, workspace.chunk_maximum[k])
+        pressure_minimum = min(pressure_minimum, workspace.pressure_minimum_by_level[k])
+        tracer_isfinite &= workspace.chunk_isfinite[k]
+        pressure_isfinite &= workspace.pressure_isfinite_by_level[k]
+    end
+    tracer_isfinite && tracer_minimum >= 0.0 ||
+        throw(DomainError(tracer_minimum, "input tracer must be finite and non-negative"))
+    pressure_isfinite && pressure_minimum > 0.0 || throw(
+        DomainError(
+            pressure_minimum,
+            "layer pressure thickness must be finite and positive",
+        ),
+    )
+    nh = max(1, ceil(Int, horizontal_cfl / cfl_limit))
+    nv = max(1, ceil(Int, vertical_cfl / cfl_limit))
+    return nh, nv, tracer_maximum
 end
 
 """
 Advance a scalar with spherical multidimensional Van Leer transport followed by
 nonuniform monotone PPM vertical transport. Zonal Van Leer and vertical PPM
-integrate across every fully swept cell, as in Isca/FMS. Subcycling is needed
-only by the one-cell meridional operator or to prevent departure-interface
-crossing under strongly deformational flow. Winds, mass fluxes, and layer
-thicknesses are held fixed during the transport step.
+can integrate across every fully swept cell, as in Isca/FMS. The current
+advective-form update nevertheless subcycles to enforce the incoming-CFL bound
+required by its positivity-preserving low-order baseline. Winds, mass fluxes,
+and layer thicknesses are held fixed during the transport step.
 """
 function Advance_Grid_Tracer!(
     workspace::Grid_Tracer_Workspace,
@@ -163,34 +283,53 @@ function Advance_Grid_Tracer!(
         throw(DimensionMismatch("cell-centered tracer transport fields must have equal sizes"))
     size(M) == (size(tracer_in, 1), size(tracer_in, 2), size(tracer_in, 3) + 1) ||
         throw(DimensionMismatch("vertical mass flux must have nd+1 interfaces"))
-    all(isfinite, tracer_in) && minimum(tracer_in) >= 0.0 ||
-        throw(DomainError(minimum(tracer_in), "input tracer must be finite and non-negative"))
-    all(isfinite, Δp) && minimum(Δp) > 0.0 ||
-        throw(DomainError(minimum(Δp), "layer pressure thickness must be finite and positive"))
-
-    _face_velocities!(workspace, u, v)
+    nh, nv, tracer_scale =
+        _prepare_transport!(workspace, mesh, tracer_in, u, v, Δp, M, dt, cfl_limit)
     copyto!(workspace.q_work, tracer_in)
 
-    nh = _horizontal_substeps(workspace, mesh, v, dt, cfl_limit)
     dt_h = dt / nh
     for _ = 1:nh
-        Horizontal_Tracer_Advection!(workspace, mesh, workspace.q_stage, workspace.q_work, u, v, dt_h)
-        _remove_roundoff_undershoots!(workspace.q_stage, "horizontal")
+        tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(tracer_scale, 1.0))
+        _horizontal_tracer_advection_prepared!(
+            workspace, mesh, workspace.q_stage, workspace.q_work, u, v, dt_h, tolerance,
+        )
+        tracer_scale =
+            _finish_transport_stage!(workspace, workspace.q_stage, "horizontal", size(tracer_in, 3))
         workspace.q_work, workspace.q_stage = workspace.q_stage, workspace.q_work
     end
 
-    nv = _vertical_substeps(M, Δp, dt, cfl_limit)
     dt_v = dt / nv
     for _ = 1:nv
-        Vertical_Tracer_Advection!(workspace, workspace.q_stage, workspace.q_work, Δp, M, dt_v)
-        _remove_roundoff_undershoots!(workspace.q_stage, "vertical")
+        tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(tracer_scale, 1.0))
+        _vertical_tracer_advection!(
+            workspace, workspace.q_stage, workspace.q_work, Δp, M, dt_v, tolerance,
+        )
+        tracer_scale =
+            _finish_transport_stage!(workspace, workspace.q_stage, "vertical", size(tracer_in, 2))
         workspace.q_work, workspace.q_stage = workspace.q_stage, workspace.q_work
     end
 
     copyto!(tracer_out, workspace.q_work)
-    all(isfinite, tracer_out) || error("grid tracer transport produced non-finite values")
-    minimum(tracer_out) >= 0.0 || error("grid tracer roundoff cleanup failed")
     return (horizontal_substeps = nh, vertical_substeps = nv)
+end
+
+Base.@noinline function _horizontal_positivity_error(
+    i, j, k, q, q_low, dt, area,
+    west_volume, east_volume, south_volume, north_volume,
+)
+    meridional_inflow = max(south_volume, 0.0) + max(-north_volume, 0.0)
+    zonal_convergence = max(west_volume - east_volume, 0.0)
+    zonal_stretching = max(east_volume - west_volume, 0.0)
+    incoming = max(west_volume, 0.0) + max(-east_volume, 0.0) + meridional_inflow
+    error(
+        "horizontal donor-cell update violated positivity at " *
+        "(i=$i, j=$j, k=$k): q=$q, q_low=$q_low, dt=$dt, " *
+        "west_volume=$west_volume, east_volume=$east_volume, " *
+        "south_volume=$south_volume, north_volume=$north_volume, " *
+        "incoming_cfl=$(dt * incoming / area), " *
+        "zonal_convergence_cfl=$(dt * zonal_convergence / area), " *
+        "zonal_stretching_cfl=$(dt * zonal_stretching / area)",
+    )
 end
 
 function _longitude_slopes!(slope, q)
@@ -291,13 +430,59 @@ only in the fractional terminal donor cell.
     return low_integral / distance, high_integral / distance
 end
 
-"""One multidimensional spherical Van Leer step with swept-cell zonal fluxes."""
-function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
-    nλ, nθ, nd = size(q)
-    Δλ = 2π / nλ
-    _transverse_states!(workspace, mesh, q, u, v, dt)
-    _longitude_slopes!(workspace.slope_lambda, workspace.q_half_phi)
-    _latitude_slopes!(workspace.slope_phi, workspace.q_half_lambda, mesh)
+function _horizontal_level!(workspace, mesh, q_out, q, u, v, dt, tolerance, k)
+    nλ, nθ, _ = size(q)
+    qx, qy = workspace.q_half_lambda, workspace.q_half_phi
+    @inbounds for j = 1:nθ, i = 1:nλ
+        c = 0.5dt * u[i, j, k] / workspace.zonal_cell_width[j]
+        offset = floor(Int, c)
+        fraction = c - offset
+        ileft = mod1(i - 1 - offset, nλ)
+        iright = _east(ileft, nλ)
+        qx[i, j, k] = fraction * q[ileft, j, k] + (1 - fraction) * q[iright, j, k]
+
+        if v[i, j, k] >= 0.0
+            qm = j == 1 ? q[_pole_shift(i, nλ), 1, k] : q[i, j-1, k]
+            distance = workspace.southward_distance[j]
+            qy[i, j, k] =
+                q[i, j, k] + 0.5dt * v[i, j, k] * (qm - q[i, j, k]) / distance
+        else
+            qp = j == nθ ? q[_pole_shift(i, nλ), nθ, k] : q[i, j+1, k]
+            distance = workspace.northward_distance[j]
+            qy[i, j, k] =
+                q[i, j, k] - 0.5dt * v[i, j, k] * (qp - q[i, j, k]) / distance
+        end
+    end
+
+    @inbounds for j = 1:nθ, i = 1:nλ
+        workspace.slope_lambda[i, j, k] = _limited_slope(
+            qy[i, j, k], qy[_west(i, nλ), j, k], qy[_east(i, nλ), j, k],
+        )
+
+        if j == 1
+            qm = qx[_pole_shift(i, nλ), 1, k]
+            θm = -π - mesh.θc[1]
+        else
+            qm = qx[i, j-1, k]
+            θm = mesh.θc[j-1]
+        end
+        if j == nθ
+            qp = qx[_pole_shift(i, nλ), nθ, k]
+            θp = π - mesh.θc[nθ]
+        else
+            qp = qx[i, j+1, k]
+            θp = mesh.θc[j+1]
+        end
+        qc = qx[i, j, k]
+        dm = mesh.θc[j] - θm
+        dp = θp - mesh.θc[j]
+        derivative = (dm * (qp - qc) / dp + dp * (qc - qm) / dm) / (dm + dp)
+        raw = derivative * (mesh.θe[j+1] - mesh.θe[j])
+        lower = min(qm, qc, qp)
+        upper = max(qm, qc, qp)
+        workspace.slope_phi[i, j, k] =
+            copysign(min(abs(raw), 2(qc - lower), 2(upper - qc)), raw)
+    end
 
     uf, vf = workspace.u_face, workspace.v_face
     fqλ, flλ, fvλ = workspace.tracer_flux_lambda,
@@ -307,32 +492,31 @@ function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
     workspace.low_flux_phi,
     workspace.volume_flux_phi
 
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        c = uf[i, j, k] * dt / (mesh.radius * mesh.cosθ[j] * Δλ)
+    @inbounds for j = 1:nθ, i = 1:nλ
+        c = uf[i, j, k] * dt / workspace.zonal_cell_width[j]
         low_average, high_average = _zonal_swept_averages(
             workspace.q_half_phi, q, workspace.slope_lambda, i, j, k, c, nλ,
         )
-        face_length = mesh.radius * (mesh.θe[j+1] - mesh.θe[j])
-        fvλ[i, j, k] = uf[i, j, k] * face_length
         fqλ[i, j, k] = fvλ[i, j, k] * high_average
         flλ[i, j, k] = fvλ[i, j, k] * low_average
     end
 
-    fill!(fqφ, 0.0)
-    fill!(flφ, 0.0)
-    fill!(fvφ, 0.0)
-    @inbounds for k = 1:nd, h = 2:nθ, i = 1:nλ
+    @inbounds for i = 1:nλ
+        fqφ[i, 1, k] = 0.0
+        fqφ[i, nθ+1, k] = 0.0
+        flφ[i, 1, k] = 0.0
+        flφ[i, nθ+1, k] = 0.0
+    end
+    @inbounds for h = 2:nθ, i = 1:nλ
         if vf[i, h, k] >= 0.0
             donor = h - 1
-            c = vf[i, h, k] * dt / (mesh.radius * (mesh.θe[donor+1] - mesh.θe[donor]))
+            c = vf[i, h, k] * dt / workspace.zonal_face_length[donor]
             qface = workspace.q_half_lambda[i, donor, k] + 0.5 * workspace.slope_phi[i, donor, k] * (1 - c)
         else
             donor = h
-            c = -vf[i, h, k] * dt / (mesh.radius * (mesh.θe[donor+1] - mesh.θe[donor]))
+            c = -vf[i, h, k] * dt / workspace.zonal_face_length[donor]
             qface = workspace.q_half_lambda[i, donor, k] - 0.5 * workspace.slope_phi[i, donor, k] * (1 - c)
         end
-        face_length = mesh.radius * cos(mesh.θe[h]) * Δλ
-        fvφ[i, h, k] = vf[i, h, k] * face_length
         fqφ[i, h, k] = fvφ[i, h, k] * qface
         flφ[i, h, k] = fvφ[i, h, k] * q[i, donor, k]
     end
@@ -341,14 +525,16 @@ function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
     # combined incoming-CFL bound. Limit only the high-order antidiffusive
     # correction, using one factor per losing cell and one shared face flux.
     ratio = workspace.positivity_ratio
-    tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(maximum(abs, q), 1.0))
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+    @inbounds for j = 1:nθ, i = 1:nλ
         ie = _east(i, nλ)
-        area = mesh.radius^2 * Δλ * (sin(mesh.θe[j+1]) - sin(mesh.θe[j]))
+        area = workspace.cell_area[j]
         low_div = flλ[ie, j, k] - flλ[i, j, k] + flφ[i, j+1, k] - flφ[i, j, k]
         volume_div = fvλ[ie, j, k] - fvλ[i, j, k] + fvφ[i, j+1, k] - fvφ[i, j, k]
         q_low = q[i, j, k] + dt * (-low_div + q[i, j, k] * volume_div) / area
-        q_low >= -tolerance || error("horizontal donor-cell update violated positivity: minimum=$q_low")
+        q_low >= -tolerance || _horizontal_positivity_error(
+            i, j, k, q[i, j, k], q_low, dt, area,
+            fvλ[i, j, k], fvλ[ie, j, k], fvφ[i, j, k], fvφ[i, j+1, k],
+        )
 
         correction_e = fqλ[ie, j, k] - flλ[ie, j, k]
         correction_w = fqλ[i, j, k] - flλ[i, j, k]
@@ -359,78 +545,154 @@ function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
         ratio[i, j, k] = loss > 0.0 ? min(1.0, max(q_low, 0.0) * area / (dt * loss)) : 1.0
     end
 
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+    @inbounds for j = 1:nθ, i = 1:nλ
         correction = fqλ[i, j, k] - flλ[i, j, k]
         losing_i = correction >= 0.0 ? _west(i, nλ) : i
         fqλ[i, j, k] = flλ[i, j, k] + ratio[losing_i, j, k] * correction
     end
-    @inbounds for k = 1:nd, h = 2:nθ, i = 1:nλ
+    @inbounds for h = 2:nθ, i = 1:nλ
         correction = fqφ[i, h, k] - flφ[i, h, k]
         losing_j = correction >= 0.0 ? h - 1 : h
         fqφ[i, h, k] = flφ[i, h, k] + ratio[i, losing_j, k] * correction
     end
 
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    values_are_finite = true
+    @inbounds for j = 1:nθ, i = 1:nλ
         ie = _east(i, nλ)
-        area = mesh.radius^2 * Δλ * (sin(mesh.θe[j+1]) - sin(mesh.θe[j]))
+        area = workspace.cell_area[j]
         tracer_div = fqλ[ie, j, k] - fqλ[i, j, k] + fqφ[i, j+1, k] - fqφ[i, j, k]
         volume_div = fvλ[ie, j, k] - fvλ[i, j, k] + fvφ[i, j+1, k] - fvφ[i, j, k]
         tendency = (-tracer_div + q[i, j, k] * volume_div) / area
         workspace.tendency[i, j, k] = tendency
-        q_out[i, j, k] = q[i, j, k] + dt * tendency
+        tracer_value = q[i, j, k] + dt * tendency
+        q_out[i, j, k] = tracer_value
+        if isfinite(tracer_value)
+            tracer_minimum = min(tracer_minimum, tracer_value)
+            tracer_maximum = max(tracer_maximum, abs(tracer_value))
+        else
+            values_are_finite = false
+        end
+    end
+    workspace.chunk_minimum[k] = tracer_minimum
+    workspace.chunk_maximum[k] = tracer_maximum
+    workspace.chunk_isfinite[k] = values_are_finite
+    return nothing
+end
+
+function _prepare_horizontal_faces!(workspace, mesh, u, v)
+    _prepare_tracer_metrics!(workspace, mesh)
+    _, _, nd = size(u)
+    if _use_tracer_threads(length(u), nd)
+        @threads for k = 1:nd
+            _prepare_horizontal_faces_level!(workspace, u, v, k)
+        end
+    else
+        for k = 1:nd
+            _prepare_horizontal_faces_level!(workspace, u, v, k)
+        end
+    end
+    return nothing
+end
+
+function _horizontal_tracer_advection_prepared!(workspace, mesh, q_out, q, u, v, dt, tolerance)
+    _, _, nd = size(q)
+    if _use_tracer_threads(length(q), nd)
+        @threads for k = 1:nd
+            _horizontal_level!(workspace, mesh, q_out, q, u, v, dt, tolerance, k)
+        end
+    else
+        for k = 1:nd
+            _horizontal_level!(workspace, mesh, q_out, q, u, v, dt, tolerance, k)
+        end
+    end
+    return nothing
+end
+
+"""One multidimensional spherical Van Leer step with swept-cell zonal fluxes."""
+function Horizontal_Tracer_Advection!(workspace, mesh, q_out, q, u, v, dt)
+    _prepare_horizontal_faces!(workspace, mesh, u, v)
+    tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(maximum(abs, q), 1.0))
+    _horizontal_tracer_advection_prepared!(workspace, mesh, q_out, q, u, v, dt, tolerance)
+    return nothing
+end
+
+Base.@noinline function _vertical_positivity_error(
+    i, j, k, q, q_low, dt, Δp, mass_top, mass_bottom,
+)
+    incoming = max(mass_top, 0.0) + max(-mass_bottom, 0.0)
+    error(
+        "vertical donor-cell update violated positivity at " *
+        "(i=$i, j=$j, k=$k): q=$q, q_low=$q_low, dt=$dt, Δp=$Δp, " *
+        "mass_top=$mass_top, mass_bottom=$mass_bottom, " *
+        "incoming_cfl=$(dt * incoming / Δp)",
+    )
+end
+
+function _ppm_reconstruct_column!(workspace, q, dz, i, j)
+    nd = size(q, 3)
+    s, ql, qr, q6 = workspace.ppm_slope, workspace.q_left, workspace.q_right, workspace.q6
+    @inbounds begin
+        s[i, j, 1] = 0.0
+        s[i, j, nd] = 0.0
+        for k = 2:nd-1
+            gm = (q[i, j, k] - q[i, j, k-1]) / (dz[i, j, k] + dz[i, j, k-1])
+            gp = (q[i, j, k+1] - q[i, j, k]) / (dz[i, j, k+1] + dz[i, j, k])
+            raw = (gp * (2dz[i, j, k-1] + dz[i, j, k]) +
+                   gm * (2dz[i, j, k+1] + dz[i, j, k])) * dz[i, j, k] /
+                  (dz[i, j, k-1] + dz[i, j, k] + dz[i, j, k+1])
+            lower = min(q[i, j, k-1], q[i, j, k], q[i, j, k+1])
+            upper = max(q[i, j, k-1], q[i, j, k], q[i, j, k+1])
+            s[i, j, k] = copysign(
+                min(abs(raw), 2(q[i, j, k] - lower), 2(upper - q[i, j, k])), raw,
+            )
+        end
+        for k = 1:nd
+            ql[i, j, k] = q[i, j, k] - 0.5s[i, j, k]
+            qr[i, j, k] = q[i, j, k] + 0.5s[i, j, k]
+        end
+        for h = 3:nd-1
+            km, kp = h - 1, h
+            hmm, hm = dz[i, j, km-1], dz[i, j, km]
+            hp, hpp = dz[i, j, kp], dz[i, j, kp+1]
+            inv_pair = 1 / (hm + hp)
+            inv_four = 1 / (hmm + hm + hp + hpp)
+            x = (hmm + hm) / (2hm + hp) - (hp + hpp) / (hm + 2hp)
+            y = 2hm * hp
+            w1 = hm * inv_pair + x * y * inv_pair * inv_four
+            w2 = hm * (hmm + hm) / (2hm + hp) * inv_four
+            w3 = hp * (hp + hpp) / (hm + 2hp) * inv_four
+            edge = q[i, j, km] + w1 * (q[i, j, kp] - q[i, j, km]) -
+                   w2 * s[i, j, kp] + w3 * s[i, j, km]
+            qr[i, j, km] = edge
+            ql[i, j, kp] = edge
+        end
+        for k = 1:nd
+            qc = q[i, j, k]
+            left, right = ql[i, j, k], qr[i, j, k]
+            if (right - qc) * (qc - left) <= 0.0
+                left = qc
+                right = qc
+            elseif k != 1 && k != nd
+                span = right - left
+                curvature = span * (qc - 0.5 * (right + left))
+                bound = span^2 / 6
+                curvature > bound && (left = 3qc - 2right)
+                curvature < -bound && (right = 3qc - 2left)
+            end
+            ql[i, j, k] = left
+            qr[i, j, k] = right
+            q6[i, j, k] = 6(qc - 0.5 * (left + right))
+        end
     end
     return nothing
 end
 
 function _ppm_reconstruction!(workspace, q, dz)
-    nλ, nθ, nd = size(q)
-    s, ql, qr, q6 = workspace.ppm_slope, workspace.q_left, workspace.q_right, workspace.q6
-    fill!(s, 0.0)
-    @inbounds for j = 1:nθ, i = 1:nλ, k = 2:nd-1
-        gm = (q[i, j, k] - q[i, j, k-1]) / (dz[i, j, k] + dz[i, j, k-1])
-        gp = (q[i, j, k+1] - q[i, j, k]) / (dz[i, j, k+1] + dz[i, j, k])
-        raw = (gp * (2dz[i, j, k-1] + dz[i, j, k]) +
-               gm * (2dz[i, j, k+1] + dz[i, j, k])) * dz[i, j, k] /
-              (dz[i, j, k-1] + dz[i, j, k] + dz[i, j, k+1])
-        lower = min(q[i, j, k-1], q[i, j, k], q[i, j, k+1])
-        upper = max(q[i, j, k-1], q[i, j, k], q[i, j, k+1])
-        s[i, j, k] = copysign(min(abs(raw), 2(q[i, j, k] - lower), 2(upper - q[i, j, k])), raw)
-    end
-    @. ql = q - 0.5s
-    @. qr = q + 0.5s
-
-    @inbounds for j = 1:nθ, i = 1:nλ, h = 3:nd-1
-        km, kp = h - 1, h
-        hmm, hm, hp, hpp = dz[i, j, km-1], dz[i, j, km], dz[i, j, kp], dz[i, j, kp+1]
-        inv_pair = 1 / (hm + hp)
-        inv_four = 1 / (hmm + hm + hp + hpp)
-        x = (hmm + hm) / (2hm + hp) - (hp + hpp) / (hm + 2hp)
-        y = 2hm * hp
-        w1 = hm * inv_pair + x * y * inv_pair * inv_four
-        w2 = hm * (hmm + hm) / (2hm + hp) * inv_four
-        w3 = hp * (hp + hpp) / (hm + 2hp) * inv_four
-        edge = q[i, j, km] + w1 * (q[i, j, kp] - q[i, j, km]) -
-               w2 * s[i, j, kp] + w3 * s[i, j, km]
-        qr[i, j, km] = edge
-        ql[i, j, kp] = edge
-    end
-
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
-        qc = q[i, j, k]
-        left, right = ql[i, j, k], qr[i, j, k]
-        if (right - qc) * (qc - left) <= 0.0
-            left = qc
-            right = qc
-        elseif k != 1 && k != nd
-            span = right - left
-            curvature = span * (qc - 0.5 * (right + left))
-            bound = span^2 / 6
-            curvature > bound && (left = 3qc - 2right)
-            curvature < -bound && (right = 3qc - 2left)
-        end
-        ql[i, j, k] = left
-        qr[i, j, k] = right
-        q6[i, j, k] = 6(qc - 0.5 * (left + right))
+    nλ, nθ, _ = size(q)
+    @inbounds for j = 1:nθ, i = 1:nλ
+        _ppm_reconstruct_column!(workspace, q, dz, i, j)
     end
     return nothing
 end
@@ -488,14 +750,18 @@ the terminal partial layer uses its monotone PPM parabola.
     return low_integral / total_mass, high_integral / total_mass
 end
 
-"""One monotone nonuniform-PPM step with multi-layer swept-mass fluxes."""
-function Vertical_Tracer_Advection!(workspace, q_out, q, Δp, M, dt)
-    nλ, nθ, nd = size(q)
-    _ppm_reconstruction!(workspace, q, Δp)
+function _vertical_column!(workspace, q_out, q, Δp, M, dt, tolerance, i, j)
+    nd = size(q, 3)
+    _ppm_reconstruct_column!(workspace, q, Δp, i, j)
+
     flux, low_flux = workspace.vertical_flux, workspace.low_vertical_flux
-    fill!(flux, 0.0)
-    fill!(low_flux, 0.0)
-    @inbounds for h = 2:nd, j = 1:nθ, i = 1:nλ
+    @inbounds begin
+        flux[i, j, 1] = 0.0
+        flux[i, j, nd+1] = 0.0
+        low_flux[i, j, 1] = 0.0
+        low_flux[i, j, nd+1] = 0.0
+    end
+    @inbounds for h = 2:nd
         low_average, high_average = _vertical_swept_averages(
             workspace, q, Δp, i, j, h, dt * M[i, j, h],
         )
@@ -504,29 +770,80 @@ function Vertical_Tracer_Advection!(workspace, q_out, q, Δp, M, dt)
     end
 
     ratio = workspace.positivity_ratio
-    tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(maximum(abs, q), 1.0))
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+    @inbounds for k = 1:nd
         low_tendency = -(low_flux[i, j, k+1] - low_flux[i, j, k] -
                          q[i, j, k] * (M[i, j, k+1] - M[i, j, k])) / Δp[i, j, k]
         q_low = q[i, j, k] + dt * low_tendency
-        q_low >= -tolerance || error("vertical donor-cell update violated positivity: minimum=$q_low")
+        q_low >= -tolerance || _vertical_positivity_error(
+            i, j, k, q[i, j, k], q_low, dt, Δp[i, j, k],
+            M[i, j, k], M[i, j, k+1],
+        )
         correction_bottom = flux[i, j, k+1] - low_flux[i, j, k+1]
         correction_top = flux[i, j, k] - low_flux[i, j, k]
         loss = max(correction_bottom, 0.0) + max(-correction_top, 0.0)
         ratio[i, j, k] = loss > 0.0 ?
             min(1.0, max(q_low, 0.0) * Δp[i, j, k] / (dt * loss)) : 1.0
     end
-    @inbounds for h = 2:nd, j = 1:nθ, i = 1:nλ
+    @inbounds for h = 2:nd
         correction = flux[i, j, h] - low_flux[i, j, h]
         losing_k = correction >= 0.0 ? h - 1 : h
         flux[i, j, h] = low_flux[i, j, h] + ratio[i, j, losing_k] * correction
     end
-    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    values_are_finite = true
+    @inbounds for k = 1:nd
         tendency = -(flux[i, j, k+1] - flux[i, j, k] -
                      q[i, j, k] * (M[i, j, k+1] - M[i, j, k])) / Δp[i, j, k]
         workspace.tendency[i, j, k] = tendency
-        q_out[i, j, k] = q[i, j, k] + dt * tendency
+        tracer_value = q[i, j, k] + dt * tendency
+        q_out[i, j, k] = tracer_value
+        if isfinite(tracer_value)
+            tracer_minimum = min(tracer_minimum, tracer_value)
+            tracer_maximum = max(tracer_maximum, abs(tracer_value))
+        else
+            values_are_finite = false
+        end
     end
+    return tracer_minimum, tracer_maximum, values_are_finite
+end
+
+function _vertical_latitude!(workspace, q_out, q, Δp, M, dt, tolerance, j)
+    nλ = size(q, 1)
+    tracer_minimum = Inf
+    tracer_maximum = 0.0
+    values_are_finite = true
+    @inbounds for i = 1:nλ
+        column_minimum, column_maximum, column_isfinite =
+            _vertical_column!(workspace, q_out, q, Δp, M, dt, tolerance, i, j)
+        tracer_minimum = min(tracer_minimum, column_minimum)
+        tracer_maximum = max(tracer_maximum, column_maximum)
+        values_are_finite &= column_isfinite
+    end
+    workspace.chunk_minimum[j] = tracer_minimum
+    workspace.chunk_maximum[j] = tracer_maximum
+    workspace.chunk_isfinite[j] = values_are_finite
+    return nothing
+end
+
+function _vertical_tracer_advection!(workspace, q_out, q, Δp, M, dt, tolerance)
+    _, nθ, _ = size(q)
+    if _use_tracer_threads(length(q), nθ)
+        @threads for j = 1:nθ
+            _vertical_latitude!(workspace, q_out, q, Δp, M, dt, tolerance, j)
+        end
+    else
+        for j = 1:nθ
+            _vertical_latitude!(workspace, q_out, q, Δp, M, dt, tolerance, j)
+        end
+    end
+    return nothing
+end
+
+"""One monotone nonuniform-PPM step with multi-layer swept-mass fluxes."""
+function Vertical_Tracer_Advection!(workspace, q_out, q, Δp, M, dt)
+    tolerance = TRACER_ROUNDOFF_FACTOR * eps(max(maximum(abs, q), 1.0))
+    _vertical_tracer_advection!(workspace, q_out, q, Δp, M, dt, tolerance)
     return nothing
 end
 

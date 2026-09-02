@@ -150,8 +150,8 @@ function Compute_Abs_Vor!(
 )
     nλ, nθ, nd = size(grid_vor)
 
-    for j = 1:nθ
-        grid_absvor[:, j, :] .= grid_vor[:, j, :] .+ coriolis[j]
+    @inbounds for k = 1:nd, j = 1:nθ, i = 1:nλ
+        grid_absvor[i, j, k] = grid_vor[i, j, k] + coriolis[j]
     end
 end
 

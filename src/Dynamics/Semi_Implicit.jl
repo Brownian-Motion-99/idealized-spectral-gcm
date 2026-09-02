@@ -502,22 +502,22 @@ function Linear_Geopot_δt!(
     ns, nf, nd = size(spe_δt)
     rdgas = atmo_data.rdgas
 
-    spe_δgeopot_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_δgeopot_half[:, :, nd+1], 0.0)
 
     for k = nd:-1:2
         #todo optimize
         #Φ_{k-1/2} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k-1})
-        spe_δgeopot_half[:, :, k] .=
-            spe_δgeopot_half[:, :, k+1] +
-            rdgas * (spe_δt[:, :, k] * (lnp_half_ref[k+1] - lnp_half_ref[k]))
+        coefficient = rdgas * (lnp_half_ref[k+1] - lnp_half_ref[k])
+        @views @. spe_δgeopot_half[:, :, k] =
+            spe_δgeopot_half[:, :, k+1] + coefficient * spe_δt[:, :, k]
     end
 
     for k = 1:nd
         #todo optimize
         #Φ_{k} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k})
-        spe_δgeopot[:, :, k] .=
-            spe_δgeopot_half[:, :, k+1] +
-            rdgas * (spe_δt[:, :, k] * (lnp_half_ref[k+1] - lnp_full_ref[k]))
+        coefficient = rdgas * (lnp_half_ref[k+1] - lnp_full_ref[k])
+        @views @. spe_δgeopot[:, :, k] =
+            spe_δgeopot_half[:, :, k+1] + coefficient * spe_δt[:, :, k]
     end
 end
 
@@ -671,14 +671,15 @@ function Linear_Ps_T_δdiv!(
     # div = [0,0, ..1,...0], spe_δps -> -nu, spe_δt ->  -tau[:,k]
 
     kappa = atmo_data.kappa
-    nf, ns, nd = size(spe_δdiv)
+    _, _, nd = size(spe_δdiv)
     vert_difference_option = vert_coord.vert_difference_option
     Δak, Δbk, bk = vert_coord.Δak, vert_coord.Δbk, vert_coord.bk
 
-    dmean_tot = zeros(ComplexF64, nf, ns)
-    dmean = zeros(ComplexF64, nf, ns)
-
     if (vert_difference_option == "simmons_and_burridge")
+        # Before the hybrid-coordinate correction below, M[k] is the negative
+        # column-integrated divergence through level k-1. Carrying the running
+        # sum in this required output array avoids two temporary spectral planes.
+        @views fill!(spe_M_half[:, :, 1], 0.0)
         for k = 1:nd
             # Integrates the divergence column to find the total mass tendency
             @assert(Δak[k] + Δbk[k] * ps_ref ≈ Δp_ref[k])
@@ -686,39 +687,42 @@ function Linear_Ps_T_δdiv!(
             Δlnp_p = lnp_half_ref[k+1] - lnp_full_ref[k]
             Δlnp = lnp_half_ref[k+1] - lnp_half_ref[k]
 
-            # dmean = ∇ (v_k Δp_k) = ∇v_k Δp_k = D_k
-            dmean .= spe_δdiv[:, :, k] * Δp_ref[k]
+            temperature_factor = -kappa * t_ref[k] / Δp_ref[k]
+            @views @. spe_δt[:, :, k] = temperature_factor * (
+                -spe_M_half[:, :, k] * Δlnp +
+                spe_δdiv[:, :, k] * Δp_ref[k] * Δlnp_p
+            )
 
-            # Adiabatic heating/cooling driven by divergence
-            spe_δt[:, :, k] .=
-                -kappa * t_ref[k] * (dmean_tot * Δlnp + dmean * Δlnp_p) / Δp_ref[k]
-
-            # dmean_tot = ∑_r=1^k Dr
-            dmean_tot .+= dmean
-            spe_M_half[:, :, k+1] .= -dmean_tot
+            # M[k+1] = -∑_r=1^k D_r and M[k] = -∑_r=1^(k-1) D_r.
+            @views @. spe_M_half[:, :, k+1] =
+                spe_M_half[:, :, k] - spe_δdiv[:, :, k] * Δp_ref[k]
         end
     end
 
     # Change of surface pressure
-    spe_δps[:, :, 1] .= -dmean_tot
+    @views copyto!(spe_δps[:, :, 1], spe_M_half[:, :, nd+1])
 
     for k = 1:nd-1
-        spe_M_half[:, :, k+1] .+= dmean_tot * bk[k+1]
+        @views @. spe_M_half[:, :, k+1] -= spe_δps[:, :, 1] * bk[k+1]
     end
 
-    spe_M_half[:, :, 1] .= 0.0
-    spe_M_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_M_half[:, :, 1], 0.0)
+    @views fill!(spe_M_half[:, :, nd+1], 0.0)
 
     # Vertical temperature advection
     for k = 2:nd
-        spe_Mdt_half[:, :, k] .= spe_M_half[:, :, k] * (t_ref[k] - t_ref[k-1])
+        temperature_difference = t_ref[k] - t_ref[k-1]
+        @views @. spe_Mdt_half[:, :, k] =
+            spe_M_half[:, :, k] * temperature_difference
     end
 
-    spe_Mdt_half[:, :, 1] .= 0.0
-    spe_Mdt_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_Mdt_half[:, :, 1], 0.0)
+    @views fill!(spe_Mdt_half[:, :, nd+1], 0.0)
     for k = 1:nd
-        spe_δt[:, :, k] .-=
-            0.5 * (spe_Mdt_half[:, :, k+1] + spe_Mdt_half[:, :, k]) / Δp_ref[k]
+        vertical_factor = 0.5 / Δp_ref[k]
+        @views @. spe_δt[:, :, k] -= vertical_factor * (
+            spe_Mdt_half[:, :, k+1] + spe_Mdt_half[:, :, k]
+        )
     end
 
 end
@@ -803,7 +807,7 @@ function Adjust_δlnps_δt_δdiv!(
         semi_implicit.spe_δgeopot_temp
 
     # Computes the difference in state: Dᵖ - Dᶜ.
-    spe_δdiv_temp .= spe_div_p - spe_div_c
+    @. spe_δdiv_temp = spe_div_p - spe_div_c
 
     # spe_M_half::Array{ComplexF64,3}, spe_Mdt_half::Array{ComplexF64,3},
     spe_M_half_temp, spe_Mdt_half_temp =
@@ -826,8 +830,8 @@ function Adjust_δlnps_δt_δdiv!(
         spe_δt_temp,
     )
 
-    spe_δt .+= spe_δt_temp
-    spe_δlnps .+= spe_δps_temp / ps_ref
+    @. spe_δt += spe_δt_temp
+    @. spe_δlnps += spe_δps_temp / ps_ref
 
     # use as a memory container
     spe_δlnps_temp = semi_implicit.spe_δps_temp
@@ -835,8 +839,8 @@ function Adjust_δlnps_δt_δdiv!(
     # Implicitly update the temperature and surface pressure tendencies at current step.
     # Updated temperature and surface pressure tendencies are used for calculating divergence only.
     ξ = Get_ξ(semi_implicit.integrator)
-    spe_δt_temp .= spe_t_p - spe_t_c + ξ * spe_δt
-    spe_δlnps_temp .= spe_lnps_p - spe_lnps_c + ξ * spe_δlnps
+    @. spe_δt_temp = spe_t_p - spe_t_c + ξ * spe_δt
+    @. spe_δlnps_temp = spe_lnps_p - spe_lnps_c + ξ * spe_δlnps
 
     # Updates the divergence tendency (spe_δdiv) 
     # by subtracting the Laplacian of the linear geopotential and pressure gradient terms derived from δT* and δlnpₛ*.
@@ -855,9 +859,11 @@ function Adjust_δlnps_δt_δdiv!(
     nd = vert_coord.nd
 
     for k = 1:nd
-        spe_δdiv[:, :, k] .-=
-            laplacian_eigen .*
-            (spe_δgeopot_temp[:, :, k] .+ h[k] * ps_ref * spe_δlnps_temp[:, :, 1])
+        pressure_factor = h[k] * ps_ref
+        @views @. spe_δdiv[:, :, k] -= laplacian_eigen * (
+            spe_δgeopot_temp[:, :, k] +
+            pressure_factor * spe_δlnps_temp[:, :, 1]
+        )
     end
 
 end
@@ -1051,8 +1057,8 @@ function Implicit_Correction!(
         spe_δt_temp,
     )
 
-    spe_δt .+= ξ * spe_δt_temp
-    spe_δlnps .+= ξ / ps_ref * spe_δps_temp
+    @. spe_δt += ξ * spe_δt_temp
+    @. spe_δlnps += (ξ / ps_ref) * spe_δps_temp
 
 end
 

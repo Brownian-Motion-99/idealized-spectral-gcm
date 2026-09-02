@@ -4,7 +4,8 @@ using JGCM
 
 import JGCM.Atmo_Data_Module: Atmo_Data
 import JGCM.Output_Mappings_Module: Get_Var_Info
-import JGCM.Vertical_Interpolation_Module: Compute_Pressure_Grid!, Interpolate_Field!
+import JGCM.Vertical_Interpolation_Module:
+    Pressure_Interpolation_Cache, Prepare_Interpolation!, Apply_Interpolation!
 
 """
     Interpolate_File(input_path, output_path, target_levels_Pa; var_names)
@@ -131,8 +132,14 @@ function Interpolate_File(
     n_tgt = length(target_levels)
     log_targets = log.(target_levels)
 
-    p3d_buffer = zeros(Float64, nλ, nθ, nd)
+    interpolation_cache = Pressure_Interpolation_Cache(nλ, nθ, nd, n_tgt)
     interp_buffer = zeros(Float64, nλ, nθ, n_tgt)
+
+    temperature_name = var_info[:t].nc_name
+    needs_temperature = any(
+        var_sym == :z && haskey(ds_in, nc_name) && ndims(ds_in[nc_name]) == 4
+        for (var_sym, nc_name) in requested_variables
+    )
 
     # 6. Time Loop
     n_times = ds_in.dim["time"]
@@ -149,13 +156,13 @@ function Interpolate_File(
         # Write ps to output (2D copy)
         ds_out["ps"][:, :, t] = ps_slice
 
-        # B. Reconstruct exact Simmons--Burridge full-level pressure.
-        Compute_Pressure_Grid!(p3d_buffer, ak, bk, ps_slice)
+        # B. Prepare pressure geometry once and reuse it for every 3D field,
+        # following Isca's pres_interp_type setup/apply split.
+        Prepare_Interpolation!(interpolation_cache, ak, bk, ps_slice, log_targets)
 
         # C. Read Temperature (for Hydrostatic calc if needed)
         t_ref = nothing
-        temperature_name = var_info[:t].nc_name
-        if haskey(ds_in, temperature_name)
+        if needs_temperature && haskey(ds_in, temperature_name)
             t_ref = ds_in[temperature_name][:, :, :, t]
         end
 
@@ -169,14 +176,15 @@ function Interpolate_File(
                 continue
             end
 
-            raw_data = ds_in[nc_name][:, :, :, t]
+            # If height needs temperature, reuse the already-loaded slice when
+            # temperature itself is also requested.
+            raw_data = var_sym == :t && !isnothing(t_ref) ?
+                       t_ref : ds_in[nc_name][:, :, :, t]
 
-            Interpolate_Field!(
+            Apply_Interpolation!(
                 interp_buffer,
                 raw_data,
-                p3d_buffer,
-                ps_slice,
-                log_targets,
+                interpolation_cache,
                 var_sym,
                 phys,
                 t_ref,

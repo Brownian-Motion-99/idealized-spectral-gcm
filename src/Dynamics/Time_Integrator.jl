@@ -159,9 +159,9 @@ function Compute_Spectral_Damping!(
     Δt = integrator.Δt
 
     if (init_step)
-        δQ .= (δQ - Qc .* damping) ./ (1.0 .+ Δt * damping)
+        @. δQ = (δQ - Qc * damping) / (1.0 + Δt * damping)
     else
-        δQ .= (δQ - Qp .* damping) ./ (1.0 .+ 2Δt * damping)
+        @. δQ = (δQ - Qp * damping) / (1.0 + 2Δt * damping)
     end
 end
 
@@ -202,12 +202,12 @@ function Filtered_Leapfrog!(
     Δt = integrator.Δt
 
     if (init_step)
-        Qn .= Qc + Δt * δQ
-        Qc .+= robert_coef * (-1.0 * Qc + Qn)
+        @. Qn = Qc + Δt * δQ
+        @. Qc += robert_coef * (-Qc + Qn)
     else
-        Qc .+= robert_coef * (Qp - 2 * Qc)
-        Qn .= Qp + 2 * Δt * δQ
-        Qc .+= robert_coef * Qn
+        @. Qc += robert_coef * (Qp - 2Qc)
+        @. Qn = Qp + 2Δt * δQ
+        @. Qc += robert_coef * Qn
     end
 
 end

@@ -6,10 +6,24 @@ using ...Spectral_Spherical_Mesh_Module
 struct PBL_Workspace
     V_c::Matrix{Float64}
     za::Matrix{Float64}
+    CA::Matrix{Float64}
+    CC::Matrix{Float64}
+    CE::Matrix{Float64}
+    CF::Matrix{Float64}
+    CFt::Matrix{Float64}
 end
 
 PBL_Workspace(nλ::Int, nθ::Int) =
-    PBL_Workspace(zeros(nλ, nθ), zeros(nλ, nθ))
+    PBL_Workspace(nλ, nθ, 0)
+
+function PBL_Workspace(nλ::Int, nθ::Int, nd::Int)
+    column_work(levels) = zeros(Float64, levels, nthreads())
+    return PBL_Workspace(
+        zeros(nλ, nθ), zeros(nλ, nθ),
+        column_work(nd), column_work(nd),
+        column_work(nd + 1), column_work(nd + 1), column_work(nd + 1),
+    )
+end
 
 
 """
@@ -314,6 +328,7 @@ PBL_Top_Symbol(::ModelLevelBasedPBLTop) = :ModelLevel
 
 """
     Implicit_PBL_Mixing!(
+        workspace,
         atmo_data,
         grid_p_full, grid_p_half, 
         grid_t, grid_q,
@@ -325,6 +340,7 @@ PBL_Top_Symbol(::ModelLevelBasedPBLTop) = :ModelLevel
     )
 
 ### Parameters
+    - workspace: Persistent per-thread Thomas-solver buffers.
     - atmo_data: Atmospheric constants (R, cₚ, g).
     
     - grid_p_full: Pressure at layer centers.
@@ -373,6 +389,7 @@ see also: Reed and Jablonowski (JAMES, 2012)
 
 """
 function Implicit_PBL_Mixing!(
+    workspace::PBL_Workspace,
     atmo_data::Atmo_Data,
     grid_p_full::Array{Float64,3},
     grid_p_half::Array{Float64,3},
@@ -392,6 +409,9 @@ function Implicit_PBL_Mixing!(
     )
 
     nλ, nθ, nd = atmo_data.nλ, atmo_data.nθ, atmo_data.nd
+    size(workspace.CA) == (nd, nthreads()) || throw(
+        DimensionMismatch("PBL solver workspace does not match the vertical grid or thread count"),
+    )
     Rd, cp, grav = atmo_data.rdgas, atmo_data.cp_air, atmo_data.grav
     virtual_coefficient = atmo_data.rvgas / Rd - 1.0
 
@@ -399,16 +419,11 @@ function Implicit_PBL_Mixing!(
     p0 = 100000.0
     Rd_cp = Rd / cp
     grav_sq = grav^2
+    CA, CC, CE, CF, CFt =
+        workspace.CA, workspace.CC, workspace.CE, workspace.CF, workspace.CFt
 
     @threads for j = 1:nθ
-
-        # --- Local buffers for threads --- #
-        CA = Vector{Float64}(undef, nd)      # Coupling coef. to the layer above
-        CC = Vector{Float64}(undef, nd)      # Coupling coef. to the layer below
-        CE = Vector{Float64}(undef, nd + 1)    # Eliminator
-        CF = Vector{Float64}(undef, nd + 1)    # Source of latent heat
-        CFt = Vector{Float64}(undef, nd + 1)    # Source of sensible heat
-        # --- Local buffers for threads --- #
+        thread = threadid()
 
         for i = 1:nλ
 
@@ -456,8 +471,8 @@ function Implicit_PBL_Mixing!(
             # --- Finite volume coupling coef. --- #
             # CA = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k+1/2} * Δp_{k})
             # CC = Δt * (g^2 * ρ^2 * K_E) / (Δp_{k-1/2} * Δp_{k})
-            CA[nd] = 0.0
-            CC[1] = 0.0
+            CA[nd, thread] = 0.0
+            CC[1, thread] = 0.0
             for k = 1:nd-1
                 rpdel_k = 1 / (grid_p_half[i, j, k+1] - grid_p_half[i, j, k])
                 rpdel_kp1 = 1 / (grid_p_half[i, j, k+2] - grid_p_half[i, j, k+1])
@@ -470,10 +485,10 @@ function Implicit_PBL_Mixing!(
                 isfinite(rho_interface) && rho_interface > 0 || throw(
                     ArgumentError("PBL interface density must be positive and finite"),
                 )
-                CA[k] =
+                CA[k, thread] =
                     rpdel_k * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho_interface^2 /
                     (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
-                CC[k+1] =
+                CC[k+1, thread] =
                     rpdel_kp1 * Float64(Δt) * grav_sq * K_E[i, j, k+1] * rho_interface^2 /
                     (grid_p_full[i, j, k+1] - grid_p_full[i, j, k])
             end
@@ -481,21 +496,24 @@ function Implicit_PBL_Mixing!(
 
             # --- Forward sweep --- #
             # Thomas Algorithm
-            CE[1] = 0.0
-            CE[nd+1] = 0.0
-            CF[nd+1] = 0.0
-            CFt[nd+1] = 0.0
+            CE[1, thread] = 0.0
+            CE[nd+1, thread] = 0.0
+            CF[nd+1, thread] = 0.0
+            CFt[nd+1, thread] = 0.0
             for k = nd:-1:1
-                CE[k] = CC[k] / (1.0 + CA[k] + CC[k] - CA[k] * CE[k+1])
-                CF[k] = (
-                    (grid_q[i, j, k] + CA[k] * CF[k+1]) /
-                    (1.0 + CA[k] + CC[k] - CA[k] * CE[k+1])
+                denominator =
+                    1.0 + CA[k, thread] + CC[k, thread] -
+                    CA[k, thread] * CE[k+1, thread]
+                CE[k, thread] = CC[k, thread] / denominator
+                CF[k, thread] = (
+                    (grid_q[i, j, k] + CA[k, thread] * CF[k+1, thread]) /
+                    denominator
                 )
-                CFt[k] = (
+                CFt[k, thread] = (
                     (
                         (p0 / grid_p_full[i, j, k])^(Rd_cp) * grid_t[i, j, k] +
-                        CA[k] * CFt[k+1]
-                    ) / (1.0 + CA[k] + CC[k] - CA[k] .* CE[k+1])
+                        CA[k, thread] * CFt[k+1, thread]
+                    ) / denominator
                 )
             end
             # --- Forward sweep --- #
@@ -504,14 +522,15 @@ function Implicit_PBL_Mixing!(
             # Loop downward to calculate the moisture and temperature at the next timestep
             # Note that the tracer for temperature is potential temperature,
             # so we have to transform the potential temperature to temperature with Poisson's equation
-            grid_q[i, j, 1] = CF[1]
-            grid_t[i, j, 1] = CFt[1] * (grid_p_full[i, j, 1] / p0)^Rd_cp
+            grid_q[i, j, 1] = CF[1, thread]
+            grid_t[i, j, 1] = CFt[1, thread] * (grid_p_full[i, j, 1] / p0)^Rd_cp
             for k = 2:nd
-                grid_q[i, j, k] = CE[k] * grid_q[i, j, k-1] + CF[k]
+                grid_q[i, j, k] =
+                    CE[k, thread] * grid_q[i, j, k-1] + CF[k, thread]
                 grid_t[i, j, k] =
                     (
-                        CE[k] * grid_t[i, j, k-1] * (p0 / grid_p_full[i, j, k-1])^Rd_cp +
-                        CFt[k]
+                        CE[k, thread] * grid_t[i, j, k-1] *
+                        (p0 / grid_p_full[i, j, k-1])^Rd_cp + CFt[k, thread]
                     ) * (grid_p_full[i, j, k] / p0)^Rd_cp
             end
             # --- Backward substitute --- #
@@ -519,4 +538,24 @@ function Implicit_PBL_Mixing!(
         end
     end
 
+end
+
+function Implicit_PBL_Mixing!(
+    atmo_data::Atmo_Data,
+    grid_p_full::Array{Float64,3},
+    grid_p_half::Array{Float64,3},
+    grid_t::Array{Float64,3},
+    grid_q::Array{Float64,3},
+    K_E::Array{Float64,3},
+    V_c::Array{Float64,2},
+    za::Array{Float64,2},
+    physics_params::Dict{String,Any},
+    Δt::Int64,
+    C_D::Float64 = 0.0044,
+)
+    workspace = PBL_Workspace(atmo_data.nλ, atmo_data.nθ, atmo_data.nd)
+    return Implicit_PBL_Mixing!(
+        workspace, atmo_data, grid_p_full, grid_p_half, grid_t, grid_q,
+        K_E, V_c, za, physics_params, Δt, C_D,
+    )
 end

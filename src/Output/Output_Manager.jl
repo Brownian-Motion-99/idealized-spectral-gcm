@@ -61,7 +61,7 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     log_targets::Vector{Float64}
 
     # --- Buffers (Pre-allocated, 3D only) ---
-    p3d_buffer::Array{Float64, 3}
+    interpolation_cache::Pressure_Interpolation_Cache
     interp_buffer::Array{Float64, 3}
 
     vert_ak::Vector{Float64}
@@ -81,9 +81,8 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     ds_raw::Union{NCDataset, Nothing}   # native sigma/hybrid (or 2D native) — always created
 
     # --- Accumulators ---
-    # acc_plev: pressure-level accumulator (only allocated when do_plev_output = true, 3D only)
-    acc_plev::Dict{Symbol, Array{Float64}}
-    # acc_raw:  native grid accumulator (always allocated, used for all model types)
+    # The native-grid mean is shared by raw and pressure-level output. Keeping
+    # one accumulator avoids adding every model field twice on every time step.
     acc_raw::Dict{Symbol, Array{Float64}}
 
     active_symbols::Vector{Symbol}
@@ -248,7 +247,7 @@ function Output_Manager(
     )
 
     # Define Buffers (Initialize as empty by default)
-    p3d_buf    = zeros(Float64, 0, 0, 0)
+    interpolation_cache = Pressure_Interpolation_Cache(0, 0, 1, 0)
     interp_buf = zeros(Float64, 0, 0, 0)
     vert_ak    = Float64[]
     vert_bk    = Float64[]
@@ -266,8 +265,10 @@ function Output_Manager(
 
         # Allocation (Only happens for 3D)
         n_plev     = length(pressure_levels)
-        p3d_buf    = zeros(Float64, nλ, nθ, nd)
-        interp_buf = zeros(Float64, nλ, nθ, max(n_plev, 1))
+        if do_plev_output
+            interpolation_cache = Pressure_Interpolation_Cache(nλ, nθ, nd, n_plev)
+            interp_buf = zeros(Float64, nλ, nθ, n_plev)
+        end
 
         vert_ak = copy(vert_coord.ak)
         vert_bk = copy(vert_coord.bk)
@@ -290,9 +291,6 @@ function Output_Manager(
         acc_raw[sym] = (meta.dims == 3) ? zeros(Float64, nλ, nθ, nd) : zeros(Float64, nλ, nθ)
     end
 
-    # acc_plev: only allocated when pressure-level output is requested (3D only)
-    acc_plev = (do_plev_output && isa(mode_obj, PrimitiveEquationMode)) ?
-               deepcopy(acc_raw) : Dict{Symbol, Array{Float64}}()
     # --- Initialize Accumulators --- #
 
     # --- Initialize Files --- #
@@ -318,9 +316,9 @@ function Output_Manager(
     return Output_Manager(
         nλ, nθ, nd, atmo_data, mode_obj,
         do_plev_output, pressure_levels, log.(max.(pressure_levels, 1.0)),
-        p3d_buf, interp_buf, vert_ak, vert_bk,
+        interpolation_cache, interp_buf, vert_ak, vert_bk,
         day_to_sec, start_time, start_time, spinup_time, output_interval, 0, 1,
-        ds_plev, ds_raw, acc_plev, acc_raw, active_symbols, var_info_map,
+        ds_plev, ds_raw, acc_raw, active_symbols, var_info_map,
         base_fn, collect(mesh.λc), collect(mesh.θc), vert_coord, global_meta
     )
 end
@@ -358,11 +356,6 @@ function _accumulate_core!(::PrimitiveEquationMode, mgr, live_data)
         # acc_raw: always accumulate (native sigma/hybrid grid → ds_raw)
         if haskey(mgr.acc_raw, sym)
             _accumulate_buffer!(mgr.acc_raw[sym], raw_data)
-        end
-
-        # acc_plev: only accumulate when pressure-level output is requested (→ ds_plev)
-        if mgr.do_plev_output && haskey(mgr.acc_plev, sym)
-            _accumulate_buffer!(mgr.acc_plev[sym], raw_data)
         end
     end
 end
@@ -418,6 +411,12 @@ function _write_core!(::PrimitiveEquationMode, mgr)
     sample_count = Float64(mgr.sample_counter)
     var_info_map = mgr.var_info_map
 
+    # Finalize the native-grid mean once. Both output products consume this
+    # same record, matching Isca's average-then-interpolate ordering.
+    for accumulator in values(mgr.acc_raw)
+        accumulator ./= sample_count
+    end
+
     # =========================================================================
     # PRIMARY: Native sigma/hybrid output (acc_raw → ds_raw, always)
     # =========================================================================
@@ -426,46 +425,54 @@ function _write_core!(::PrimitiveEquationMode, mgr)
         meta     = var_info_map[sym]
         nc_var   = mgr.ds_raw[meta.nc_name]
         raw_mean = mgr.acc_raw[sym]
-        raw_mean ./= sample_count
 
         if ndims(nc_var) == 4  # (lon, lat, pfull, time)
             nc_var[:, :, :, t_idx] = raw_mean
         elseif ndims(nc_var) == 3  # (lon, lat, time)
             nc_var[:, :, t_idx] = (ndims(raw_mean) == 3) ? view(raw_mean, :, :, 1) : raw_mean
         end
-        fill!(mgr.acc_raw[sym], 0.0)
     end
     NCDatasets.sync(mgr.ds_raw)
 
     # =========================================================================
-    # OPTIONAL: Pressure-level interpolated output (acc_plev → ds_plev)
+    # OPTIONAL: Pressure-level interpolated output (same mean → ds_plev)
     # =========================================================================
     if mgr.do_plev_output && mgr.ds_plev !== nothing
-        for accumulator in values(mgr.acc_plev)
-            accumulator ./= sample_count
-        end
-        ps_avg_2d = mgr.acc_plev[:ps]
-        Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak, mgr.vert_bk, ps_avg_2d)
+        ps_avg_2d = mgr.acc_raw[:ps]
+        Prepare_Interpolation!(
+            mgr.interpolation_cache,
+            mgr.vert_ak,
+            mgr.vert_bk,
+            ps_avg_2d,
+            mgr.log_targets,
+        )
+        t_ref = get(mgr.acc_raw, :t, nothing)
 
-        for sym in keys(mgr.acc_plev)
+        for sym in keys(mgr.acc_raw)
             haskey(var_info_map, sym) || continue
             meta        = var_info_map[sym]
             nc_var      = mgr.ds_plev[meta.nc_name]
-            native_mean = mgr.acc_plev[sym]
+            native_mean = mgr.acc_raw[sym]
 
             if ndims(nc_var) == 4  # (lon, lat, plev, time)
-                t_ref = get(mgr.acc_plev, :t, nothing)
-                Interpolate_Field!(mgr.interp_buffer, native_mean, mgr.p3d_buffer, ps_avg_2d,
-                                   mgr.log_targets, sym, mgr.atmo_data, t_ref)
+                Apply_Interpolation!(
+                    mgr.interp_buffer,
+                    native_mean,
+                    mgr.interpolation_cache,
+                    sym,
+                    mgr.atmo_data,
+                    t_ref,
+                )
                 nc_var[:, :, :, t_idx] = mgr.interp_buffer
             else
                 nc_var[:, :, t_idx] = (ndims(native_mean) == 3) ? view(native_mean, :, :, 1) : native_mean
             end
         end
-        for accumulator in values(mgr.acc_plev)
-            fill!(accumulator, 0.0)
-        end
         NCDatasets.sync(mgr.ds_plev)
+    end
+
+    for accumulator in values(mgr.acc_raw)
+        fill!(accumulator, 0.0)
     end
 end
 

@@ -42,10 +42,10 @@ using JGCM
     @test maximum(q1) <= maximum(q0) + 2e-15
     @test final_mean ≈ initial_mean rtol = 2e-14
 
-    # Isca-style large-Courant zonal transport crosses whole cells without
-    # subcycling when the flow is coherent (neighboring departure faces do
-    # not cross). The transverse half-step uses the same departure-point
-    # interpolation for either wind direction.
+    # The swept reconstruction itself crosses whole cells, and the transverse
+    # half-step uses the same departure-point interpolation for either wind
+    # direction. The complete advective-form update subcycles separately to
+    # keep its donor-cell baseline positive.
     transverse! = JGCM.Grid_Tracer_Transport_Module._transverse_states!
     for k = 1:nd, j = 1:nθ, i = 1:nλ
         q0[i, j, k] = i
@@ -65,7 +65,7 @@ using JGCM
     initial_mean = sum(q0 .* reshape(mesh.wts, 1, nθ, 1))
     steps = Advance_Grid_Tracer!(workspace, mesh, q1, q0, u, v, Δp, M, 600.0)
     final_mean = sum(q1 .* reshape(mesh.wts, 1, nθ, 1))
-    @test steps.horizontal_substeps == 1
+    @test steps.horizontal_substeps > 1
     @test minimum(q1) >= 0.0
     @test final_mean ≈ initial_mean rtol = 3e-14
 
@@ -85,7 +85,7 @@ using JGCM
     @test high_average ≈ expected
 
     # Exercise both vertical donor directions, boundary-adjacent PPM cells,
-    # and deformation-only safety subcycling.
+    # and incoming-mass safety subcycling.
     fill!(u, 0.0)
     q0 .= 0.001
     q0[:, :, 3] .= 0.018
@@ -98,6 +98,72 @@ using JGCM
     @test all(isfinite, q1)
     @test minimum(q1) >= 0.0
     @test maximum(q1) <= maximum(q0) + 2e-15
+end
+
+
+@testset "High-Courant dry-front positivity" begin
+    # A gradual acceleration followed by sharp zonal convergence. The
+    # deformation-only estimator selected one substep here; even a two-sided
+    # deformation estimator selected only two and left the donor baseline
+    # negative because the downstream face still swept the complete wet cell.
+    nλ, nθ, nd = 32, 16, 1
+    radius = 6.371e6
+    dt = 600.0
+    mesh = Spectral_Spherical_Mesh(7, 8, nλ, nθ, nd, radius)
+    workspace = Grid_Tracer_Workspace(nλ, nθ, nd)
+    u = zeros(nλ, nθ, nd)
+    v = zeros(nλ, nθ, nd)
+    Δp = fill(20_000.0, nλ, nθ, nd)
+    M = zeros(nλ, nθ, nd + 1)
+    Δλ = 2π / nλ
+    for j = 1:nθ, i = 1:nλ
+        center_courant = 4.0 + 2.0 * (i - 1) / (nλ - 1)
+        u[i, j, 1] = center_courant * radius * mesh.cosθ[j] * Δλ / dt
+    end
+
+    q0 = zeros(nλ, nθ, nd)
+    q0[1, 8, 1] = 1.0e-12
+    q1 = similar(q0)
+    steps = Advance_Grid_Tracer!(workspace, mesh, q1, q0, u, v, Δp, M, dt)
+    @test steps.horizontal_substeps > 2
+    @test all(isfinite, q1)
+    @test minimum(q1) >= 0.0
+    @test maximum(q1) <= maximum(q0) + 2e-15
+
+    # Constant tracers must remain constant under the same strongly varying
+    # velocity field despite the additional positivity substeps.
+    fill!(q0, 0.01)
+    Advance_Grid_Tracer!(workspace, mesh, q1, q0, u, v, Δp, M, dt)
+    @test q1 ≈ q0 atol = 2e-17 rtol = 3e-15
+
+    # Vertical analogue: large coherent positive mass flux with a small local
+    # convergence. A deformation-only bound leaves a multi-layer downstream
+    # sweep and can empty the wet layer before applying the local correction.
+    nλv, nθv, ndv = 4, 2, 20
+    meshv = Spectral_Spherical_Mesh(1, 2, nλv, nθv, ndv, radius)
+    workspacev = Grid_Tracer_Workspace(nλv, nθv, ndv)
+    uv = zeros(nλv, nθv, ndv)
+    vv = similar(uv)
+    Δpv = ones(nλv, nθv, ndv)
+    Mv = zeros(nλv, nθv, ndv + 1)
+    for h = 2:10
+        Mv[:, :, h] .= 5.0 * (h - 1) / 9
+    end
+    Mv[:, :, 11] .= 4.0
+    for h = 12:20
+        Mv[:, :, h] .= 4.0 * (21 - h) / 10
+    end
+    qv0 = zeros(nλv, nθv, ndv)
+    qv0[:, :, 10] .= 1.0e-12
+    qv1 = similar(qv0)
+    steps = Advance_Grid_Tracer!(workspacev, meshv, qv1, qv0, uv, vv, Δpv, Mv, 1.0)
+    @test steps.vertical_substeps > 2
+    @test all(isfinite, qv1)
+    @test minimum(qv1) >= 0.0
+
+    fill!(qv0, 0.01)
+    Advance_Grid_Tracer!(workspacev, meshv, qv1, qv0, uv, vv, Δpv, Mv, 1.0)
+    @test qv1 ≈ qv0 atol = 2e-17 rtol = 3e-15
 end
 
 @testset "Tracer roundoff undershoots" begin

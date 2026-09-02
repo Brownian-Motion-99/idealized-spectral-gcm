@@ -319,7 +319,7 @@ function Compute_Corrections!(
     end
 
     if (do_energy_correction)
-        grid_energy_temp .= 0.5 * (grid_u_n .^ 2 + grid_v_n .^ 2) + cp_air * grid_t_n
+        @. grid_energy_temp = 0.5 * (grid_u_n^2 + grid_v_n^2) + cp_air * grid_t_n
         mean_energy_n = Mass_Weighted_Global_Integral(
             vert_coord,
             mesh,
@@ -805,7 +805,7 @@ function Spectral_Dynamics!(
 
     Vor_Div_From_Grid_UV!(mesh, grid_δu, grid_δv, spe_δvor, spe_δdiv)
 
-    grid_energy_full .= grid_geopot_full .+ 0.5 * (grid_u .^ 2 + grid_v .^ 2)
+    @. grid_energy_full = grid_geopot_full + 0.5 * (grid_u^2 + grid_v^2)
     Trans_Grid_To_Spherical!(mesh, grid_energy_full, spe_energy)
     Apply_Laplacian!(mesh, spe_energy)
     spe_δdiv .-= spe_energy

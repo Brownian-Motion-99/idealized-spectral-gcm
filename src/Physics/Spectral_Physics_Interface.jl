@@ -35,7 +35,7 @@ function Physics_Workspace(nλ::Int, nθ::Int, nd::Int)
         field(), field(), column(),
         field(), field(), field(), column(),
         column(), column(), field(),
-        PBL_Workspace(nλ, nθ),
+        PBL_Workspace(nλ, nθ, nd),
     )
 end
 
@@ -240,7 +240,7 @@ function Spectral_Physics!(
             end
             if do_pbl_mixing
                 Implicit_PBL_Mixing!(
-                    atmo_data, grid_p_full, grid_p_half, work_t, work_q,
+                    workspace.pbl, atmo_data, grid_p_full, grid_p_half, work_t, work_q,
                     dyn_data.K_E, surface_wind, surface_height, physics_params,
                     physics_dt, physics_params["C_D"]::Float64,
                 )

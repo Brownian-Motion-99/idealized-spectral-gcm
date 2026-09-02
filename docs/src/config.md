@@ -155,6 +155,18 @@ The `Output_Manager` writes time-averaged snapshots to NetCDF files at `output_i
 * **Pressure-level output (optional):** Set `do_plev_output = true` together with `pressure_levels` to also produce interpolated output on pressure levels (e.g., `output_t0_plev.nc`). An error is raised if `do_plev_output = true` but `pressure_levels` is empty.
 * **Final chunk:** `Driver.jl` does not rotate to a new NC chunk on the final saving boundary of the run. The rotation is skipped when `integrator.time >= segment_end_time` (the absolute model time at the end of the current invocation, i.e. `start_time + end_time`). This correctly handles both cold starts (where `segment_end_time == end_time`) and warm restarts (where `segment_end_time > end_time`). The last interval's data stays in the previously-opened chunk rather than being moved to a fresh, empty file.
 
+Online pressure-level output prepares the vertical indices and weights once per
+output record and reuses them for every field. For maximum model throughput,
+use the Isca-style offline workflow instead: set `do_plev_output = false`, keep
+the native output, and convert it after the run:
+
+```shell
+julia --project=. post_processing/Interpolator.jl input.nc output_plev.nc 92500 85000 50000 20000
+```
+
+The offline converter uses the same interpolation cache and numerical rules as
+online output.
+
 #### Future work: native-coordinate CF interoperability
 
 Pressure-level files have explicit `plev` coordinates and are the recommended output for analysis. Native model-level files retain Isca-style `pfull`, `phalf`, `pk`, `bk`, and `ps` metadata, which is sufficient for this project's postprocessor but does not fully describe the nonlinear Simmons--Burridge full-level pressure calculation to generic CF software.

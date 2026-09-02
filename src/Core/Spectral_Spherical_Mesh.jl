@@ -525,7 +525,9 @@ function Trans_Grid_To_Spherical!(
             # FFT
             @. scratch = ComplexF64(in_view)
             mul!(out_view, fft_p, scratch)
-            @. out_view[1:num_fourier+1] = out_view[1:num_fourier+1] / nλ
+            @inbounds @simd for m = 1:num_fourier+1
+                out_view[m] /= nλ
+            end
         end
 
     end
