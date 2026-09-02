@@ -2,16 +2,6 @@ using Documenter, JGCM
 
 DocMeta.setdocmeta!(JGCM, :DocTestSetup, :(using JGCM); recursive = true)
 
-const page_rename = Dict("developer.md" => "Developer docs")
-
-function nice_name(file)
-    file = replace(file, r"^[0-9]*-" => "")
-    if haskey(page_rename, file)
-        return page_rename[file]
-    end
-    return splitext(file)[1] |> x -> replace(x, "-" => " ") |> titlecase
-end
-
 makedocs(;
     modules = [JGCM],
     doctest = true,
@@ -28,10 +18,18 @@ makedocs(;
     ),
     pages = [
         "Home" => "index.md",
-        [
-            nice_name(file) => file for file in readdir(joinpath(@__DIR__, "src")) if
-            file != "index.md" && splitext(file)[2] == ".md"
-        ]..., # Added splatting (...) to ensure the array is flattened into the pages list
+        "Getting started" => "getting-started.md",
+        "Model formulation" => [
+            "Dynamical core" => "dynamics.md",
+            "Physical parameterizations" => "physics.md",
+        ],
+        "User guide" => [
+            "Model configuration" => "config.md",
+            "Output and restarts" => "output.md",
+        ],
+        "Reference" => [
+            "Notation" => "notation.md",
+        ],
     ],
 )
 

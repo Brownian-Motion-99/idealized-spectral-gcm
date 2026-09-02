@@ -1,49 +1,58 @@
 # idealized-spectral-gcm
 
-**A light-weighted global circulation model (GCM) written in Julia.**
+`idealized-spectral-gcm` is a lightweight global atmospheric model written in
+Julia. It provides a spectral-transform dynamical core for idealized research,
+teaching, benchmark experiments, and numerical-method development.
 
-This package implements a spectral dynamical core solving the primitive equations on the sphere. It is designed for idealized atmospheric research, educational purposes, and algorithmic prototyping. It serves as a modern refactor of the legacy spectral core originally developed by Daniel Zhengyu Huang.
+The package supports three equation sets:
 
-![alt img](t42_HS_dry_u_zonal_mean.png)
+- a hydrostatic primitive-equation atmosphere with optional moisture;
+- a rotating shallow-water model;
+- a nondivergent barotropic vorticity model.
 
-## Numerical Methods
+The primitive-equation model combines spherical-harmonic horizontal dynamics,
+Simmons--Burridge pressure-coordinate differencing, semi-implicit filtered
+leapfrog integration, finite-volume moisture transport, and a compact suite of
+idealized physical parameterizations.
 
-### 1. Horizontal Discretization
-The model uses the **Spectral Transform Method**. Variables such as vorticity $\zeta$ and divergence $D$ are expanded in spherical harmonics $Y_n^m(\lambda, \phi)$:
+![Zonal-mean zonal wind from a T42 Held--Suarez simulation](t42_HS_dry_u_zonal_mean.png)
 
-$$\zeta(\lambda, \phi, t) = \sum_{m=-M}^{M} \sum_{n=|m|}^{N(m)} \zeta_n^m(t) Y_n^m(\lambda, \phi)$$
+## Documentation map
 
-Non-linear terms (like advection) are computed on a **Gaussian Grid** to avoid the cost of convolution sums, using the efficient transform provided by `Spectral_Spherical_Mesh.jl`.
+If this is your first run, begin with [Getting started](@ref). The remaining
+pages separate scientific explanation from user-facing configuration and
+output reference:
 
-### 2. Vertical Discretization
-The vertical column is discretized using **Finite Differences** on hybrid $\sigma-p$ coordinates.
+- [Dynamical core](@ref) describes the equation sets, spectral transforms,
+  vertical discretization, tracer transport, semi-implicit solve, damping, and
+  conservation corrections.
+- [Physical parameterizations](@ref) describes only the parameterized
+  processes and their ordered coupling.
+- [Model configuration](@ref) lists `Model_Config`, initialization choices,
+  constraints, and physics dictionary keys.
+- [Output and restarts](@ref) documents time averaging, NetCDF variables,
+  pressure-level interpolation, checkpointing, and warm starts.
+- [Notation](@ref) is the single source of truth for mathematical symbols and
+  their source-code names.
 
-### 3. Time Integration
-Time stepping is handled via a **Semi-Implicit Leapfrog** scheme.
-* **Gravity waves:** Treated implicitly to allow for longer time steps ($\Delta t$).
-* **Advection/Coriolis:** Treated explicitly.
-* **Time Filter:** A Robert-Asselin filter is applied to suppress the computational mode inherent to the leapfrog scheme.
+## Design boundary
 
-## Installation
+The model deliberately separates resolved dynamics from parameterized physics.
+The dynamical core constructs an adiabatic provisional next state. Enabled
+parameterizations then act sequentially on a Gaussian-grid working state and
+the result is synchronized back to the spectral representation. This avoids
+mixing physical increments into the three-level leapfrog tendency and makes
+the order of parameterized processes explicit.
 
-```shell
-git clone https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git
-```
+## Current scope
 
-## Quick Start
+The code is intended for idealized configurations rather than operational
+forecasting. Implemented primitive-equation parameterizations include
+Held--Suarez forcing, Betts--Miller convection, large-scale condensation,
+surface sensible and latent exchange, implicit boundary-layer scalar mixing,
+and a prescribed moisture-radiative linear response. It does not currently
+include interactive radiation, cloud microphysics with condensate storage, or
+a full land/ocean surface model.
 
-### Held-Suarez Test Case
-
-To run a standard dry dynamic benchmark:
-
-```julia
-julia --project=. exp/HSt21/HS.jl
-```
-
-### Moist Held-Suarez Case
-
-To run a Held-Suarez Case with grid scale condensation and planetary boundary layer parameterization:
-
-```julia
-julia --project=. exp/HSt42/HS.jl
-```
+The project is a modern refactor of the legacy spectral core originally
+developed by Daniel Zhengyu Huang.
