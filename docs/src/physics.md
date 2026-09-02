@@ -96,20 +96,60 @@ $$\frac{\partial \mathbf{v}}{\partial t} = -k_v (\sigma) \mathbf{v}$$
 $$\frac{\partial T}{\partial t}_{fric} = -\frac{1}{c_p} (u \frac{\partial u}{\partial t}_{fric} + v \frac{\partial v}{\partial t}_{fric})$$
 
 ### Large-Scale Condensation (`Lscale_Cond.jl`)
-A simple saturation adjustment scheme ("Manabe bucket"). If specific humidity $q$ exceeds the saturation value $q_{sat}(T, p)$:
+A saturation adjustment diagnosed after convection. It uses the same mixed-phase
+Smithsonian saturation-vapor-pressure equation and exact saturation-specific-humidity
+conversion as Betts-Miller and the surface evaporation scheme. If specific
+humidity $q$ exceeds $q_{sat}(T,p)$, the signed humidity increment is
 
-* **Condensation:** Excess moisture is removed immediately.
-    
 ```math
-\Delta q = \frac{q - q_{sat}}{1 + \frac{L_v}{c_p} \frac{\partial q_{sat}}{\partial T}}
+\Delta q_{LS} =
+\frac{q_{sat}-q}
+{1 + \frac{L_v}{c_p} \frac{\partial q_{sat}}{\partial T}} \leq 0.
 ```
 
-* **Latent Heating:** Temperature is increased by the release of latent heat.
-    
+The temperature increment is
+
 ```math
-\Delta T = \frac{L_v}{c_p} \Delta q * L
+\Delta T_{LS} = -L\frac{L_v}{c_p}\Delta q_{LS} \geq 0,
 ```
-where $L$ is latent heating efficiency, default is 0.2.
+
+where $L$ scales latent heating only. Humidity removal and precipitation do not
+depend on $L$. For $L<1$, reduced heating is intentional, so exact moist-energy
+closure and exact final saturation are not expected.
+
+### Betts-Miller Convection (`Betts_Miller.jl`)
+
+For a column with positive contiguous CAPE, the scheme constructs a moist
+adiabatic parcel temperature profile and a reference humidity profile equal to
+the configured relative humidity times the parcel saturation mixing ratio. It
+returns the relaxation rates
+
+```math
+\dot T = \frac{T_{ref}-T}{\tau_{BM}}, \qquad
+\dot q = \frac{q_{ref}-q}{\tau_{BM}}.
+```
+
+The column energy correction lengthens whichever of the temperature or
+humidity adjustments supplies the larger precipitation-equivalent energy; it
+does not cap either tendency using the model time step. Physics is subcycled at
+the base model timestep, so the driver requires `Δt <= bm_tau`; each explicit
+BM adjustment therefore cannot overshoot its reference profile.
+
+Saturation vapor pressure follows the reference mixed-phase Smithsonian
+thermodynamics: ice below 253.16 K, liquid above 273.16 K, and a linear blend
+between them. The parcel calculation includes an initially saturated
+surface-parcel adjustment, an RK2 saturated ascent using the arithmetic
+midpoint pressure, and discrete contiguous LFC/LZB detection. Convection that
+remains buoyant through the model top uses the top full level as its LZB.
+
+When both moist schemes are enabled, Betts-Miller updates the private physics
+state first and large-scale condensation diagnoses that updated state. The
+complete physics chain is applied directly to the provisional post-dynamics
+state in 600 s substeps: one substep during startup and two across a mature
+leapfrog interval. Physics increments are not inserted into the leapfrog RHS.
+The process order is BM, large-scale condensation, surface exchange, PBL
+mixing, Rayleigh friction, Newtonian relaxation, and LRF. Diagnostic tendency
+and flux fields are time averages across the substeps.
 
 ### Boundary Layer Mixing (`PBL.jl`)
 Vertical turbulent diffusion of heat, moisture, and momentum.

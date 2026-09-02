@@ -29,18 +29,6 @@ end
     @test_throws ArgumentError JGCM.Driver.progress_metrics(145, 144, 120.0)
 end
 
-@testset "Driver warm-start duration semantics" begin
-    duration = 20_000 * 86_400
-    checkpoint_time = 10_000 * 86_400
-    Δt = 600
-
-    segment_steps = JGCM.Driver.time_steps(duration, Δt)
-
-    @test segment_steps == 2_880_000
-    @test segment_steps * Δt == 20_000 * 86_400
-    @test checkpoint_time + segment_steps * Δt == 30_000 * 86_400
-end
-
 @testset "Driver end-of-run metrics" begin
     metrics = JGCM.Driver.run_metrics(43_200, 86_400, 72, 36.0, 86_400)
     @test metrics.simulated_days == 0.5

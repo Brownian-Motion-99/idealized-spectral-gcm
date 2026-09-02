@@ -6,11 +6,19 @@ using ..Atmo_Data_Module
 using ..Time_Integrator_Module
 using ..Press_And_Geopot_Module
 
-export Semi_Implicit_Solver, Build_Implicit_Matrices, Build_Wave_Matrices, Update_Init_Step!, Linear_Press_δps, Linear_Geopot_δt!,
-Linear_Geopot_δps, Linear_Ps_T_δdiv!, Adjust_δlnps_δt_δdiv!, Implicit_Correction!
+export Semi_Implicit_Solver,
+    Build_Implicit_Matrices,
+    Build_Wave_Matrices,
+    Update_Init_Step!,
+    Linear_Press_δps,
+    Linear_Geopot_δt!,
+    Linear_Geopot_δps,
+    Linear_Ps_T_δdiv!,
+    Adjust_δlnps_δt_δdiv!,
+    Implicit_Correction!
 
 mutable struct Semi_Implicit_Solver
-    
+
     integrator::Filtered_Leapfrog
     nd::Int64
 
@@ -29,7 +37,7 @@ mutable struct Semi_Implicit_Solver
 
     num_wavenumbers::Int64
     wave_numbers::Array{Int64,2}
-    wave_matrix::Array{Float64,3}
+    wave_matrix::Array{ComplexF64,3}
 
     # spectral memory container
     spe_δdiv_temp::Array{ComplexF64,3}
@@ -69,26 +77,39 @@ spectral space.
 
 """
 function Semi_Implicit_Solver(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data, integrator::Filtered_Leapfrog, 
-    ps_ref::Float64, t_ref::Array{Float64,1}, wave_numbers::Array{Int64,2}
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    integrator::Filtered_Leapfrog,
+    ps_ref::Float64,
+    t_ref::Array{Float64,1},
+    wave_numbers::Array{Int64,2},
 )
 
     nd, ak, bk = vert_coord.nd, vert_coord.ak, vert_coord.bk
     # ps_ref_3d  = reshape([ps_ref], (1, 1, 1))
-    ps_ref_3d  = fill(ps_ref, (1, 1, 1))
-    
-    Δp_ref                   = zeros(Float64, (1, 1, nd))
-    p_half_ref, lnp_half_ref = zeros(Float64, (1, 1, nd+1)), zeros(Float64, (1, 1, nd+1))
+    ps_ref_3d = fill(ps_ref, (1, 1, 1))
+
+    Δp_ref = zeros(Float64, (1, 1, nd))
+    p_half_ref, lnp_half_ref =
+        zeros(Float64, (1, 1, nd + 1)), zeros(Float64, (1, 1, nd + 1))
     p_full_ref, lnp_full_ref = zeros(Float64, (1, 1, nd)), zeros(Float64, (1, 1, nd))
 
     # Reference log-pressures and vertical thicknesses.
-    Pressure_Variables!(vert_coord, ps_ref_3d, p_half_ref, Δp_ref, lnp_half_ref, p_full_ref, lnp_full_ref)
+    Pressure_Variables!(
+        vert_coord,
+        ps_ref_3d,
+        p_half_ref,
+        Δp_ref,
+        lnp_half_ref,
+        p_full_ref,
+        lnp_full_ref,
+    )
 
-    Δp_ref                   = Δp_ref[1, 1, :]
+    Δp_ref = Δp_ref[1, 1, :]
     p_half_ref, lnp_half_ref = p_half_ref[1, 1, :], lnp_half_ref[1, 1, :]
     p_full_ref, lnp_full_ref = p_full_ref[1, 1, :], lnp_full_ref[1, 1, :]
 
-    δlnp_half_ref = zeros(Float64, nd+1)
+    δlnp_half_ref = zeros(Float64, nd + 1)
     δlnp_full_ref = zeros(Float64, nd)
     # derivative d lnp_{k+1/2} dps
     for k = 1:nd+1
@@ -103,34 +124,59 @@ function Semi_Implicit_Solver(
 
     # The vertical coupling between divergence, temperature, and surface pressure.
     h, div_mat = Build_Implicit_Matrices(
-        vert_coord, atmo_data,
-        ps_ref, Δp_ref,
-        lnp_half_ref, lnp_full_ref, δlnp_half_ref, δlnp_full_ref, t_ref
+        vert_coord,
+        atmo_data,
+        ps_ref,
+        Δp_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        δlnp_half_ref,
+        δlnp_full_ref,
+        t_ref,
     )
 
     num_fourier, num_spherical = size(wave_numbers) .- 1
-    num_wavenumbers            = num_spherical - 1
+    num_wavenumbers = num_spherical - 1
 
     # first time step 
     ξ = Get_ξ(integrator)
     laplacian_eigen = integrator.laplacian_eigen
-    wave_matrix = Build_Wave_Matrices(num_wavenumbers, laplacian_eigen, div_mat, ξ)
+    wave_matrix =
+        ComplexF64.(Build_Wave_Matrices(num_wavenumbers, laplacian_eigen, div_mat, ξ))
 
 
     # spectral memory container
-    spe_δdiv_temp         = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd)
-    spe_δt_temp           = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd)
-    spe_δps_temp          = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, 1)
-    spe_δgeopot_half_temp = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd+1)
-    spe_δgeopot_temp      = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd)
-    spe_M_half_temp       = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd+1)
-    spe_Mdt_half_temp     = Array{ComplexF64,3}(undef, num_fourier+1, num_spherical+1, nd+1)
+    spe_δdiv_temp = Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd)
+    spe_δt_temp = Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd)
+    spe_δps_temp = Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, 1)
+    spe_δgeopot_half_temp =
+        Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd + 1)
+    spe_δgeopot_temp = Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd)
+    spe_M_half_temp = Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd + 1)
+    spe_Mdt_half_temp =
+        Array{ComplexF64,3}(undef, num_fourier + 1, num_spherical + 1, nd + 1)
 
 
     Semi_Implicit_Solver(
-        integrator, nd, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref,
-        h, div_mat, num_wavenumbers, wave_numbers, wave_matrix,
-        spe_δdiv_temp, spe_δps_temp, spe_δt_temp, spe_δgeopot_half_temp, spe_δgeopot_temp, spe_M_half_temp, spe_Mdt_half_temp
+        integrator,
+        nd,
+        ps_ref,
+        Δp_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        t_ref,
+        h,
+        div_mat,
+        num_wavenumbers,
+        wave_numbers,
+        wave_matrix,
+        spe_δdiv_temp,
+        spe_δps_temp,
+        spe_δt_temp,
+        spe_δgeopot_half_temp,
+        spe_δgeopot_temp,
+        spe_M_half_temp,
+        spe_Mdt_half_temp,
     )
 
 end
@@ -177,44 +223,59 @@ wave_matrix[:,:,s] = (I + ξ^2 (γ τ + (H2+H1)ν) s(s+1)/r^2)^{-1}
 
 """
 function Build_Implicit_Matrices(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    ps_ref::Float64, 
-    Δp_ref::Array{Float64,1}, lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
-    δlnp_half_ref::Array{Float64,1}, δlnp_full_ref::Array{Float64,1},
-    t_ref::Array{Float64,1}
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    ps_ref::Float64,
+    Δp_ref::Array{Float64,1},
+    lnp_half_ref::Array{Float64,1},
+    lnp_full_ref::Array{Float64,1},
+    δlnp_half_ref::Array{Float64,1},
+    δlnp_full_ref::Array{Float64,1},
+    t_ref::Array{Float64,1},
 )
 
-    nd      = vert_coord.nd
-    tau     = zeros(Float64, nd, nd)    # Temperature with respect to div (adiabatic heating)
-    gamma   = zeros(Float64, nd, nd)    # Geopotential with respect to T (hydrostatic)
-    nu      = zeros(Float64, nd)        # lnps with respect to div (continuity)
-    h1      = zeros(Float64, nd)        # Pressure gradient with respect to ps
-    h2      = zeros(Float64, nd)        # Geopotential with respect to ps
-    h       = zeros(Float64, nd)        # h1 + h2
+    nd = vert_coord.nd
+    tau = zeros(Float64, nd, nd)    # Temperature with respect to div (adiabatic heating)
+    gamma = zeros(Float64, nd, nd)    # Geopotential with respect to T (hydrostatic)
+    nu = zeros(Float64, nd)        # lnps with respect to div (continuity)
+    h1 = zeros(Float64, nd)        # Pressure gradient with respect to ps
+    h2 = zeros(Float64, nd)        # Geopotential with respect to ps
+    h = zeros(Float64, nd)        # h1 + h2
     div_mat = zeros(Float64, nd, nd)    # gamma * tau + h nu^T   
 
-    spe_zero_half, spe_zero_full = zeros(ComplexF64, 1, 1, nd+1), zeros(ComplexF64, 1, 1, nd)
+    spe_zero_half, spe_zero_full =
+        zeros(ComplexF64, 1, 1, nd + 1), zeros(ComplexF64, 1, 1, nd)
     spe_input = zeros(ComplexF64, 1, 1, nd)
 
-    spe_δps, spe_δt, spe_δgeopot_half, spe_δgeopot = zeros(ComplexF64, 1, 1, 1), zeros(ComplexF64, 1, 1, nd), zeros(ComplexF64, 1, 1, nd+1), zeros(ComplexF64, 1, 1, nd)
+    spe_δps, spe_δt, spe_δgeopot_half, spe_δgeopot = zeros(ComplexF64, 1, 1, 1),
+    zeros(ComplexF64, 1, 1, nd),
+    zeros(ComplexF64, 1, 1, nd + 1),
+    zeros(ComplexF64, 1, 1, nd)
     δlnp_half_zero, δlnp_full_zero = zeros(Float64, 1, 1, nd + 1), zeros(Float64, 1, 1, nd)
 
-    spe_M_half_temp, spe_Mdt_half_temp = zeros(ComplexF64, 1, 1, nd+1), zeros(ComplexF64, 1, 1, nd+1)
+    spe_M_half_temp, spe_Mdt_half_temp =
+        zeros(ComplexF64, 1, 1, nd + 1), zeros(ComplexF64, 1, 1, nd + 1)
 
     for k = 1:nd
-        
+
         # Set divergence as 0 at level ≠ k to isolate the effect of divergence at level = k.
         spe_input .= 0.0
         spe_input[1, 1, k] = 1.0
 
         # Divergence drives the change of surface pressure and temperautre.
         Linear_Ps_T_δdiv!(
-            vert_coord, atmo_data, 
-            spe_input, 
-            ps_ref, 
-            Δp_ref, lnp_half_ref, lnp_full_ref, 
+            vert_coord,
+            atmo_data,
+            spe_input,
+            ps_ref,
+            Δp_ref,
+            lnp_half_ref,
+            lnp_full_ref,
             t_ref,
-            spe_M_half_temp, spe_Mdt_half_temp, spe_δps, spe_δt
+            spe_M_half_temp,
+            spe_Mdt_half_temp,
+            spe_δps,
+            spe_δt,
         )
 
         # -d_lnps/d_div
@@ -224,15 +285,40 @@ function Build_Implicit_Matrices(
         tau[:, k] = -spe_δt[1, 1, :]
 
         # Change of temperature drives the change of geopotential
-        Linear_Geopot_δt!(vert_coord, atmo_data, lnp_half_ref, lnp_full_ref, spe_input, t_ref, spe_δgeopot_half, spe_δgeopot)
+        Linear_Geopot_δt!(
+            vert_coord,
+            atmo_data,
+            lnp_half_ref,
+            lnp_full_ref,
+            spe_input,
+            t_ref,
+            spe_δgeopot_half,
+            spe_δgeopot,
+        )
         gamma[:, k] = spe_δgeopot[1, 1, :]
-        
+
     end
 
     # Change of surface pressure drives the change of pressure and geopotential
     # used only once
-    h1 = Linear_Press_δps(vert_coord, atmo_data, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref)
-    h2 = Linear_Geopot_δps(vert_coord, atmo_data, δlnp_half_ref, δlnp_full_ref, lnp_half_ref, lnp_full_ref, t_ref)
+    h1 = Linear_Press_δps(
+        vert_coord,
+        atmo_data,
+        ps_ref,
+        Δp_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        t_ref,
+    )
+    h2 = Linear_Geopot_δps(
+        vert_coord,
+        atmo_data,
+        δlnp_half_ref,
+        δlnp_full_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        t_ref,
+    )
 
     h = h1 + h2
 
@@ -269,10 +355,15 @@ This inversion solves the Helmholtz equation arising from the semi-implicit disc
       thus the `wave_matrix` is very close to I for small wavenumbers, large scale divergence is almost undamped.
 
 """
-function Build_Wave_Matrices(num_total_wavenumbers::Int64, eigen::Array{Float64,2}, div_mat::Array{Float64,2}, ξ::Float64)
-    
+function Build_Wave_Matrices(
+    num_total_wavenumbers::Int64,
+    eigen::Array{Float64,2},
+    div_mat::Array{Float64,2},
+    ξ::Float64,
+)
+
     nd = size(div_mat)[1]
-    wave_matrix = zeros(Float64, nd, nd, num_total_wavenumbers+1)
+    wave_matrix = zeros(Float64, nd, nd, num_total_wavenumbers + 1)
 
     for i = 0:num_total_wavenumbers
         factor = ξ^2 * eigen[1, i+1]
@@ -280,7 +371,7 @@ function Build_Wave_Matrices(num_total_wavenumbers::Int64, eigen::Array{Float64,
             wave_matrix[k, k, i+1] = 1.0
         end
         wave_matrix[:, :, i+1] .-= factor * div_mat
-        wave_matrix[:, :, i+1]  .= inv(wave_matrix[:, :, i+1])
+        wave_matrix[:, :, i+1] .= inv(wave_matrix[:, :, i+1])
     end
 
     return wave_matrix
@@ -292,7 +383,12 @@ function Update_Init_Step!(semi_implicit::Semi_Implicit_Solver)
     integrator = semi_implicit.integrator
     Time_Integrator_Module.Update_Init_Step!(integrator)
     ξ = Get_ξ(integrator)
-    semi_implicit.wave_matrix .= Build_Wave_Matrices(semi_implicit.num_wavenumbers, integrator.laplacian_eigen, semi_implicit.div_mat, ξ)
+    semi_implicit.wave_matrix .= Build_Wave_Matrices(
+        semi_implicit.num_wavenumbers,
+        integrator.laplacian_eigen,
+        semi_implicit.div_mat,
+        ξ,
+    )
 end
 
 
@@ -325,23 +421,26 @@ of the pressure gradient term to surface pressure variations (∂(RT ∇lnp)/∂
 
 """
 function Linear_Press_δps(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    ps_ref::Float64, Δp_ref::Array{Float64,1},
-    lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
-    t_ref::Array{Float64,1}
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    ps_ref::Float64,
+    Δp_ref::Array{Float64,1},
+    lnp_half_ref::Array{Float64,1},
+    lnp_full_ref::Array{Float64,1},
+    t_ref::Array{Float64,1},
 )
-    
+
     nd, bk = vert_coord.nd, vert_coord.bk
-    rdgas  = atmo_data.rdgas
-    
+    rdgas = atmo_data.rdgas
+
     vert_difference_option = vert_coord.vert_difference_option
-    
+
     R_T_δlnp = zeros(Float64, nd)
 
     if (vert_difference_option == "simmons_and_burridge")
         for k = 1:nd
             Δlnp_p = lnp_half_ref[k+1] - lnp_full_ref[k]
-            Δlnp_m = lnp_full_ref[k]   - lnp_half_ref[k]
+            Δlnp_m = lnp_full_ref[k] - lnp_half_ref[k]
             R_T_δlnp[k] = rdgas * t_ref[k] * (bk[k+1] * Δlnp_p + bk[k] * Δlnp_m) / Δp_ref[k]
         end
     end
@@ -384,10 +483,14 @@ from temperature perturbations (δΦ = γ δT).
 
 """
 function Linear_Geopot_δt!(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
-    spe_δt::Array{ComplexF64,3}, t_ref::Array{Float64,1},
-    spe_δgeopot_half::Array{ComplexF64,3}, spe_δgeopot::Array{ComplexF64,3}
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    lnp_half_ref::Array{Float64,1},
+    lnp_full_ref::Array{Float64,1},
+    spe_δt::Array{ComplexF64,3},
+    t_ref::Array{Float64,1},
+    spe_δgeopot_half::Array{ComplexF64,3},
+    spe_δgeopot::Array{ComplexF64,3},
 )
 
     # compute δΦ = δΦ(t, lnp_half(ps), lnp_full(ps))
@@ -397,20 +500,24 @@ function Linear_Geopot_δt!(
     # This function compute ∂Φ∂t δt
 
     ns, nf, nd = size(spe_δt)
-    rdgas      = atmo_data.rdgas
+    rdgas = atmo_data.rdgas
 
-    spe_δgeopot_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_δgeopot_half[:, :, nd+1], 0.0)
 
     for k = nd:-1:2
         #todo optimize
         #Φ_{k-1/2} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k-1})
-        spe_δgeopot_half[:, :, k] .= spe_δgeopot_half[:, :, k+1] + rdgas * (spe_δt[:, :, k] * (lnp_half_ref[k+1] - lnp_half_ref[k]))
+        coefficient = rdgas * (lnp_half_ref[k+1] - lnp_half_ref[k])
+        @views @. spe_δgeopot_half[:, :, k] =
+            spe_δgeopot_half[:, :, k+1] + coefficient * spe_δt[:, :, k]
     end
 
     for k = 1:nd
         #todo optimize
         #Φ_{k} = Φ_{k+1/2} + RT_k(ln p_{k+1/2} - ln p_{k})
-        spe_δgeopot[:, :, k] .= spe_δgeopot_half[:, :, k+1] + rdgas * (spe_δt[:, :, k] * (lnp_half_ref[k+1] - lnp_full_ref[k]))
+        coefficient = rdgas * (lnp_half_ref[k+1] - lnp_full_ref[k])
+        @views @. spe_δgeopot[:, :, k] =
+            spe_δgeopot_half[:, :, k+1] + coefficient * spe_δt[:, :, k]
     end
 end
 
@@ -445,10 +552,13 @@ of the geopotential height to surface pressure variations (∂Φ/∂pₛ).
 
 """
 function Linear_Geopot_δps(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    δlnp_half_ref::Array{Float64,1}, δlnp_full_ref::Array{Float64,1},
-    lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
-    t_ref::Array{Float64,1}
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    δlnp_half_ref::Array{Float64,1},
+    δlnp_full_ref::Array{Float64,1},
+    lnp_half_ref::Array{Float64,1},
+    lnp_full_ref::Array{Float64,1},
+    t_ref::Array{Float64,1},
 )
 
     # compute δΦ = δΦ(t, lnp_half(ps), lnp_full(ps))
@@ -458,18 +568,22 @@ function Linear_Geopot_δps(
     #
     # This function compute ∂Φ∂ps_ref
 
-    nd    = vert_coord.nd
+    nd = vert_coord.nd
     rdgas = atmo_data.rdgas
-    
-    δgeopot_ref      = zeros(Float64, nd)
+
+    δgeopot_ref = zeros(Float64, nd)
     δgeopot_half_ref = zeros(Float64, nd + 1)
 
     for k = nd:-1:2
-        δgeopot_half_ref[k] = δgeopot_half_ref[k+1] + rdgas * (t_ref[k] * (δlnp_half_ref[k+1] - δlnp_half_ref[k]))
+        δgeopot_half_ref[k] =
+            δgeopot_half_ref[k+1] +
+            rdgas * (t_ref[k] * (δlnp_half_ref[k+1] - δlnp_half_ref[k]))
     end
 
     for k = 1:nd
-        δgeopot_ref[k] = δgeopot_half_ref[k+1] + rdgas * (t_ref[k] * (δlnp_half_ref[k+1] - δlnp_full_ref[k]))
+        δgeopot_ref[k] =
+            δgeopot_half_ref[k+1] +
+            rdgas * (t_ref[k] * (δlnp_half_ref[k+1] - δlnp_full_ref[k]))
     end
 
     return δgeopot_ref
@@ -523,13 +637,18 @@ the terms -ν⋅δdiv and -τ⋅δdiv in the semi-implicit formulation.
 
 """
 function Linear_Ps_T_δdiv!(
-    vert_coord::Vert_Coordinate, atmo_data::Atmo_Data, 
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
     spe_δdiv::Array{ComplexF64,3},
-    ps_ref::Float64, Δp_ref::Array{Float64,1},
-    lnp_half_ref::Array{Float64,1}, lnp_full_ref::Array{Float64,1},
+    ps_ref::Float64,
+    Δp_ref::Array{Float64,1},
+    lnp_half_ref::Array{Float64,1},
+    lnp_full_ref::Array{Float64,1},
     t_ref::Array{Float64,1},
-    spe_M_half::Array{ComplexF64,3}, spe_Mdt_half::Array{ComplexF64,3},
-    spe_δps::Array{ComplexF64,3}, spe_δt::Array{ComplexF64,3}
+    spe_M_half::Array{ComplexF64,3},
+    spe_Mdt_half::Array{ComplexF64,3},
+    spe_δps::Array{ComplexF64,3},
+    spe_δt::Array{ComplexF64,3},
 )
     # For temperature 
     # δ(-dσ ∂T∂σ + κTw/p) = -tau δdiv
@@ -551,53 +670,59 @@ function Linear_Ps_T_δdiv!(
     #
     # div = [0,0, ..1,...0], spe_δps -> -nu, spe_δt ->  -tau[:,k]
 
-    kappa      = atmo_data.kappa
-    nf, ns, nd = size(spe_δdiv)
+    kappa = atmo_data.kappa
+    _, _, nd = size(spe_δdiv)
     vert_difference_option = vert_coord.vert_difference_option
     Δak, Δbk, bk = vert_coord.Δak, vert_coord.Δbk, vert_coord.bk
 
-    dmean_tot = zeros(ComplexF64, nf, ns)
-    dmean     = zeros(ComplexF64, nf, ns)
-
     if (vert_difference_option == "simmons_and_burridge")
+        # Before the hybrid-coordinate correction below, M[k] is the negative
+        # column-integrated divergence through level k-1. Carrying the running
+        # sum in this required output array avoids two temporary spectral planes.
+        @views fill!(spe_M_half[:, :, 1], 0.0)
         for k = 1:nd
             # Integrates the divergence column to find the total mass tendency
             @assert(Δak[k] + Δbk[k] * ps_ref ≈ Δp_ref[k])
 
             Δlnp_p = lnp_half_ref[k+1] - lnp_full_ref[k]
-            Δlnp   = lnp_half_ref[k+1] - lnp_half_ref[k]
-            
-            # dmean = ∇ (v_k Δp_k) = ∇v_k Δp_k = D_k
-            dmean .= spe_δdiv[:, :, k] * Δp_ref[k]
+            Δlnp = lnp_half_ref[k+1] - lnp_half_ref[k]
 
-            # Adiabatic heating/cooling driven by divergence
-            spe_δt[:, :, k] .= -kappa * t_ref[k] * (dmean_tot * Δlnp + dmean * Δlnp_p) / Δp_ref[k]
-            
-            # dmean_tot = ∑_r=1^k Dr
-            dmean_tot .+= dmean
-            spe_M_half[:, :, k+1] .= -dmean_tot
+            temperature_factor = -kappa * t_ref[k] / Δp_ref[k]
+            @views @. spe_δt[:, :, k] = temperature_factor * (
+                -spe_M_half[:, :, k] * Δlnp +
+                spe_δdiv[:, :, k] * Δp_ref[k] * Δlnp_p
+            )
+
+            # M[k+1] = -∑_r=1^k D_r and M[k] = -∑_r=1^(k-1) D_r.
+            @views @. spe_M_half[:, :, k+1] =
+                spe_M_half[:, :, k] - spe_δdiv[:, :, k] * Δp_ref[k]
         end
     end
 
     # Change of surface pressure
-    spe_δps[:, :, 1] .= -dmean_tot
+    @views copyto!(spe_δps[:, :, 1], spe_M_half[:, :, nd+1])
 
     for k = 1:nd-1
-        spe_M_half[:, :, k+1] .+= dmean_tot * bk[k+1]
+        @views @. spe_M_half[:, :, k+1] -= spe_δps[:, :, 1] * bk[k+1]
     end
 
-    spe_M_half[:, :, 1] .= 0.0
-    spe_M_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_M_half[:, :, 1], 0.0)
+    @views fill!(spe_M_half[:, :, nd+1], 0.0)
 
     # Vertical temperature advection
     for k = 2:nd
-        spe_Mdt_half[:, :, k] .= spe_M_half[:, :, k] * (t_ref[k] - t_ref[k-1])
+        temperature_difference = t_ref[k] - t_ref[k-1]
+        @views @. spe_Mdt_half[:, :, k] =
+            spe_M_half[:, :, k] * temperature_difference
     end
 
-    spe_Mdt_half[:, :, 1] .= 0.0
-    spe_Mdt_half[:, :, nd+1] .= 0.0
+    @views fill!(spe_Mdt_half[:, :, 1], 0.0)
+    @views fill!(spe_Mdt_half[:, :, nd+1], 0.0)
     for k = 1:nd
-        spe_δt[:, :, k] .-= 0.5 * (spe_Mdt_half[:, :, k+1] + spe_Mdt_half[:, :, k]) / Δp_ref[k]
+        vertical_factor = 0.5 / Δp_ref[k]
+        @views @. spe_δt[:, :, k] -= vertical_factor * (
+            spe_Mdt_half[:, :, k+1] + spe_Mdt_half[:, :, k]
+        )
     end
 
 end
@@ -653,32 +778,60 @@ I^d(T(i-1) - T(i) + ξΔt, lnps(i-1) - lnps(i) + ξΔlnps)
 
 """
 function Adjust_δlnps_δt_δdiv!(
-    semi_implicit::Semi_Implicit_Solver, vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    spe_div_c::Array{ComplexF64,3}, spe_div_p::Array{ComplexF64,3},
-    spe_lnps_c::Array{ComplexF64,3}, spe_lnps_p::Array{ComplexF64,3},
-    spe_t_c::Array{ComplexF64,3}, spe_t_p::Array{ComplexF64,3},
-    spe_δdiv::Array{ComplexF64,3}, spe_δlnps::Array{ComplexF64,3}, spe_δt::Array{ComplexF64,3}
+    semi_implicit::Semi_Implicit_Solver,
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    spe_div_c::Array{ComplexF64,3},
+    spe_div_p::Array{ComplexF64,3},
+    spe_lnps_c::Array{ComplexF64,3},
+    spe_lnps_p::Array{ComplexF64,3},
+    spe_t_c::Array{ComplexF64,3},
+    spe_t_p::Array{ComplexF64,3},
+    spe_δdiv::Array{ComplexF64,3},
+    spe_δlnps::Array{ComplexF64,3},
+    spe_δt::Array{ComplexF64,3},
 )
 
-    t_ref, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref = semi_implicit.t_ref, semi_implicit.ps_ref, semi_implicit.Δp_ref, semi_implicit.lnp_half_ref, semi_implicit.lnp_full_ref
+    t_ref, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref = semi_implicit.t_ref,
+    semi_implicit.ps_ref,
+    semi_implicit.Δp_ref,
+    semi_implicit.lnp_half_ref,
+    semi_implicit.lnp_full_ref
     laplacian_eigen, h = semi_implicit.integrator.laplacian_eigen, semi_implicit.h
 
-    spe_δdiv_temp, spe_δps_temp, spe_δt_temp, spe_δgeopot_half_temp, spe_δgeopot_temp = semi_implicit.spe_δdiv_temp,
-    semi_implicit.spe_δps_temp, semi_implicit.spe_δt_temp, semi_implicit.spe_δgeopot_half_temp, semi_implicit.spe_δgeopot_temp
+    spe_δdiv_temp, spe_δps_temp, spe_δt_temp, spe_δgeopot_half_temp, spe_δgeopot_temp =
+        semi_implicit.spe_δdiv_temp,
+        semi_implicit.spe_δps_temp,
+        semi_implicit.spe_δt_temp,
+        semi_implicit.spe_δgeopot_half_temp,
+        semi_implicit.spe_δgeopot_temp
 
     # Computes the difference in state: Dᵖ - Dᶜ.
-    spe_δdiv_temp .= spe_div_p - spe_div_c
+    @. spe_δdiv_temp = spe_div_p - spe_div_c
 
     # spe_M_half::Array{ComplexF64,3}, spe_Mdt_half::Array{ComplexF64,3},
-    spe_M_half_temp, spe_Mdt_half_temp = semi_implicit.spe_M_half_temp, semi_implicit.spe_Mdt_half_temp
+    spe_M_half_temp, spe_Mdt_half_temp =
+        semi_implicit.spe_M_half_temp, semi_implicit.spe_Mdt_half_temp
 
     # Evaluates the linear response of temperature and pressure to this divergence difference using Linear_Ps_T_δdiv!.
     # Compute linearized δt, with constant surface pressure 
-    Linear_Ps_T_δdiv!(vert_coord, atmo_data, spe_δdiv_temp, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref,
-        spe_M_half_temp, spe_Mdt_half_temp, spe_δps_temp, spe_δt_temp)
+    Linear_Ps_T_δdiv!(
+        vert_coord,
+        atmo_data,
+        spe_δdiv_temp,
+        ps_ref,
+        Δp_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        t_ref,
+        spe_M_half_temp,
+        spe_Mdt_half_temp,
+        spe_δps_temp,
+        spe_δt_temp,
+    )
 
-    spe_δt .+= spe_δt_temp
-    spe_δlnps .+= spe_δps_temp / ps_ref
+    @. spe_δt += spe_δt_temp
+    @. spe_δlnps += spe_δps_temp / ps_ref
 
     # use as a memory container
     spe_δlnps_temp = semi_implicit.spe_δps_temp
@@ -686,20 +839,51 @@ function Adjust_δlnps_δt_δdiv!(
     # Implicitly update the temperature and surface pressure tendencies at current step.
     # Updated temperature and surface pressure tendencies are used for calculating divergence only.
     ξ = Get_ξ(semi_implicit.integrator)
-    spe_δt_temp .= spe_t_p - spe_t_c + ξ * spe_δt
-    spe_δlnps_temp .= spe_lnps_p - spe_lnps_c + ξ * spe_δlnps
+    @. spe_δt_temp = spe_t_p - spe_t_c + ξ * spe_δt
+    @. spe_δlnps_temp = spe_lnps_p - spe_lnps_c + ξ * spe_δlnps
 
     # Updates the divergence tendency (spe_δdiv) 
     # by subtracting the Laplacian of the linear geopotential and pressure gradient terms derived from δT* and δlnpₛ*.
     # δD_final = δD_explicit - ∇²(Φ(δT*) + RT₀ ∇lnpₛ*)
-    Linear_Geopot_δt!(vert_coord, atmo_data, lnp_half_ref, lnp_full_ref, spe_δt_temp, t_ref, spe_δgeopot_half_temp, spe_δgeopot_temp)
+    Linear_Geopot_δt!(
+        vert_coord,
+        atmo_data,
+        lnp_half_ref,
+        lnp_full_ref,
+        spe_δt_temp,
+        t_ref,
+        spe_δgeopot_half_temp,
+        spe_δgeopot_temp,
+    )
 
     nd = vert_coord.nd
 
     for k = 1:nd
-        spe_δdiv[:, :, k] .-= laplacian_eigen .* (spe_δgeopot_temp[:, :, k] .+ h[k] * ps_ref * spe_δlnps_temp[:, :, 1])
+        pressure_factor = h[k] * ps_ref
+        @views @. spe_δdiv[:, :, k] -= laplacian_eigen * (
+            spe_δgeopot_temp[:, :, k] +
+            pressure_factor * spe_δlnps_temp[:, :, 1]
+        )
     end
 
+end
+
+
+
+function Helmholtz_Solve!(
+    spe_δdiv::Array{ComplexF64,3},
+    wave_matrix::Array{ComplexF64,3},
+    num_wavenumbers::Int64,
+    work::Array{ComplexF64,3},
+)
+    nf, ns, _ = size(spe_δdiv)
+    for n = 0:min(ns - 1, num_wavenumbers)
+        nmodes = min(n + 1, nf)
+        rhs = @view spe_δdiv[1:nmodes, n+1, :]
+        rhs_work = @view work[1:nmodes, 1, :]
+        copyto!(rhs_work, rhs)
+        mul!(rhs, rhs_work, transpose(@view wave_matrix[:, :, n+1]))
+    end
 end
 
 
@@ -793,61 +977,88 @@ Solve for δdiv, δt, δlnps sequentially
 
 """
 function Implicit_Correction!(
-    semi_implicit::Semi_Implicit_Solver, vert_coord::Vert_Coordinate, atmo_data::Atmo_Data,
-    spe_div_c::Array{ComplexF64,3}, spe_div_p::Array{ComplexF64,3},
-    spe_lnps_c::Array{ComplexF64,3}, spe_lnps_p::Array{ComplexF64,3},
-    spe_t_c::Array{ComplexF64,3}, spe_t_p::Array{ComplexF64,3},
-    spe_δdiv::Array{ComplexF64,3}, spe_δlnps::Array{ComplexF64,3}, spe_δt::Array{ComplexF64,3}
+    semi_implicit::Semi_Implicit_Solver,
+    vert_coord::Vert_Coordinate,
+    atmo_data::Atmo_Data,
+    spe_div_c::Array{ComplexF64,3},
+    spe_div_p::Array{ComplexF64,3},
+    spe_lnps_c::Array{ComplexF64,3},
+    spe_lnps_p::Array{ComplexF64,3},
+    spe_t_c::Array{ComplexF64,3},
+    spe_t_p::Array{ComplexF64,3},
+    spe_δdiv::Array{ComplexF64,3},
+    spe_δlnps::Array{ComplexF64,3},
+    spe_δt::Array{ComplexF64,3},
 )
 
     ξ = Get_ξ(semi_implicit.integrator)
 
     # Calls Adjust_δlnps_δt_δdiv! to prepare the forcing terms for the Helmholtz equation.
     # This adds the gravity wave contributions from the previous time steps to the explicit tendencies.
-    Adjust_δlnps_δt_δdiv!(semi_implicit, vert_coord, atmo_data,
-        spe_div_c, spe_div_p,
-        spe_lnps_c, spe_lnps_p,
-        spe_t_c, spe_t_p,
-        spe_δdiv, spe_δlnps, spe_δt)
+    Adjust_δlnps_δt_δdiv!(
+        semi_implicit,
+        vert_coord,
+        atmo_data,
+        spe_div_c,
+        spe_div_p,
+        spe_lnps_c,
+        spe_lnps_p,
+        spe_t_c,
+        spe_t_p,
+        spe_δdiv,
+        spe_δlnps,
+        spe_δt,
+    )
 
 
     num_wavenumbers = semi_implicit.num_wavenumbers
-    wave_numbers = semi_implicit.wave_numbers
     wave_matrix = semi_implicit.wave_matrix
 
     # Helmholtz Inversion (Divergence Solve)
     # Solves for the implicit divergence tendency (δD) for each total wavenumber L:
     # δDₗ = (I - ξ² B ∇²)⁻¹ ⋅ RHSₗ
     # where B is the vertical structure matrix (div_mat) and the inverse operator is stored in wave_matrix.
-    nf, ns, nd = size(spe_δdiv)
-    for m = 0:nf-1
-        for n = m:ns-1
-            L = wave_numbers[m+1, n+1]
-            @assert(L == n)
-            # does not need the last spherical mode
-            if (L <= num_wavenumbers)
-                spe_δdiv[m+1, n+1, :] .= wave_matrix[:, :, L+1] * spe_δdiv[m+1, n+1, :]
-            end
-        end
-    end
+    # Modes with the same total wavenumber use the same vertical inverse.
+    # spe_δdiv_temp is dead after Adjust_δlnps_δt_δdiv! and is reused as workspace.
+    Helmholtz_Solve!(
+        spe_δdiv,
+        wave_matrix,
+        num_wavenumbers,
+        semi_implicit.spe_δdiv_temp,
+    )
 
-    t_ref, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref = semi_implicit.t_ref, semi_implicit.ps_ref, semi_implicit.Δp_ref, semi_implicit.lnp_half_ref, semi_implicit.lnp_full_ref
+    t_ref, ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref = semi_implicit.t_ref,
+    semi_implicit.ps_ref,
+    semi_implicit.Δp_ref,
+    semi_implicit.lnp_half_ref,
+    semi_implicit.lnp_full_ref
 
     spe_δps_temp, spe_δt_temp = semi_implicit.spe_δps_temp, semi_implicit.spe_δt_temp
-    spe_M_half_temp, spe_Mdt_half_temp = semi_implicit.spe_M_half_temp, semi_implicit.spe_Mdt_half_temp
+    spe_M_half_temp, spe_Mdt_half_temp =
+        semi_implicit.spe_M_half_temp, semi_implicit.spe_Mdt_half_temp
 
     # Back-Substitution
     # Updates the temperature and surface pressure tendencies using the newly solved divergence tendency:
     # δT = δT* + ξ ⋅ (-τ ⋅ δD)
     # δlnpₛ = δlnpₛ* + ξ ⋅ (-ν ⋅ δD)
     # This ensures the final tendencies are consistent with the semi-implicit formulation.
-    Linear_Ps_T_δdiv!(vert_coord, atmo_data, spe_δdiv,
-        ps_ref, Δp_ref, lnp_half_ref, lnp_full_ref, t_ref,
-        spe_M_half_temp, spe_Mdt_half_temp,
-        spe_δps_temp, spe_δt_temp)
+    Linear_Ps_T_δdiv!(
+        vert_coord,
+        atmo_data,
+        spe_δdiv,
+        ps_ref,
+        Δp_ref,
+        lnp_half_ref,
+        lnp_full_ref,
+        t_ref,
+        spe_M_half_temp,
+        spe_Mdt_half_temp,
+        spe_δps_temp,
+        spe_δt_temp,
+    )
 
-    spe_δt .+= ξ * spe_δt_temp
-    spe_δlnps .+= ξ / ps_ref * spe_δps_temp
+    @. spe_δt += ξ * spe_δt_temp
+    @. spe_δlnps += (ξ / ps_ref) * spe_δps_temp
 
 end
 

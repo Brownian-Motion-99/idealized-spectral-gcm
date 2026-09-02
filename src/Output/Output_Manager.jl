@@ -3,7 +3,6 @@ module Output_Manager_Module
 using Base
 using Dates
 using NCDatasets
-using Statistics
 
 using ..Spectral_Spherical_Mesh_Module
 using ..Atmo_Data_Module
@@ -62,11 +61,11 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     log_targets::Vector{Float64}
 
     # --- Buffers (Pre-allocated, 3D only) ---
-    p3d_buffer::Array{Float64, 3}
+    interpolation_cache::Pressure_Interpolation_Cache
     interp_buffer::Array{Float64, 3}
 
-    vert_ak_mid::Vector{Float64}
-    vert_bk_mid::Vector{Float64}
+    vert_ak::Vector{Float64}
+    vert_bk::Vector{Float64}
 
     # --- Time Control ---
     day_to_sec::Int64
@@ -82,19 +81,19 @@ mutable struct Output_Manager{M <: AbstractModelMode}
     ds_raw::Union{NCDataset, Nothing}   # native sigma/hybrid (or 2D native) — always created
 
     # --- Accumulators ---
-    # acc_plev: pressure-level accumulator (only allocated when do_plev_output = true, 3D only)
-    acc_plev::Dict{Symbol, Array{Float64}}
-    # acc_raw:  native grid accumulator (always allocated, used for all model types)
+    # The native-grid mean is shared by raw and pressure-level output. Keeping
+    # one accumulator avoids adding every model field twice on every time step.
     acc_raw::Dict{Symbol, Array{Float64}}
 
     active_symbols::Vector{Symbol}
+    var_info_map::Dict{Symbol, VarMeta}
 
     # --- Chunk I/O State ---
     base_filename::String            # base path without extension, e.g. "exp/HSt42/output"
     mesh_λc::Vector{Float64}        # longitude grid in radians (for file re-creation on rotation)
     mesh_θc::Vector{Float64}        # latitude grid in radians
     vert_coord_cache::Any           # Vert_Coordinate or nothing
-    global_meta::Dict{String, String}  # NC global attributes
+    global_meta::Dict{String, Any}  # NC global attributes
 end
 
 # ==============================================================================
@@ -104,7 +103,7 @@ function _Init_Single_File(
     filename, mesh, var_info_map,
     requested_vars, file_type::Symbol, target_levels=Float64[];
     vert_coord=nothing,
-    global_meta::Dict{String, String}=Dict{String, String}()
+    global_meta::Dict{String, Any}=Dict{String, Any}()
 )
     if isfile(filename); rm(filename); end
     ds = NCDataset(filename, "c")
@@ -146,26 +145,31 @@ function _Init_Single_File(
         v_lev[:] = target_levels
 
     elseif file_type == :raw && vert_coord !== nothing
-        # Hybrid-Sigma coordinate definition
-        defDim(ds, "lev", mesh.nd)
-        v_lev = defVar(ds, "lev", Float64, ("lev",))
-        v_lev[:] = collect(1:mesh.nd)
+        # Isca-style native vertical metadata. These one-dimensional pressure
+        # axes are approximate reference values; exact column pressure is
+        # reconstructed from interface pk, bk, and the output-record ps.
+        defDim(ds, "pfull", mesh.nd)
+        defDim(ds, "phalf", mesh.nd + 1)
 
-        # Attributes that tell post-processors how to compute 3D Pressure
-        v_lev.attrib["standard_name"] = "atmosphere_hybrid_sigma_pressure_coordinate"
-        v_lev.attrib["formula_terms"] = "ap: hyam b: hybm ps: ps p0: p0"
-        v_lev.attrib["positive"]      = "down"
+        reference_ps = fill(Float64(vert_coord.p_ref), 1, 1)
+        reference_pfull = zeros(Float64, 1, 1, mesh.nd)
+        Compute_Pressure_Grid!(reference_pfull, vert_coord.ak, vert_coord.bk, reference_ps)
+        reference_phalf = vert_coord.ak .+ vert_coord.bk .* vert_coord.p_ref
 
-        # Reference Pressure
-        v_p0 = defVar(ds, "p0", Float64, (), attrib=Dict("units"=>"Pa"))
-        v_p0[:] = vert_coord.p_ref
+        v_pfull = defVar(ds, "pfull", Float64, ("pfull",), attrib=Dict(
+            "units"=>"hPa", "long_name"=>"approx full pressure level",
+            "positive"=>"down", "axis"=>"Z"))
+        v_pfull[:] = vec(reference_pfull) .* 0.01
 
-        # Interface coefficients (Mid-points for data layers)
-        ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
-        bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
+        v_phalf = defVar(ds, "phalf", Float64, ("phalf",), attrib=Dict(
+            "units"=>"hPa", "long_name"=>"approx half pressure level",
+            "positive"=>"down", "axis"=>"Z"))
+        v_phalf[:] = reference_phalf .* 0.01
 
-        defVar(ds, "hyam", Float64, ("lev",), attrib=Dict("units"=>"Pa", "long_name"=>"hybrid A coefficient at layer midpoints"))[1:end] = ak_m
-        defVar(ds, "hybm", Float64, ("lev",), attrib=Dict("units"=>"1",  "long_name"=>"hybrid B coefficient at layer midpoints"))[1:end] = bk_m
+        defVar(ds, "pk", Float64, ("phalf",), attrib=Dict(
+            "units"=>"Pa", "long_name"=>"vertical coordinate pressure values"))[:] = vert_coord.ak
+        defVar(ds, "bk", Float64, ("phalf",), attrib=Dict(
+            "units"=>"1", "long_name"=>"vertical coordinate sigma values"))[:] = vert_coord.bk
     end
     # --- Coordinate Variables & Vertical Metadata --- #
 
@@ -175,7 +179,7 @@ function _Init_Single_File(
         meta = var_info_map[sym]
 
         dims = if meta.dims == 3
-            (file_type == :plev) ? ("lon", "lat", "plev", "time") : ("lon", "lat", "lev", "time")
+            (file_type == :plev) ? ("lon", "lat", "plev", "time") : ("lon", "lat", "pfull", "time")
         else
             ("lon", "lat", "time")
         end
@@ -206,10 +210,26 @@ function Output_Manager(
     institute::String = "My Research Lab",
     experiment_id::String = "Simulation_v1"
 )
+    day_to_sec > 0 || throw(ArgumentError("day_to_sec must be positive"))
+    output_interval > 0 || throw(ArgumentError("output_interval must be positive"))
+    spinup_day >= 0 || throw(ArgumentError("spinup_day must be non-negative"))
+    if do_plev_output
+        !isempty(pressure_levels) || throw(
+            ArgumentError("pressure-level output requires at least one pressure level"),
+        )
+        all(p -> isfinite(p) && p > 0, pressure_levels) || throw(
+            ArgumentError("pressure levels must be positive and finite"),
+        )
+    end
+
     # --- Instantiate the Mode Type --- #
     mode_obj    = Mode_Factory(model_mode)
+    if do_plev_output && !isa(mode_obj, PrimitiveEquationMode)
+        throw(ArgumentError("pressure-level output is only available for PrimitiveEquation"))
+    end
     nλ, nθ, nd  = mesh.nλ, mesh.nθ, mesh.nd
     spinup_time = start_time + Int64(spinup_day * day_to_sec)
+    active_symbols = unique(copy(requested_vars))
 
     # Derive base filename (strip ".nc" extension)
     base_fn = splitext(filename)[1]
@@ -219,21 +239,25 @@ function Output_Manager(
         "title"       => "Output of idealized-spectral-gcm",
         "institution" => institute,
         "experiment"  => experiment_id,
-        "references"  => "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+        "references"  => "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git",
+        "gravity" => atmo_data.grav,
+        "gravity_units" => "m s-2",
+        "dry_air_gas_constant" => atmo_data.rdgas,
+        "dry_air_gas_constant_units" => "J kg-1 K-1",
     )
 
     # Define Buffers (Initialize as empty by default)
-    p3d_buf    = zeros(Float64, 0, 0, 0)
+    interpolation_cache = Pressure_Interpolation_Cache(0, 0, 1, 0)
     interp_buf = zeros(Float64, 0, 0, 0)
-    ak_m       = Float64[]
-    bk_m       = Float64[]
+    vert_ak    = Float64[]
+    vert_bk    = Float64[]
     # --- Instantiate the Mode Type --- #
 
     # --- 3D Specific Initialization --- #
     if isa(mode_obj, PrimitiveEquationMode)
         # Validation
-        if !(:ps in requested_vars); push!(requested_vars, :ps); end
-        if (:z in requested_vars) && !(:t in requested_vars); error("Need :t for :z"); end
+        if !(:ps in active_symbols); push!(active_symbols, :ps); end
+        if (:z in active_symbols) && !(:t in active_symbols); error("Need :t for :z"); end
 
         if vert_coord === nothing
              error("Output_Manager: vert_coord is required for :PrimitiveEquation mode")
@@ -241,48 +265,49 @@ function Output_Manager(
 
         # Allocation (Only happens for 3D)
         n_plev     = length(pressure_levels)
-        p3d_buf    = zeros(Float64, nλ, nθ, nd)
-        interp_buf = zeros(Float64, nλ, nθ, max(n_plev, 1))
+        if do_plev_output
+            interpolation_cache = Pressure_Interpolation_Cache(nλ, nθ, nd, n_plev)
+            interp_buf = zeros(Float64, nλ, nθ, n_plev)
+        end
 
-        ak_m = 0.5 .* (vert_coord.ak[1:end-1] .+ vert_coord.ak[2:end])
-        bk_m = 0.5 .* (vert_coord.bk[1:end-1] .+ vert_coord.bk[2:end])
+        vert_ak = copy(vert_coord.ak)
+        vert_bk = copy(vert_coord.bk)
     end
 
     # Fetch variable info
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(mode_obj)))
+    var_info_map = Get_Var_Info(Val(mode_symbol(mode_obj)))
+    unknown_symbols = setdiff(active_symbols, keys(var_info_map))
+    isempty(unknown_symbols) || throw(
+        ArgumentError("unsupported output variables for $(mode_symbol(mode_obj)): $unknown_symbols"),
+    )
     # --- 3D Specific Initialization --- #
 
     # --- Initialize Accumulators --- #
     # acc_raw: always allocated (native grid accumulator for all model types)
     acc_raw = Dict{Symbol, Array{Float64}}()
-    for sym in requested_vars
+    for sym in active_symbols
         haskey(var_info_map, sym) || continue
         meta = var_info_map[sym]
         acc_raw[sym] = (meta.dims == 3) ? zeros(Float64, nλ, nθ, nd) : zeros(Float64, nλ, nθ)
     end
 
-    # acc_plev: only allocated when pressure-level output is requested (3D only)
-    acc_plev = (do_plev_output && isa(mode_obj, PrimitiveEquationMode)) ?
-               deepcopy(acc_raw) : Dict{Symbol, Array{Float64}}()
     # --- Initialize Accumulators --- #
 
     # --- Initialize Files --- #
     # ds_raw: always created for all model types (primary/native output)
     raw_file_type = isa(mode_obj, PrimitiveEquationMode) ? :raw : :simple_2d
-    ds_raw = Base.invokelatest(
-        _Init_Single_File,
+    ds_raw = _Init_Single_File(
         "$(base_fn)_t$(start_time).nc", mesh,
-        var_info_map, requested_vars, raw_file_type;
+        var_info_map, active_symbols, raw_file_type;
         vert_coord=vert_coord, global_meta=global_meta
     )
 
     # ds_plev: only for 3D with do_plev_output = true
     ds_plev = nothing
     if do_plev_output && isa(mode_obj, PrimitiveEquationMode)
-        ds_plev = Base.invokelatest(
-            _Init_Single_File,
+        ds_plev = _Init_Single_File(
             "$(base_fn)_t$(start_time)_plev.nc", mesh,
-            var_info_map, requested_vars, :plev, pressure_levels;
+            var_info_map, active_symbols, :plev, pressure_levels;
             vert_coord=vert_coord, global_meta=global_meta
         )
     end
@@ -291,9 +316,9 @@ function Output_Manager(
     return Output_Manager(
         nλ, nθ, nd, atmo_data, mode_obj,
         do_plev_output, pressure_levels, log.(max.(pressure_levels, 1.0)),
-        p3d_buf, interp_buf, ak_m, bk_m,
+        interpolation_cache, interp_buf, vert_ak, vert_bk,
         day_to_sec, start_time, start_time, spinup_time, output_interval, 0, 1,
-        ds_plev, ds_raw, acc_plev, acc_raw, requested_vars,
+        ds_plev, ds_raw, acc_raw, active_symbols, var_info_map,
         base_fn, collect(mesh.λc), collect(mesh.θc), vert_coord, global_meta
     )
 end
@@ -331,11 +356,6 @@ function _accumulate_core!(::PrimitiveEquationMode, mgr, live_data)
         # acc_raw: always accumulate (native sigma/hybrid grid → ds_raw)
         if haskey(mgr.acc_raw, sym)
             _accumulate_buffer!(mgr.acc_raw[sym], raw_data)
-        end
-
-        # acc_plev: only accumulate when pressure-level output is requested (→ ds_plev)
-        if mgr.do_plev_output && haskey(mgr.acc_plev, sym)
-            _accumulate_buffer!(mgr.acc_plev[sym], raw_data)
         end
     end
 end
@@ -388,8 +408,14 @@ end
 # --- Writer: Primitive Equation ---
 function _write_core!(::PrimitiveEquationMode, mgr)
     t_idx        = mgr.output_index
-    N            = Float64(mgr.sample_counter)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(:PrimitiveEquation))
+    sample_count = Float64(mgr.sample_counter)
+    var_info_map = mgr.var_info_map
+
+    # Finalize the native-grid mean once. Both output products consume this
+    # same record, matching Isca's average-then-interpolate ordering.
+    for accumulator in values(mgr.acc_raw)
+        accumulator ./= sample_count
+    end
 
     # =========================================================================
     # PRIMARY: Native sigma/hybrid output (acc_raw → ds_raw, always)
@@ -398,55 +424,71 @@ function _write_core!(::PrimitiveEquationMode, mgr)
         haskey(var_info_map, sym) || continue
         meta     = var_info_map[sym]
         nc_var   = mgr.ds_raw[meta.nc_name]
-        raw_mean = mgr.acc_raw[sym] ./ N
+        raw_mean = mgr.acc_raw[sym]
 
-        if ndims(nc_var) == 4  # (lon, lat, lev, time)
+        if ndims(nc_var) == 4  # (lon, lat, pfull, time)
             nc_var[:, :, :, t_idx] = raw_mean
         elseif ndims(nc_var) == 3  # (lon, lat, time)
             nc_var[:, :, t_idx] = (ndims(raw_mean) == 3) ? view(raw_mean, :, :, 1) : raw_mean
         end
-        fill!(mgr.acc_raw[sym], 0.0)
     end
     NCDatasets.sync(mgr.ds_raw)
 
     # =========================================================================
-    # OPTIONAL: Pressure-level interpolated output (acc_plev → ds_plev)
+    # OPTIONAL: Pressure-level interpolated output (same mean → ds_plev)
     # =========================================================================
     if mgr.do_plev_output && mgr.ds_plev !== nothing
-        ps_avg_2d = mgr.acc_plev[:ps] ./ N
-        Compute_Pressure_Grid!(mgr.p3d_buffer, mgr.vert_ak_mid, mgr.vert_bk_mid, ps_avg_2d)
+        ps_avg_2d = mgr.acc_raw[:ps]
+        Prepare_Interpolation!(
+            mgr.interpolation_cache,
+            mgr.vert_ak,
+            mgr.vert_bk,
+            ps_avg_2d,
+            mgr.log_targets,
+        )
+        t_ref = get(mgr.acc_raw, :t, nothing)
 
-        for sym in keys(mgr.acc_plev)
+        for sym in keys(mgr.acc_raw)
             haskey(var_info_map, sym) || continue
             meta        = var_info_map[sym]
             nc_var      = mgr.ds_plev[meta.nc_name]
-            native_mean = mgr.acc_plev[sym] ./ N
+            native_mean = mgr.acc_raw[sym]
 
             if ndims(nc_var) == 4  # (lon, lat, plev, time)
-                t_ref = haskey(mgr.acc_plev, :t) ? (mgr.acc_plev[:t] ./ N) : nothing
-                Interpolate_Field!(mgr.interp_buffer, native_mean, mgr.p3d_buffer, ps_avg_2d,
-                                   mgr.log_targets, sym, mgr.atmo_data, t_ref)
+                Apply_Interpolation!(
+                    mgr.interp_buffer,
+                    native_mean,
+                    mgr.interpolation_cache,
+                    sym,
+                    mgr.atmo_data,
+                    t_ref,
+                )
                 nc_var[:, :, :, t_idx] = mgr.interp_buffer
             else
                 nc_var[:, :, t_idx] = (ndims(native_mean) == 3) ? view(native_mean, :, :, 1) : native_mean
             end
-            fill!(mgr.acc_plev[sym], 0.0)
         end
         NCDatasets.sync(mgr.ds_plev)
+    end
+
+    for accumulator in values(mgr.acc_raw)
+        fill!(accumulator, 0.0)
     end
 end
 
 # --- Writer: 2D Modes (Barotropic/ShallowWater) ---
 function _write_core!(::AbstractModelMode, mgr)
     t_idx        = mgr.output_index
-    N            = Float64(mgr.sample_counter)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(mgr.mode)))
+    sample_count = Float64(mgr.sample_counter)
+    var_info_map = mgr.var_info_map
 
     for sym in keys(mgr.acc_raw)
         if !haskey(var_info_map, sym); continue; end
         nc_name = var_info_map[sym].nc_name
-        mgr.ds_raw[nc_name][:, :, t_idx] = mgr.acc_raw[sym] ./ N
-        fill!(mgr.acc_raw[sym], 0.0)
+        accumulator = mgr.acc_raw[sym]
+        accumulator ./= sample_count
+        mgr.ds_raw[nc_name][:, :, t_idx] = accumulator
+        fill!(accumulator, 0.0)
     end
     NCDatasets.sync(mgr.ds_raw)
 end
@@ -462,7 +504,7 @@ Internal helper: open a new pair of NC output files for the given chunk start ti
 Uses a NamedTuple mesh proxy so the full mesh object need not be stored in the manager.
 """
 function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
-    var_info_map = Base.invokelatest(Get_Var_Info, Val(mode_symbol(manager.mode)))
+    var_info_map = manager.var_info_map
 
     # NamedTuple acts as a mesh proxy (supports dot-notation like a struct)
     mesh_proxy = (
@@ -475,8 +517,7 @@ function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
 
     # ds_raw: always (primary output for all model types)
     raw_file_type = isa(manager.mode, PrimitiveEquationMode) ? :raw : :simple_2d
-    manager.ds_raw = Base.invokelatest(
-        _Init_Single_File,
+    manager.ds_raw = _Init_Single_File(
         "$(manager.base_filename)_t$(chunk_time).nc", mesh_proxy,
         var_info_map, manager.active_symbols, raw_file_type;
         vert_coord=manager.vert_coord_cache, global_meta=manager.global_meta
@@ -484,8 +525,7 @@ function _open_chunk_files!(manager::Output_Manager, chunk_time::Int64)
 
     # ds_plev: optional (3D with do_plev_output = true only)
     if manager.do_plev_output && isa(manager.mode, PrimitiveEquationMode)
-        manager.ds_plev = Base.invokelatest(
-            _Init_Single_File,
+        manager.ds_plev = _Init_Single_File(
             "$(manager.base_filename)_t$(chunk_time)_plev.nc", mesh_proxy,
             var_info_map, manager.active_symbols, :plev, manager.target_levels;
             vert_coord=manager.vert_coord_cache, global_meta=manager.global_meta
@@ -530,6 +570,9 @@ end
 # ==============================================================================
 
 function Finalize_Output!(manager::Output_Manager)
+    if manager.sample_counter > 0
+        Flush_to_Disk!(manager)
+    end
     if manager.ds_plev !== nothing; close(manager.ds_plev); end
     if manager.ds_raw  !== nothing; close(manager.ds_raw);  end
 end

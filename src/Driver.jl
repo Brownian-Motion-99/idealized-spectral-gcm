@@ -11,6 +11,7 @@ using ..Experiment_Configuration
 using ..Initial_Conditions
 using ..Semi_Implicit_Module
 using ..Restart_Manager_Module
+using ..Atmos_Param_Module
 
 using ..Spectral_Dynamics_Module
 using ..Barotropic_Dynamics_Module
@@ -59,6 +60,49 @@ function run_metrics(start_time, current_time, completed_steps, elapsed_seconds,
     return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
 end
 
+function validate_config(config::Model_Config)
+    config.model_type in (:Barotropic, :Shallow_Water, :PrimitiveEquation) || throw(
+        ArgumentError("unsupported model_type: $(config.model_type)"),
+    )
+    config.num_fourier >= 0 || throw(ArgumentError("num_fourier must be non-negative"))
+    config.nθ > 0 && iseven(config.nθ) || throw(
+        ArgumentError("nθ must be a positive even integer"),
+    )
+    config.nθ >= cld(3 * config.num_fourier + 1, 2) || throw(
+        ArgumentError("nθ is too small for the requested spectral truncation"),
+    )
+    config.nd > 0 || throw(ArgumentError("nd must be positive"))
+    config.radius > 0 || throw(ArgumentError("radius must be positive"))
+    config.grav > 0 || throw(ArgumentError("grav must be positive"))
+    config.day_to_sec > 0 || throw(ArgumentError("day_to_sec must be positive"))
+    config.output_interval > 0 || throw(ArgumentError("output_interval must be positive"))
+    config.saving_frequency >= 0 || throw(
+        ArgumentError("saving_frequency must be non-negative"),
+    )
+    config.spinup_day >= 0 || throw(ArgumentError("spinup_day must be non-negative"))
+    time_steps(config.end_time, config.Δt)
+    config.output_interval % config.Δt == 0 || throw(
+        ArgumentError("output_interval must be evenly divisible by Δt"),
+    )
+    if config.saving_frequency > 0
+        config.saving_frequency % config.Δt == 0 || throw(
+            ArgumentError("saving_frequency must be evenly divisible by Δt"),
+        )
+    end
+    if config.do_plev_output
+        config.model_type == :PrimitiveEquation || throw(
+            ArgumentError("pressure-level output is only available for PrimitiveEquation"),
+        )
+        !isempty(config.pressure_levels) || throw(
+            ArgumentError("pressure-level output requires at least one pressure level"),
+        )
+        all(p -> isfinite(p) && p > 0, config.pressure_levels) || throw(
+            ArgumentError("pressure levels must be positive and finite"),
+        )
+    end
+    return nothing
+end
+
 """
     JGCM_Simulate(config::Model_Config)
 
@@ -67,13 +111,18 @@ Handles allocation, initialization, time-stepping, and I/O based on the config.
 """
 function JGCM_Simulate(config::Model_Config)
     simulation_start_ns = time_ns()
-    
+    validate_config(config)
+    physics_params = copy(config.physics_params)
+    mkpath(config.output_path)
+    mkpath(dirname(config.output_filename))
+    mkpath(dirname(config.logger))
+
     msg_init       = "Initializing Experiment: $(config.name)"
     msg_model_info = "Model Type: $(config.model_type) | Resolution: T$(config.num_fourier)L$(config.nd)"
 
     @info msg_init
     @info msg_model_info
-    
+
     open(config.logger, "w+") do log
         println(log, msg_init)
         println(log, msg_model_info)
@@ -82,38 +131,43 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     # 1. Core Allocation
     # =========================================================================
-    
+
     # Mesh
     # Note: num_spherical usually = num_fourier + 1
     num_spherical = config.num_fourier + 1
     nλ = 2 * config.nθ
-    
+
     mesh = Spectral_Spherical_Mesh(
-        config.num_fourier, num_spherical, 
-        nλ, config.nθ, config.nd, 
+        config.num_fourier, num_spherical,
+        nλ, config.nθ, config.nd,
         config.radius
     )
 
     # 3D vs 2D Logic
     is_3d = (config.model_type == :PrimitiveEquation)
-    
+
     # Vertical Coordinate (Only for 3D)
     vert_coord = nothing
     if is_3d
         vert_coord = Vert_Coordinate(
-            nλ, config.nθ, config.nd, 
-            config.vert_coord_option, 
-            config.vert_difference_option, 
+            nλ, config.nθ, config.nd,
+            config.vert_coord_option,
+            config.vert_difference_option,
             config.vert_ref_level_option
         )
     end
 
     # Atmo_Data
     # We parse physics flags from the config dictionary
-    do_mass   = get(config.physics_params, "do_mass_correction",   true)
-    do_energy = get(config.physics_params, "do_energy_correction", true)
-    do_water  = get(config.physics_params, "do_water_correction",  true)
-    use_virt  = get(config.physics_params, "use_virtual_temperature", true)
+    do_mass   = get(physics_params, "do_mass_correction",   true)
+    do_energy = get(physics_params, "do_energy_correction", true)
+    do_water  = get(physics_params, "do_water_correction",  true)
+    use_virt  = get(physics_params, "use_virtual_temperature", true)
+    if is_3d && config.moisture_processes && !use_virt
+        throw(ArgumentError(
+            "moist primitive-equation simulations require use_virtual_temperature = true",
+        ))
+    end
 
     atmo_data = Atmo_Data(
         config.name,
@@ -122,17 +176,17 @@ function JGCM_Simulate(config::Model_Config)
         mesh.sinθ;
         radius = config.radius, omega = config.omega, grav = config.grav,
         # Pass dictionary as kwargs to handle optional physics flags
-        [Symbol(k) => v for (k,v) in config.physics_params]...
+        [Symbol(k) => v for (k,v) in physics_params]...
     )
 
     # Integrator
     # We map config.damping_coef etc. directly
     start_time = 0
     init_step  = true
-    
+
     integrator = Filtered_Leapfrog(
-        config.robert_coef, 
-        config.damping_order, config.damping_coef, 
+        config.robert_coef,
+        config.damping_order, config.damping_coef,
         mesh.laplacian_eig,
         config.implicit_coef,
         config.Δt, init_step, start_time, config.end_time
@@ -140,11 +194,40 @@ function JGCM_Simulate(config::Model_Config)
 
     # Dyn_Data
     dyn_data = Dyn_Data(
-        config.name, 
-        config.num_fourier, num_spherical, 
-        nλ, config.nθ, config.nd, 
-        config.num_tracers
+        config.name,
+        config.num_fourier, num_spherical,
+        nλ, config.nθ, config.nd,
     )
+
+    # Load static LRF data once, before the time loop.
+    if get(physics_params, "do_LRF", false)
+        config.moisture_processes || error("LRF requires moisture_processes = true")
+        lrf_file = get(physics_params, "LRF_file", nothing)
+        lrf_file isa AbstractString ||
+            error("LRF requires physics_params[\"LRF_file\"]")
+        physics_params["LRF_state"] =
+            Load_LRF_State(lrf_file, nλ, config.nθ, config.nd)
+    end
+
+    # Construct Betts-Miller configuration and reusable column work arrays once.
+    if get(physics_params, "do_Betts_Miller", false)
+        config.moisture_processes ||
+            error("Betts-Miller requires moisture_processes = true")
+        bm_tau = Float64(get(physics_params, "bm_tau", 7200.0))
+        bm_relative_humidity =
+            Float64(get(physics_params, "bm_relative_humidity", 0.8))
+        config.Δt <= bm_tau || throw(
+            ArgumentError(
+                "Betts-Miller requires Δt <= bm_tau for each physics substep; " *
+                "got Δt=$(config.Δt) s and bm_tau=$bm_tau s",
+            ),
+        )
+        physics_params["BM_state"] = Betts_Miller_State(
+            config.nd;
+            tau=bm_tau,
+            relative_humidity=bm_relative_humidity,
+        )
+    end
 
     # Semi-Implicit Solver (Only for 3D)
     semi_implicit = nothing
@@ -158,7 +241,7 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     # 2. Initialization
     # =========================================================================
-    
+
     # Setup Restart Manager
     saving_freq = config.saving_frequency
     restart_dir = joinpath(config.output_path, "restart")
@@ -195,7 +278,7 @@ function JGCM_Simulate(config::Model_Config)
         if !isnothing(semi_implicit)
             Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
         end
-        
+
     else
         # --- PATH B: COLD START ---
         msg_init_cond = "Cold Start: Setting Analytical Initial Conditions..."
@@ -215,7 +298,7 @@ function JGCM_Simulate(config::Model_Config)
 
         # Standard initialization
         Initialize_Atmos_State!(mesh, atmo_data, dyn_data, vert_coord, config)
-        
+
         start_time = 0
         init_step  = true
     end
@@ -226,11 +309,11 @@ function JGCM_Simulate(config::Model_Config)
     NT = time_steps(config.end_time, config.Δt)
     segment_end_time = start_time + config.end_time
     integrator.end_time = segment_end_time
-    
+
     # =========================================================================
     # 3. Output Management
     # =========================================================================
-    
+
     # Map model type to Output_Manager symbol (:PrimitiveEquation, :Barotropic, etc.)
     # We reuse the logic from config.model_type but need to match Output_Manager expectations
     om_mode = if config.model_type == :PrimitiveEquation
@@ -267,43 +350,36 @@ function JGCM_Simulate(config::Model_Config)
     # =========================================================================
     # 4. Main Time Loop
     # =========================================================================
-    
+
     msg_start_loop = "Starting Time Loop: $NT segment steps"
     @info msg_start_loop
     open(config.logger, "a") do log; println(log, msg_start_loop); end
 
-    msg_cleanup_old_restarts = "Only the last 5 restart files are kept to save space."
-    @warn msg_cleanup_old_restarts
-    open(config.logger, "a") do log
-        println(log, msg_cleanup_old_restarts)
+    if restart_mgr.saving_frequency > 0
+        msg_cleanup_old_restarts = "Only the last 5 restart files are kept to save space."
+        @warn msg_cleanup_old_restarts
+        open(config.logger, "a") do log
+            println(log, msg_cleanup_old_restarts)
+        end
     end
 
     loop_start_ns = time_ns()
 
-    # --- First Step (Euler / Init for a cold start) ---
-    Step_Dynamics!(
-        config, mesh, atmo_data, dyn_data,
-        integrator, semi_implicit, vert_coord, config.physics_params
-    )
-
-    # A warm restart has init_step = false and continues with leapfrog directly.
-    if integrator.init_step
-        if isnothing(semi_implicit)
-            Time_Integrator_Module.Update_Init_Step!(integrator)
-        else
-            Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
-        end
-    end
-
-    integrator.time += config.Δt
-    Update_Output!(op_man, dyn_data, integrator.time)
-
-    # --- Main Loop ---
-    for i = 2:NT
+    progress_interval = max(1, cld(config.day_to_sec, 4 * config.Δt))
+    for i = 1:NT
         Step_Dynamics!(
             config, mesh, atmo_data, dyn_data,
-            integrator, semi_implicit, vert_coord, config.physics_params
+            integrator, semi_implicit, vert_coord, physics_params
         )
+
+        # A warm restart has init_step = false and continues with leapfrog directly.
+        if integrator.init_step
+            if isnothing(semi_implicit)
+                Time_Integrator_Module.Update_Init_Step!(integrator)
+            else
+                Semi_Implicit_Module.Update_Init_Step!(semi_implicit)
+            end
+        end
 
         integrator.time += config.Δt
         Update_Output!(op_man, dyn_data, integrator.time)
@@ -333,12 +409,12 @@ function JGCM_Simulate(config::Model_Config)
         end
 
         # Simple progress indicator
-        if i % (config.day_to_sec / config.Δt / 4) == 0
+        if i % progress_interval == 0 || i == NT
             elapsed_seconds = (time_ns() - loop_start_ns) / 1.0e9
             status_diagnostics(i, NT, elapsed_seconds, config, dyn_data, integrator)
         end
     end
-    
+
     Finalize_Output!(op_man)
     integration_seconds = (time_ns() - loop_start_ns) / 1.0e9
     initialization_seconds = (loop_start_ns - simulation_start_ns) / 1.0e9
@@ -408,9 +484,6 @@ function status_diagnostics(
         day,
     )
     @info msg_step_and_day
-    open(config.logger, "a") do log
-        println(log, msg_step_and_day)
-    end
 
     msg_progress = @sprintf(
         "Segment: %.1f%% | Elapsed: %s | ETA: %s",
@@ -419,12 +492,9 @@ function status_diagnostics(
         isnothing(metrics.eta_seconds) ? "N/A" : format_duration(metrics.eta_seconds),
     )
     @info msg_progress
-    open(config.logger, "a") do log
-        println(log, msg_progress)
-    end
+    diagnostic_messages = String[]
 
     # Define variables to monitor
-    # Using Views for tracers to avoid allocation
     diag_vars = [
         (:U,      dyn_data.grid_u_c),
         (:V,      dyn_data.grid_v_c),
@@ -432,42 +502,47 @@ function status_diagnostics(
         (:W,      dyn_data.grid_w_full),
         (:P_full, dyn_data.grid_p_full),
         (:T_eq,   dyn_data.grid_t_eq),
-        (:Q,      dyn_data.grid_q_c[:, :, :, 1])
+        (:Q,      dyn_data.grid_q_c)
     ]
 
     for (name, field) in diag_vars
         # Find index of maximum absolute magnitude
         max_val, idx = findmax(abs, field)
-        
+
         # Retrieve the actual signed value at that location
         actual_val = field[idx]
-        
+
         # Extract coordinates
         if ndims(field) == 3
-            
+
             i, j, k = idx[1], idx[2], idx[3]
             msg_var_diagnostic = @sprintf(
-                "%-6s: %10.4f  at (λ=%03d, θ=%03d, k=%02d)", 
+                "%-6s: %10.4f  at (λ=%03d, θ=%03d, k=%02d)",
                 string(name), actual_val, i, j, k
             )
             @info msg_var_diagnostic
-            open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
+            push!(diagnostic_messages, msg_var_diagnostic)
 
         elseif ndims(field) == 2
-            
+
             i, j = idx[1], idx[2]
             msg_var_diagnostic = @sprintf(
-                "%-6s: %10.4f  at (λ=%03d, θ=%03d)", 
+                "%-6s: %10.4f  at (λ=%03d, θ=%03d)",
                 string(name), actual_val, i, j
             )
             @info msg_var_diagnostic
-            open(config.logger, "a") do log; println(log, msg_var_diagnostic); end
+            push!(diagnostic_messages, msg_var_diagnostic)
 
         end
     end
-    
+
     println("-"^40) # Separator line
-    open(config.logger, "a") do log; println(log, "-"^40); end
+    open(config.logger, "a") do log
+        println(log, msg_step_and_day)
+        println(log, msg_progress)
+        foreach(message -> println(log, message), diagnostic_messages)
+        println(log, "-"^40)
+    end
 
 end
 
@@ -503,22 +578,22 @@ function Step_Dynamics!(config, mesh, atmo_data, dyn_data, integrator, semi_impl
     model_type = config.model_type
     if model_type == :Barotropic
         Barotropic_Dynamics!(mesh, atmo_data, dyn_data, integrator)
-        
+
     elseif model_type == :Shallow_Water
         # Extract SW params safely
         kappa_m = get(physics_params, "kappa_m", 1.0/(20.0 * config.day_to_sec))
         kappa_t = get(physics_params, "kappa_t", 1.0/(10.0 * config.day_to_sec))
         h_eq    = dyn_data.grid_geopots # We stored h_eq here during init
         h_0     = get(physics_params, "h_0", 3.0e4)
-        
+
         Shallow_Water_Physics!(dyn_data, kappa_m, kappa_t, h_eq)
         Shallow_Water_Dynamics!(mesh, atmo_data, h_0, dyn_data, integrator)
-        
+
     elseif model_type == :PrimitiveEquation
         # Primitive Equation Dynamics
         # Note: Atmosphere_Update! handles physics internals based on Atmo_Data flags
         Atmosphere_Update!(config, mesh, vert_coord, atmo_data, dyn_data, semi_implicit, physics_params)
-        
+
     else
         error("Unknown Model Type: $model_type")
     end

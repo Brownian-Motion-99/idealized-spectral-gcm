@@ -1,0 +1,126 @@
+using Test
+using JLD2
+using JGCM
+
+mutable struct LegacyRestartState
+    spe_vor_p::Array{ComplexF64,3}
+    grid_u_c::Array{Float64,3}
+end
+
+@testset "Restart compatibility" begin
+    mktempdir() do dir
+        manager = Restart_Manager(dir, 600)
+        source = Dyn_Data("source", 1, 2, 4, 2, 2)
+        source.spe_vor_p[1] = 3 + 4im
+        source.grid_u_c[1] = 12.5
+        source.grid_q_c .= 0.007
+        Write_Restart_File(manager, source, 600)
+
+        restored = Dyn_Data("restored", 1, 2, 4, 2, 2)
+        @test Load_Restart_File!(restored, joinpath(dir, "restart_t600.jld2")) == 600
+        @test restored.spe_vor_p == source.spe_vor_p
+        @test restored.grid_u_c == source.grid_u_c
+        @test restored.grid_q_c == source.grid_q_c
+
+        # Version-2 restarts may contain obsolete spectral humidity arrays;
+        # the version-3 grid-only state loads the common grid fields and
+        # deliberately ignores those extras.
+        version2_file = joinpath(dir, "restart_v2.jld2")
+        jldopen(version2_file, "w") do file
+            file["restart_format_version"] = 2
+            file["saved_time"] = 450
+            file["dimensions"] = (1, 2, 4, 2, 2)
+            file["state/grid_q_c"] = source.grid_q_c
+            file["state/spe_q_c"] = zeros(ComplexF64, 2, 3, 2)
+        end
+        version2_restored = Dyn_Data("version2", 1, 2, 4, 2, 2)
+        @test Load_Restart_File!(version2_restored, version2_file) == 450
+        @test version2_restored.grid_q_c == source.grid_q_c
+
+        legacy_file = joinpath(dir, "legacy.jld2")
+        legacy = LegacyRestartState(copy(source.spe_vor_p), copy(source.grid_u_c))
+        jldsave(legacy_file; dyn_data_state = legacy, saved_time = 300)
+        legacy_restored = Dyn_Data("legacy", 1, 2, 4, 2, 2)
+        @test Load_Restart_File!(legacy_restored, legacy_file) == 300
+        @test legacy_restored.spe_vor_p == source.spe_vor_p
+        @test legacy_restored.grid_u_c == source.grid_u_c
+    end
+end
+
+@testset "Reusable output and PBL workspaces" begin
+    mesh = Spectral_Spherical_Mesh(3, 4, 64, 32, 2, 6.371e6)
+    vert = Vert_Coordinate(
+        64,
+        32,
+        2,
+        "even_sigma",
+        "simmons_and_burridge",
+        "second_centered_wts",
+    )
+    atmo = Atmo_Data(
+        "output",
+        64,
+        32,
+        2,
+        true,
+        true,
+        true,
+        true,
+        mesh.sinθ;
+        radius = 6.371e6,
+    )
+    mktempdir() do dir
+        output = Output_Manager(
+            mesh,
+            vert,
+            atmo,
+            0,
+            600,
+            [:t, :ps];
+            filename = joinpath(dir, "output.nc"),
+            do_plev_output = false,
+            pressure_levels = [100_000.0, 50_000.0],
+            output_interval = 600,
+        )
+        @test !isempty(output.acc_raw)
+        Finalize_Output!(output)
+    end
+end
+
+@testset "Reusable PBL workspace" begin
+    mesh = Spectral_Spherical_Mesh(3, 4, 64, 32, 2, 6.371e6)
+    atmo = Atmo_Data(
+        "pbl",
+        64,
+        32,
+        2,
+        true,
+        true,
+        true,
+        true,
+        mesh.sinθ;
+        radius = 6.371e6,
+    )
+    workspace = JGCM.Atmos_Param_Module.PBL_Workspace(64, 32)
+    p_half = fill(90_000.0, 64, 32, 3)
+    ps = fill(100_000.0, 64, 32, 1)
+    u = fill(3.0, 64, 32, 2)
+    v = fill(4.0, 64, 32, 2)
+    t = fill(280.0, 64, 32, 2)
+    q = fill(0.01, 64, 32, 2)
+
+    V_c, za = JGCM.Atmos_Param_Module.Calculate_V_c_za!(
+        workspace,
+        atmo,
+        p_half,
+        ps,
+        u,
+        v,
+        t,
+        q,
+    )
+    @test V_c === workspace.V_c
+    @test za === workspace.za
+    @test all(V_c .== 5.0)
+    @test all(isfinite, za)
+end

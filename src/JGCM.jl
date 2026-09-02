@@ -7,6 +7,7 @@ include("Core/Gauss_And_Legendre.jl")
 include("Core/Spectral_Spherical_Mesh.jl")
 include("Core/Atmo_Data.jl")
 include("Core/Vert_Coordinate.jl")
+include("Dynamics/Grid_Tracer_Transport.jl")
 include("Core/Dyn_Data.jl")
 include("Core/Variable_Mappings.jl")
 include("Core/Experiment_Configuration.jl")
@@ -63,8 +64,18 @@ export Atmo_Data
 using .Vert_Coordinate_Module
 export Vert_Coordinate
 
+using .Grid_Tracer_Transport_Module
+export Grid_Tracer_Workspace, Advance_Grid_Tracer!
+
 using .Dyn_Data_Module
 export Dyn_Data
+
+using .Atmos_Param_Module
+export Dry_Air_Adjustment!, Physics_Workspace
+export LRF_State, Load_LRF_State, LRF!
+export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
+export Saturation_Vapor_Pressure, Saturation_Mixing_Ratio, Saturation_Specific_Humidity
+export Default_Lower_Boundary_Temperature
 
 using .Variable_Mappings_Module
 export Get_Data_Pointer

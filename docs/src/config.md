@@ -24,7 +24,25 @@ This is the configuration of `Lscale_Cond.jl`, controlling grid scale condensati
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `"do_Lscale_Cond"` | `Bool` | `true` | Master switch for the module. |
-| `"L"` | `Float64` | `0.2` | Latent heating efficiency (ranges from 0.0 to 1.0). |
+| `"L"` | `Float64` or 2D array | `0.2` | Latent-heating scale in `[0, 1]`. It changes heating only, not humidity removal or precipitation. |
+
+### Betts-Miller scheme
+
+The Betts-Miller scheme diagnoses a convecting surface parcel and relaxes the
+temperature and specific humidity profiles toward parcel-based reference
+profiles. It returns additive rates and a precipitation flux.
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `"do_Betts_Miller"` | `Bool` | `false` | Master switch for Betts-Miller convection. |
+| `"bm_tau"` | `Float64` | `7200.0` | Relaxation time scale in seconds. The leapfrog effective step, `2 * Δt`, must not exceed this value. |
+| `"bm_relative_humidity"` | `Float64` | `0.8` | Relative humidity of the convective reference profile; must lie in `(0, 1]`. |
+
+Betts-Miller and large-scale condensation may be enabled together. Betts-Miller
+is applied first, and condensation is diagnosed from its temporary adjusted
+temperature and humidity following Isca's process ordering. A moist analytic
+initialization may set `"initial_humidity_floor"` to a small nonnegative value
+to prevent spectral ringing from producing invalid negative specific humidity.
 
 ### Planetary Boundary Layer Processes
 
@@ -34,6 +52,7 @@ Configuration of `PBL.jl`, handling PBL-related processes, including surface sen
 | :--- | :--- | :--- | :--- |
 | `"do_Sensible_Heating"` | `Bool` | `true` | Toggle of surface sensible heat fluxes. |
 | `"C_H"` | `Float64` | `0.0044` | Sensible heat flux coefficient. |
+| `"lower_boundary_temperature"` | `Function` | `Default_Lower_Boundary_Temperature` | Prescribed surface temperature callback used by sensible heat and evaporation, `(longitude, latitude) -> temperature_K`; coordinates are in radians. |
 | `"do_Surface_Evaporation"` | `Bool` | `true` | Toggle of surface evaporation (latent heat fluxes). |
 | `"C_E"` | `Float64` | `0.0044` | Latent heat flux (evaporation) coefficient. |
 | `"do_Implicit_PBL_Scheme"` | `Bool` | `true` | Toggle of PBL mixing. |
@@ -136,6 +155,24 @@ The `Output_Manager` writes time-averaged snapshots to NetCDF files at `output_i
 * **Pressure-level output (optional):** Set `do_plev_output = true` together with `pressure_levels` to also produce interpolated output on pressure levels (e.g., `output_t0_plev.nc`). An error is raised if `do_plev_output = true` but `pressure_levels` is empty.
 * **Final chunk:** `Driver.jl` does not rotate to a new NC chunk on the final saving boundary of the run. The rotation is skipped when `integrator.time >= segment_end_time` (the absolute model time at the end of the current invocation, i.e. `start_time + end_time`). This correctly handles both cold starts (where `segment_end_time == end_time`) and warm restarts (where `segment_end_time > end_time`). The last interval's data stays in the previously-opened chunk rather than being moved to a fresh, empty file.
 
+Online pressure-level output prepares the vertical indices and weights once per
+output record and reuses them for every field. For maximum model throughput,
+use the Isca-style offline workflow instead: set `do_plev_output = false`, keep
+the native output, and convert it after the run:
+
+```shell
+julia --project=. post_processing/Interpolator.jl input.nc output_plev.nc 92500 85000 50000 20000
+```
+
+The offline converter uses the same interpolation cache and numerical rules as
+online output.
+
+#### Future work: native-coordinate CF interoperability
+
+Pressure-level files have explicit `plev` coordinates and are the recommended output for analysis. Native model-level files retain Isca-style `pfull`, `phalf`, `pk`, `bk`, and `ps` metadata, which is sufficient for this project's postprocessor but does not fully describe the nonlinear Simmons--Burridge full-level pressure calculation to generic CF software.
+
+This is currently a low-priority interoperability limitation because it does not affect model calculations or pressure-level output. A future implementation should use a CF sigma coordinate for pure-sigma configurations and provide an exact auxiliary pressure coordinate for hybrid Simmons--Burridge configurations.
+
 ### Runtime Logging
 
 The driver prints a status summary to `logger.log` periodically.
@@ -178,7 +215,7 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 | `:vor` | `vor` | s-1 | `atmosphere_relative_vorticity` | 3D |
 | `:div` | `div` | s-1 | `divergence_of_wind` | 3D |
 | `:p` | `p` | Pa | `air_pressure` | 3D |
-| `:z` | `zg` | m2 s-2 | `geopotential` | 3D |
+| `:z` | `zg` | m | `geopotential_height` | 3D |
 | `:t_eq` | `teq` | K | `held_suarez_equilibrium_temperature` | 3D |
 | **Surface & Fluxes** | | | | |
 | `:ps` | `ps` | Pa | `surface_air_pressure` | 2D |
@@ -195,7 +232,6 @@ These variables cover full 3D atmospheric states and 2D surface fluxes.
 | `:ddiv` | `ddiv_dt` | s-2 | `tendency_of_divergence_of_wind` | 3D |
 | `:dq` | `dq_dt` | s-1 | `tendency_of_specific_humidity` | 3D |
 | **Tracers** |  |  |  |  |
-| `:tr1` ... `:tr10` | `tr#` | kg/kg | Passive Tracers 1-10 | 3D |
 
 #### Shallow Water (`:ShallowWater`)
 
@@ -247,6 +283,7 @@ physics_params = Dict{String, Any}(
     # PBL fluxes
     "do_Sensible_Heating"    => true,
     "C_H"                    => 0.0044,
+    "lower_boundary_temperature" => (longitude, latitude) -> 300.0,
     "do_Surface_Evaporation" => true,
     "C_E"                    => 0.0044,
     "do_Implicit_PBL_Scheme" => true,
@@ -313,7 +350,6 @@ config = Model_Config(
 
     # Physics
     moisture_processes = true,
-    num_tracers = 1,
     
     # IO
     output_path     = output_path_base,

@@ -12,8 +12,12 @@ export Shallow_Water_Physics!, Implicit_Correction!, Shallow_Water_Dynamics!
 # we use grid_δlnps, grid_ps spe_lnps as 
 #        grid_δh     grid_h  spe_h
 ##################
-function Shallow_Water_Physics!(dyn_data::Dyn_Data, kappa_m::Float64,
-    kappa_t::Float64, h_eq::Array{Float64,3})
+function Shallow_Water_Physics!(
+    dyn_data::Dyn_Data,
+    kappa_m::Float64,
+    kappa_t::Float64,
+    h_eq::Array{Float64,3},
+)
 
     grid_δu, grid_δv, grid_δh = dyn_data.grid_δu, dyn_data.grid_δv, dyn_data.grid_δlnps
     grid_u, grid_v, grid_h = dyn_data.grid_u_c, dyn_data.grid_v_c, dyn_data.grid_ps_c
@@ -30,10 +34,16 @@ end
 
 
 
-function Implicit_Correction!(integrator::Filtered_Leapfrog,
-    spe_div_c::Array{ComplexF64,3}, spe_div_p::Array{ComplexF64,3},
-    spe_h_c::Array{ComplexF64,3}, spe_h_p::Array{ComplexF64,3}, h_0::Float64,
-    spe_δdiv::Array{ComplexF64,3}, spe_δh::Array{ComplexF64,3})
+function Implicit_Correction!(
+    integrator::Filtered_Leapfrog,
+    spe_div_c::Array{ComplexF64,3},
+    spe_div_p::Array{ComplexF64,3},
+    spe_h_c::Array{ComplexF64,3},
+    spe_h_p::Array{ComplexF64,3},
+    h_0::Float64,
+    spe_δdiv::Array{ComplexF64,3},
+    spe_δh::Array{ComplexF64,3},
+)
     """
     See Shallow_Water_Dynamics!
     """
@@ -93,9 +103,13 @@ We have
 
 δdiv + - 2Δtα2ΔtαH0∇^2 δdiv = δdiv(i) + ∇^2(H(i)-H(i-1)) - 2Δtα∇^2 (δH(i) + H0(div(i) -div(i-1)))
 """
-function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
-    atmo_data::Atmo_Data, h_0::Float64, dyn_data::Dyn_Data,
-    integrator::Filtered_Leapfrog)
+function Shallow_Water_Dynamics!(
+    mesh::Spectral_Spherical_Mesh,
+    atmo_data::Atmo_Data,
+    h_0::Float64,
+    dyn_data::Dyn_Data,
+    integrator::Filtered_Leapfrog,
+)
     # n: next, c: current, p: previous
 
     nλ, nθ = mesh.nλ, mesh.nθ
@@ -158,9 +172,16 @@ function Shallow_Water_Dynamics!(mesh::Spectral_Spherical_Mesh,
 
 
 
-    Implicit_Correction!(integrator, spe_div_c, spe_div_p,
-        spe_h_c, spe_h_p, h_0,
-        spe_δdiv, spe_δh)
+    Implicit_Correction!(
+        integrator,
+        spe_div_c,
+        spe_div_p,
+        spe_h_c,
+        spe_h_p,
+        h_0,
+        spe_δdiv,
+        spe_δh,
+    )
 
 
 

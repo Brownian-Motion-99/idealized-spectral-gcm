@@ -23,22 +23,26 @@ mutable struct Vert_Coordinate
     nd::Int64
     vert_coord_option::String
     vert_difference_option::String
-    vert_advect_scheme::String 
-    
+    vert_advect_scheme::String
+
     p_ref::Float64
+    # Derived from ak/bk: true only when the top interface pressure is zero.
     zero_top::Bool
-    
+
     # ak[nd+1] = 0, bk[nd+1] = 1, bk[1] = 0
-    ak::Array{Float64, 1}
-    bk::Array{Float64, 1}
-    
-    Δak::Array{Float64, 1}
-    Δbk::Array{Float64, 1}
-    
+    ak::Array{Float64,1}
+    bk::Array{Float64,1}
+
+    Δak::Array{Float64,1}
+    Δbk::Array{Float64,1}
+
     # memory container
-    flux::Array{ComplexF64, 3}
-    vert_integral::Array{Float64, 3}
-        
+    flux::Array{Float64,3}
+    vert_integral::Array{Float64,3}
+    virtual_temperature::Array{Float64,3}
+    mass_Δp::Array{Float64,3}
+    mass_integrand::Array{Float64,3}
+
 end
 
 
@@ -64,7 +68,8 @@ Constructs a `Vert_Coordinate` struct, initializing the vertical coordinate conf
     - vert_advect_scheme: Selector for vertical advection algorithm.
     
     - p_ref: Reference pressure (for hybrid coordinate).
-    - zero_top: Flag to enforce zero pressure at the top.
+    - zero_top: Selects a zero-pressure top for configurable uneven-sigma grids.
+      Fixed coordinate tables retain their prescribed top pressure.
 
     - scale_heights: Parameter for grid stretching/clustering.
     - surf_res: Parameter for surface layer resolution control.
@@ -81,24 +86,70 @@ Constructs a `Vert_Coordinate` struct, initializing the vertical coordinate conf
 
 """
 function Vert_Coordinate(
-    nλ::Int64, nθ::Int64, nd::Int64,
-    vert_coord_option::String, vert_difference_option::String, vert_advect_scheme::String,
-    p_ref::Float64 = 100000., zero_top::Bool = true,
-    scale_heights::Float64 = 4.0, surf_res::Float64 = 1.0, 
-    p_press::Float64 = 0.1,  p_sigma::Float64 = 0.3,  exponent::Float64 = 2.5
+    nλ::Int64,
+    nθ::Int64,
+    nd::Int64,
+    vert_coord_option::String,
+    vert_difference_option::String,
+    vert_advect_scheme::String,
+    p_ref::Float64 = 100000.0,
+    zero_top::Bool = true,
+    scale_heights::Float64 = 4.0,
+    surf_res::Float64 = 1.0,
+    p_press::Float64 = 0.1,
+    p_sigma::Float64 = 0.3,
+    exponent::Float64 = 2.5,
 )
-    
-    ak, bk   = Compute_Vert_Coord(nd, vert_coord_option, p_ref, scale_heights, surf_res, p_press, p_sigma, exponent)
-    Δak, Δbk = ak[2:nd+1] - ak[1:nd], bk[2:nd+1] - bk[1:nd]
-    
-    flux          = zeros(Float64, nλ, nθ, nd+1)
-    vert_integral = zeros(Float64, nλ, nθ, 1)
-    
-    Vert_Coordinate(
-        nλ, nθ, nd, vert_coord_option, vert_difference_option, vert_advect_scheme, p_ref, zero_top, ak, bk, Δak, Δbk, 
-        flux, vert_integral
+
+    ak, bk = Compute_Vert_Coord(
+        nd,
+        vert_coord_option,
+        p_ref,
+        scale_heights,
+        surf_res,
+        p_press,
+        p_sigma,
+        exponent,
+        zero_top,
     )
-    
+    length(ak) == nd + 1 && length(bk) == nd + 1 || throw(
+        DimensionMismatch(
+            "vertical coordinate $(repr(vert_coord_option)) provides " *
+            "$(length(ak) - 1) levels, but nd=$nd",
+        ),
+    )
+    Δak, Δbk = ak[2:nd+1] - ak[1:nd], bk[2:nd+1] - bk[1:nd]
+
+    flux = zeros(Float64, nλ, nθ, nd + 1)
+    vert_integral = zeros(Float64, nλ, nθ, 1)
+    virtual_temperature = zeros(Float64, nλ, nθ, nd)
+    mass_Δp = zeros(Float64, nλ, nθ, 1)
+    mass_integrand = zeros(Float64, nλ, nθ, 1)
+
+    # The coefficients, rather than the requested coordinate option, are the
+    # source of truth used by the pressure and hydrostatic kernels.
+    coefficient_zero_top = iszero(ak[1]) && iszero(bk[1])
+
+    Vert_Coordinate(
+        nλ,
+        nθ,
+        nd,
+        vert_coord_option,
+        vert_difference_option,
+        vert_advect_scheme,
+        p_ref,
+        coefficient_zero_top,
+        ak,
+        bk,
+        Δak,
+        Δbk,
+        flux,
+        vert_integral,
+        virtual_temperature,
+        mass_Δp,
+        mass_integrand,
+    )
+
 end
 
 
@@ -108,7 +159,7 @@ end
         nd, vert_coord_option,
         p_ref,
         scale_heights, surf_res,
-        p_press, p_sigma, exponent
+        p_press, p_sigma, exponent, zero_top
     )
 
 Generates the vertical coordinate coefficients (Ak and Bk) that define the model interfaces.
@@ -125,6 +176,8 @@ Generates the vertical coordinate coefficients (Ak and Bk) that define the model
     - p_press: Upper transition threshold for hybrid coordinate.
     - p_sigma: Lower transition threshold for hybrid coordinate.
     - exponent: Power exponent for grid stretching function.
+    - zero_top: Whether configurable uneven-sigma coordinates use a
+      zero-pressure top. Fixed coordinate tables retain their prescribed top.
 
 ### Returns
     - a (Array{Float64, 1}): The pressure-dependent interface coefficients (Ak), 
@@ -138,40 +191,47 @@ Generates the vertical coordinate coefficients (Ak and Bk) that define the model
 
 """
 function Compute_Vert_Coord(
-    nd::Int64, vert_coord_option::String,
-    p_ref::Float64 = 100000., 
-    scale_heights::Float64 = 4.0, surf_res::Float64 = 1.0, 
-    p_press::Float64 = 0.1, p_sigma::Float64 = 0.3, exponent::Float64 = 2.5
+    nd::Int64,
+    vert_coord_option::String,
+    p_ref::Float64 = 100000.0,
+    scale_heights::Float64 = 4.0,
+    surf_res::Float64 = 1.0,
+    p_press::Float64 = 0.1,
+    p_sigma::Float64 = 0.3,
+    exponent::Float64 = 2.5,
+    zero_top::Bool = true,
 )
-    
-    if (vert_coord_option == "even_sigma") 
+
+    if (vert_coord_option == "even_sigma")
         a, b = Compute_Even_Sigma(nd)
 
-    elseif (vert_coord_option == "uneven_sigma") 
-        a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, true)
-    
+    elseif (vert_coord_option == "uneven_sigma")
+        a, b = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, zero_top)
+
     elseif (vert_coord_option == "simmons_and_burridge")
-        a, b = Base.invokelatest(Compute_Simmons_Burridge)
-    
-    elseif (vert_coord_option == "hybrid") 
-        a_sigma, b_sigma = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
-        b_press, a_press = Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
+        a, b = Compute_Simmons_Burridge()
+
+    elseif (vert_coord_option == "hybrid")
+        a_sigma, b_sigma =
+            Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
+        b_press, a_press =
+            Compute_Uneven_Sigma(nd, scale_heights, surf_res, exponent, false)
         trans = Transition(nd, b_sigma, p_sigma, p_press)
-        a = p_ref * (a_sigma.*trans + a_press.*(1.0 .- trans))
-        b = b_sigma.*trans + b_press.*(1.0 .- trans)
-    
-    elseif (vert_coord_option == "mcm") 
+        a = p_ref * (a_sigma .* trans + a_press .* (1.0 .- trans))
+        b = b_sigma .* trans + b_press .* (1.0 .- trans)
+
+    elseif (vert_coord_option == "mcm")
         a, b = Compute_Old_Model_Sigma()
-    
-    elseif (vert_coord_option == "v197") 
+
+    elseif (vert_coord_option == "v197")
         a, b = Compute_V197_Sigma()
-        
+
     else
         error("Compute_Vert_Coord ", vert_coord_option, "is not a valid value for option")
-    end 
-    
+    end
+
     return a, b
-end 
+end
 
 
 
@@ -207,24 +267,24 @@ Mathematical formulation:
     - nothing
 
 """
-function Transition(nd::Float64, p::Array{Float64, 1}, p_sigma::Float64, p_press::Float64) 
-    
-    trans = zeros(Float64, nd+1)
-    
+function Transition(nd::Integer, p::Array{Float64,1}, p_sigma::Float64, p_press::Float64)
+
+    trans = zeros(Float64, nd + 1)
+
     for k = 1:nd+1
         if (p[k] <= p_press)
             trans[k] = 0.0
-        elseif (p[k] >= p_sigma) 
+        elseif (p[k] >= p_sigma)
             trans[k] = 1.0
         else
-            x  = p[k]    - p_press
+            x = p[k] - p_press
             xx = p_sigma - p_press
-            trans[k] = (sin(0.5*pi*x/xx))^2
+            trans[k] = (sin(0.5 * pi * x / xx))^2
         end
     end
-    
+
     return trans
-end 
+end
 
 
 
@@ -249,11 +309,11 @@ Generates a uniformly spaced sigma vertical coordinate system.
 
 """
 function Compute_Even_Sigma(nd::Int64)
-    
-    a = zeros(Float64, nd+1)
-    b = Array(LinRange(0, 1.0, nd+1))
+
+    a = zeros(Float64, nd + 1)
+    b = Array(LinRange(0, 1.0, nd + 1))
     return a, b
-end 
+end
 
 
 
@@ -294,25 +354,31 @@ Grid Geometry:
     - nothing
 
 """
-function Compute_Uneven_Sigma(nd::Int64, scale_heights::Float64, surf_res::Float64, exponent::Float64, zero_top::Bool)
-    
-    a = zeros(Float64, nd+1)
-    
+function Compute_Uneven_Sigma(
+    nd::Int64,
+    scale_heights::Float64,
+    surf_res::Float64,
+    exponent::Float64,
+    zero_top::Bool,
+)
+
+    a = zeros(Float64, nd + 1)
+
     # ζ = 1 - (k-1) / nd
-    ζ = Array(LinRange(1.0, 0.0, nd+1))
-    
+    ζ = Array(LinRange(1.0, 0.0, nd + 1))
+
     # b = exp( -(surf_res * ζ + (1.0 - surf_res) * (ζ^exponent)) * scale_heights)
-    z = -(surf_res*ζ + (1.0 - surf_res)*(ζ.^exponent))
-    b = exp.(z*scale_heights)
-    
+    z = -(surf_res * ζ + (1.0 - surf_res) * (ζ .^ exponent))
+    b = exp.(z * scale_heights)
+
     b[nd+1] = 1.0
-    
-    if (zero_top) 
+
+    if (zero_top)
         b[1] = 0.0
     end
     return a, b
-    
-end 
+
+end
 
 
 
@@ -342,17 +408,35 @@ suggest a resolution distribution tailored for a specific atmospheric regime or 
 
 """
 function Compute_V197_Sigma()
-    
-    nd = 18 
-    
-    a = zeros(Float64, nd+1)
-    b = [0.0; 0.0089163; 0.0342936; 0.0740741; 0.1262002; 0.1886145; 0.2592592;  
-    0.3360768; 0.4170096; 0.5000000; 0.5829904; 0.6639231; 0.7407407;  
-    0.8113854; 0.8737997; 0.9259259; 0.9657064; 0.9910837; 1.0]
-    
-    
+
+    nd = 18
+
+    a = zeros(Float64, nd + 1)
+    b = [
+        0.0
+        0.0089163
+        0.0342936
+        0.0740741
+        0.1262002
+        0.1886145
+        0.2592592
+        0.3360768
+        0.4170096
+        0.5000000
+        0.5829904
+        0.6639231
+        0.7407407
+        0.8113854
+        0.8737997
+        0.9259259
+        0.9657064
+        0.9910837
+        1.0
+    ]
+
+
     return a, b
-end 
+end
 
 
 
@@ -382,13 +466,28 @@ Grid Geometry:
 """
 function Compute_Old_Model_Sigma()
     nd = 14
-    
-    a = zeros(Float64, nd+1)
-    b = [0.0; 0.03; 0.0707; 0.1311; 0.2102; 0.3036; 0.4062; 0.5138; 0.6226; 0.7284; 
-    0.8255; 0.9066; 0.9640; 0.9933; 1.0]
-    
+
+    a = zeros(Float64, nd + 1)
+    b = [
+        0.0
+        0.03
+        0.0707
+        0.1311
+        0.2102
+        0.3036
+        0.4062
+        0.5138
+        0.6226
+        0.7284
+        0.8255
+        0.9066
+        0.9640
+        0.9933
+        1.0
+    ]
+
     return a, b
-end 
+end
 
 
 
@@ -412,23 +511,56 @@ Loads the standard Simmons & Burridge (1981) / NCAR CAM 20-layer Hybrid coeffici
 
 """
 function Compute_Simmons_Burridge()
-    
-    ak = [
-        2.19422, 4.89520, 9.88241, 18.05201, 29.83724,
-        44.62333, 61.60586, 78.51243, 77.31270, 75.90131,
-        74.24086, 72.28743, 69.98933, 67.28574, 64.10509,
-        60.36321, 55.96111, 50.78224, 44.68920, 37.52196,
-        0.0
-    ] .* 100.0 # Convert hPa to Pa
+
+    ak =
+        [
+            2.19422,
+            4.89520,
+            9.88241,
+            18.05201,
+            29.83724,
+            44.62333,
+            61.60586,
+            78.51243,
+            77.31270,
+            75.90131,
+            74.24086,
+            72.28743,
+            69.98933,
+            67.28574,
+            64.10509,
+            60.36321,
+            55.96111,
+            50.78224,
+            44.68920,
+            37.52196,
+            0.0,
+        ] .* 100.0 # Convert hPa to Pa
 
     bk = [
-        0.0, 0.0, 0.0, 0.0, 0.0,
-        0.0, 0.0, 0.0, 0.01505, 0.03276,
-        0.05359, 0.07810, 0.10695, 0.14088, 0.18080,
-        0.22777, 0.28302, 0.34801, 0.42446, 0.51439,
-        1.0
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.01505,
+        0.03276,
+        0.05359,
+        0.07810,
+        0.10695,
+        0.14088,
+        0.18080,
+        0.22777,
+        0.28302,
+        0.34801,
+        0.42446,
+        0.51439,
+        1.0,
     ]
-    
+
     return ak, bk
 end
 
@@ -460,38 +592,46 @@ Supported Schemes:
     - vert_coord.flux
 
 """
-function Vert_Advection!(vert_coord::Vert_Coordinate, r::AbstractArray{Float64, 3}, dz::Array{Float64, 3}, w::Array{Float64, 3}, Δt::Int64, vert_advect_scheme::String, rdt::Array{Float64, 3})
-    
-    nd   = vert_coord.nd
+function Vert_Advection!(
+    vert_coord::Vert_Coordinate,
+    r::AbstractArray{Float64,3},
+    dz::Array{Float64,3},
+    w::Array{Float64,3},
+    Δt::Int64,
+    vert_advect_scheme::String,
+    rdt::Array{Float64,3},
+)
+
+    nd = vert_coord.nd
     flux = vert_coord.flux
-    
+
     # no flux boundary condition
-    flux[:, :, 1]    .= 0.0
+    flux[:, :, 1] .= 0.0
     flux[:, :, nd+1] .= 0.0
-    
+
     # ∂r/∂t = -w * ∂r/∂z
     # -w * ∂r/∂z = -∂(wr)/∂z + r * ∂w/∂z
     # rdt = -w∂r/∂z = -∂wr/∂z + r∂w/∂z = ( [wr]_{k-1/2} -[wr]_{k+1/2})/Δz_k + r_k(w_{k+1/2} - w_{k-1/2})/Δz_k
-    
+
     # 2nd-order centered scheme assuming variable grid spacing
     # -∂wr/∂z = (wr)_{k-1/2} = w_{k-1/2} * (r_{k-1} + (Δr/Δz)_{k-1/2} * Δz_{k-1})
     if vert_advect_scheme == "second_centered_wts"
-        
+
         @views begin
-            f_in  = flux[:, :, 2:nd]
-            w_in  = w[:, :, 2:nd]
-            r_up  = r[:, :, 1:nd-1]
-            r_dn  = r[:, :, 2:nd]
+            f_in = flux[:, :, 2:nd]
+            w_in = w[:, :, 2:nd]
+            r_up = r[:, :, 1:nd-1]
+            r_dn = r[:, :, 2:nd]
             dz_up = dz[:, :, 1:nd-1]
             dz_dn = dz[:, :, 2:nd]
-            
+
             @. f_in = w_in * (r_up + (r_dn - r_up) / (dz_up + dz_dn) * dz_up)
         end
-        
-    # 2nd-order centered scheme assuming uniform grid spacing
-    # -∂wr/∂z = (wr)_{k-1/2} = w_{k-1/2} * (r_{k} + r_{k-1}) * 0.5
+
+        # 2nd-order centered scheme assuming uniform grid spacing
+        # -∂wr/∂z = (wr)_{k-1/2} = w_{k-1/2} * (r_{k} + r_{k-1}) * 0.5
     elseif vert_advect_scheme == "second_centered"
-        
+
         @views begin
             f_in = flux[:, :, 2:nd]
             w_in = w[:, :, 2:nd]
@@ -500,24 +640,24 @@ function Vert_Advection!(vert_coord::Vert_Coordinate, r::AbstractArray{Float64, 
 
             @. f_in = w_in * (r_up + r_dn) * 0.5
         end
-        
-    else 
+
+    else
         error("vert_advect_scheme ", vert_advect_scheme, " is not a valid value for option")
     end
-    
+
     # rdt = ((wr)_{k-1/2} - (wr)_{k+1/2}) / Δz_k + (r_k * (w_{k+1/2} - w_{k-1/2})) / Δz_k
     @views begin
-        rdt_k    = rdt[:, :, 1:nd]
-        flux_k   = flux[:, :, 1:nd]
+        rdt_k = rdt[:, :, 1:nd]
+        flux_k = flux[:, :, 1:nd]
         flux_kp1 = flux[:, :, 2:nd+1]
-        r_k      = r[:, :, 1:nd]
-        w_k      = w[:, :, 1:nd]
-        w_kp1    = w[:, :, 2:nd+1]
-        dz_k     = dz[:, :, 1:nd]
+        r_k = r[:, :, 1:nd]
+        w_k = w[:, :, 1:nd]
+        w_kp1 = w[:, :, 2:nd+1]
+        dz_k = dz[:, :, 1:nd]
 
         @. rdt_k = (flux_k - flux_kp1 + r_k * (w_kp1 - w_k)) / dz_k
     end
-    
+
 end
 
 
@@ -545,32 +685,39 @@ Computes the global area-averaged, mass-weighted vertical integral of a scalar f
 
 ### Modified
     - vert_coord.vert_integral
+    - vert_coord.mass_Δp
+    - vert_coord.mass_integrand
 
 """
 function Mass_Weighted_Global_Integral(
-    vert_coord::Vert_Coordinate, mesh::Spectral_Spherical_Mesh, atmo_data::Atmo_Data,
-    grid_data::Array{Float64, 3}, grid_ps::Array{Float64, 3}
+    vert_coord::Vert_Coordinate,
+    mesh::Spectral_Spherical_Mesh,
+    atmo_data::Atmo_Data,
+    grid_data::Array{Float64,3},
+    grid_ps::Array{Float64,3},
 )
-    
+
     grav = atmo_data.grav
-    nd   = vert_coord.nd
-    
-    Δak, Δbk      = vert_coord.Δak, vert_coord.Δbk
+    nd = vert_coord.nd
+
+    Δak, Δbk = vert_coord.Δak, vert_coord.Δbk
     vert_integral = vert_coord.vert_integral
-    
-    Δp = similar(grid_ps)
-    
+    mass_Δp = vert_coord.mass_Δp
+    mass_integrand = vert_coord.mass_integrand
+
     # Δp_k = Δak + Δbk * p_surface
     # I    = (1/g) * Σ (q_k * Δp_k)
-    vert_integral .= 0.0
+    fill!(vert_integral, 0.0)
     for k = 1:nd
-        Δp             .= Δak[k] .+ Δbk[k] * grid_ps
-        vert_integral .+= grid_data[:, :, k] .* Δp[:, :, 1]
+        @. mass_Δp = Δbk[k] * grid_ps
+        mass_Δp .+= Δak[k]
+        @views @. mass_integrand = grid_data[:, :, k] * mass_Δp[:, :, 1]
+        vert_integral .+= mass_integrand
     end
-    
-    mass_weighted_global_integral = Area_Weighted_Global_Mean(mesh, vert_integral)/grav
-    
+
+    mass_weighted_global_integral = Area_Weighted_Global_Mean(mesh, vert_integral) / grav
+
     return mass_weighted_global_integral
-end 
+end
 
 end

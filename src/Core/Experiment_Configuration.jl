@@ -7,7 +7,7 @@ export Model_Config
 """
     Model_Config
 
-The blueprint for a JGCM simulation. 
+The blueprint for a JGCM simulation.
 """
 Base.@kwdef struct Model_Config
     # -------------------------------------------------------
@@ -20,11 +20,11 @@ Base.@kwdef struct Model_Config
     # -------------------------------------------------------
     # 2. Resolution & Geometry
     # -------------------------------------------------------
-    num_fourier::Int    
-    nθ::Int             
-    nd::Int             
-    
-    radius::Float64     
+    num_fourier::Int
+    nθ::Int
+    nd::Int
+
+    radius::Float64
     omega::Float64
     grav::Float64
 
@@ -32,11 +32,11 @@ Base.@kwdef struct Model_Config
     # 3. Vertical Coordinate
     # -------------------------------------------------------
     # Options: "even_sigma", "uneven_sigma", "hybrid", "simmons_and_burridge", "mcm", "v197"
-    vert_coord_option::Any    
+    vert_coord_option::Any
     # Options: "simmons_and_burridge".
-    vert_difference_option::Any 
+    vert_difference_option::Any
     # Options: "second_centered_wts", "second_centered".
-    vert_ref_level_option::Any  
+    vert_ref_level_option::Any
 
     # -------------------------------------------------------
     # 4. Time Integration & Planet Settings
@@ -45,11 +45,11 @@ Base.@kwdef struct Model_Config
     end_time::Int64
     spinup_day::Float64 = 0.0
     day_to_sec::Int64
-    
-    damping_order::Int      
-    damping_coef::Float64   
+
+    damping_order::Int
+    damping_coef::Float64
     robert_coef::Float64
-    implicit_coef::Float64  
+    implicit_coef::Float64
 
     # -------------------------------------------------------
     # 5. Restart Configuration
@@ -60,26 +60,24 @@ Base.@kwdef struct Model_Config
 
     # -------------------------------------------------------
     # 6. Composition & Physics
-    # -------------------------------------------------------   
+    # -------------------------------------------------------
     moisture_processes::Bool = true
 
-    num_tracers::Int64 = 1
-    
-    initial_condition::Any      
-    
+    initial_condition::Any
+
     # -------------------------------------------------------
     # 7. IO Settings
     # -------------------------------------------------------
     output_path::String                   # Base directory for all outputs
     output_filename::String               # Full path for the main NetCDF
     logger::String                        # Full path for the log file
-    
+
     do_plev_output::Bool = false
     pressure_levels::Vector{Float64} = [100000.0, 92500.0, 85000.0, 70000.0, 50000.0, 30000.0, 20000.0, 10000.0, 5000.0, 1000.0]
-    vars_to_output::Vector{Symbol} 
+    vars_to_output::Vector{Symbol}
     output_interval::Int64
 
-    physics_params::Dict{String, Any} 
+    physics_params::Dict{String,Any}
 end
 
 end
