@@ -68,7 +68,8 @@ end
     dyn.grid_z_full[:, :, 1] .= 8_000.0
     dyn.grid_z_full[:, :, 2] .= 1_000.0
     dyn.grid_ps_c .= 80_000.0
-    requested = [:t, :u, :z]
+    dyn.grid_precip .= 1.0e-5
+    requested = [:t, :u, :z, :precip]
 
     mktempdir() do dir
         filename = joinpath(dir, "primitive.nc")
@@ -80,14 +81,15 @@ end
             pressure_levels = [25_000.0, 75_000.0],
             output_interval = 3600,
         )
-        @test requested == [:t, :u, :z]
-        @test manager.active_symbols == [:t, :u, :z, :ps]
+        @test requested == [:t, :u, :z, :precip]
+        @test manager.active_symbols == [:t, :u, :z, :precip, :ps]
         Update_Output!(manager, dyn, 600)
         dyn.grid_t_c[:, :, 1] .= 260.0
         dyn.grid_t_c[:, :, 2] .= 300.0
         dyn.grid_u_c[:, :, 1] .= 12.0
         dyn.grid_u_c[:, :, 2] .= 22.0
         dyn.grid_ps_c .= 120_000.0
+        dyn.grid_precip .= 3.0e-5
         Update_Output!(manager, dyn, 1200)
         Finalize_Output!(manager)
 
@@ -105,6 +107,7 @@ end
             temperature = ds["ta"].var[:, :, :, 1]
             @test all(temperature[:, :, 1] .≈ expected_25k)
             @test all(isnan, temperature[:, :, 2])
+            @test all(ds["pr"].var[:, :, 1] .≈ 2.0e-5)
         end
 
         # Isca-style native files retain approximate reference axes together
@@ -123,12 +126,13 @@ end
         offline_path = joinpath(dir, "primitive_offline_plev.nc")
         Interpolate_File(
             joinpath(dir, "primitive_t0.nc"), offline_path,
-            [25_000.0, 75_000.0]; var_names=[:t, :u, :z],
+            [25_000.0, 75_000.0],
         )
         NCDataset(offline_path, "r") do ds
             @test haskey(ds, "ta")
             @test haskey(ds, "ua")
             @test haskey(ds, "zg")
+            @test haskey(ds, "pr")
             @test !haskey(ds, "t")
             @test !haskey(ds, "u")
             temperature = ds["ta"].var[:, :, :, 1]
@@ -138,9 +142,11 @@ end
             expected_wind = 21.0 + weight_25k * (11.0 - 21.0)
             @test all(wind[:, :, 1] .≈ expected_wind)
             @test all(isnan, wind[:, :, 2])
+            @test all(ds["pr"].var[:, :, 1] .≈ 2.0e-5)
 
             NCDataset(joinpath(dir, "primitive_t0_plev.nc"), "r") do online_ds
                 @test isequal(ds["zg"].var[:], online_ds["zg"].var[:])
+                @test isequal(ds["pr"].var[:], online_ds["pr"].var[:])
             end
         end
 

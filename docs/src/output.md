@@ -186,9 +186,7 @@ julia --project=. post_processing/Interpolator.jl \
 
 The postprocessor reads `pk`, `bk`, and `ps`, uses the same cached interpolation
 implementation as online output, copies the existing time coordinate, and
-preserves variable attributes. Its default 3-D variable set is `:u`, `:v`,
-`:t`, `:z`, `:q`, `:vor`, and `:div`; fields absent from the input are skipped.
-The output path is replaced if it already exists.
+preserves variable attributes. Three-dimensional fields are interpolated, while requested surface fields such as precipitation are copied without interpolation. The output path is replaced if it already exists.
 
 ## Checkpoints and warm starts
 

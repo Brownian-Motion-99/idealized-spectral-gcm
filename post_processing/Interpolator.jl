@@ -14,7 +14,21 @@ function Interpolate_File(
     input_path::String,
     output_path::String,
     target_levels::Vector{Float64};
-    var_names::Vector{Symbol} = [:u, :v, :t, :z, :q, :vor, :div],
+    var_names::Vector{Symbol} = [
+        :u,
+        :v,
+        :w,
+        :q,
+        :t,
+        :ps,
+        :shflx,
+        :lhflx,
+        :precip,
+        :bm_dt,
+        :bm_dq,
+        :bm_precip,
+        :lrf_dt,
+    ],
 )
     isempty(target_levels) && throw(ArgumentError("at least one pressure level is required"))
     all(p -> isfinite(p) && p > 0.0, target_levels) ||
@@ -109,14 +123,28 @@ function Interpolate_File(
         defVar(ds_out, "ps", Float64, ("lon", "lat", "time"), attrib = ds_in["ps"].attrib)
     end
 
-    # Define 3D Interpolated Variables
+    # Define requested variables. Three-dimensional atmospheric fields gain a
+    # plev dimension; surface fields retain their native (lon, lat, time)
+    # shape. Surface pressure is already defined above because interpolation
+    # always requires and copies it.
     for (_, nc_name) in requested_variables
-        if haskey(ds_in, nc_name) && ndims(ds_in[nc_name]) == 4
+        haskey(ds_in, nc_name) || continue
+        nc_name == "ps" && continue
+
+        if ndims(ds_in[nc_name]) == 4
             defVar(
                 ds_out,
                 nc_name,
                 Float64,
                 ("lon", "lat", "plev", "time"),
+                attrib = ds_in[nc_name].attrib,
+            )
+        elseif ndims(ds_in[nc_name]) == 3
+            defVar(
+                ds_out,
+                nc_name,
+                Float64,
+                ("lon", "lat", "time"),
                 attrib = ds_in[nc_name].attrib,
             )
         end
@@ -166,31 +194,33 @@ function Interpolate_File(
             t_ref = ds_in[temperature_name][:, :, :, t]
         end
 
-        # D. Process 3D Variables
+        # D. Interpolate atmospheric fields and directly copy surface fields.
         for (var_sym, nc_name) in requested_variables
             if !haskey(ds_in, nc_name)
                 continue
             end
 
-            if ndims(ds_in[nc_name]) != 4
+            if nc_name == "ps"
                 continue
+            elseif ndims(ds_in[nc_name]) == 4
+                # If height needs temperature, reuse the already-loaded slice
+                # when temperature itself is also requested.
+                raw_data = var_sym == :t && !isnothing(t_ref) ?
+                           t_ref : ds_in[nc_name][:, :, :, t]
+
+                Apply_Interpolation!(
+                    interp_buffer,
+                    raw_data,
+                    interpolation_cache,
+                    var_sym,
+                    phys,
+                    t_ref,
+                )
+
+                ds_out[nc_name][:, :, :, t] = interp_buffer
+            elseif ndims(ds_in[nc_name]) == 3
+                ds_out[nc_name][:, :, t] = ds_in[nc_name][:, :, t]
             end
-
-            # If height needs temperature, reuse the already-loaded slice when
-            # temperature itself is also requested.
-            raw_data = var_sym == :t && !isnothing(t_ref) ?
-                       t_ref : ds_in[nc_name][:, :, :, t]
-
-            Apply_Interpolation!(
-                interp_buffer,
-                raw_data,
-                interpolation_cache,
-                var_sym,
-                phys,
-                t_ref,
-            )
-
-            ds_out[nc_name][:, :, :, t] = interp_buffer
         end
 
         if t % 10 == 0
