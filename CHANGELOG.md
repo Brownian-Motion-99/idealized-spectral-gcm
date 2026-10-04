@@ -12,6 +12,10 @@ All notable changes to this project are documented in this file.
 - Betts--Miller supports an LCL at the first full level and coincident
   full-level LCLs. Parcels that never condense in the represented domain
   retain analytic dry ascent with no moist adjustment (`lcl = 0`).
+- Betts--Miller reference RH now scales saturation vapor pressure before
+  conversion to specific humidity, giving the exact requested RH instead
+  of a mixing-ratio approximation. This also uses the saturation reference
+  below the LCL, independently of conserved actual parcel humidity.
 
 ## [0.3.1]
 

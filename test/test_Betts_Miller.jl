@@ -257,6 +257,71 @@ end
     )
 end
 
+@testset "Betts-Miller exact reference relative humidity" begin
+    atmo = bm_test_atmosphere(2; use_virtual_temperature = true)
+    epsilon = atmo.rdgas / atmo.rvgas
+    # Check the physical RH definition by recovering vapor pressure from q.
+    # Both liquid and blended/ice parcel profiles occur in this parameter range.
+    for t0 in (273.16, 280.0, 300.0, 330.0), ps in (80000.0, 100000.0, 120000.0), rh in (0.2, 0.8, 1.0)
+        p_full = ps .* [0.7, 0.95]
+        p_half = ps .* [0.6, 0.8, 1.0]
+        temperature = [t0 - 40.0, t0]
+        saturation = Saturation_Specific_Humidity.(temperature, p_full, epsilon)
+        humidity = [0.5 * saturation[1], saturation[2]]
+        state = Betts_Miller_State(2; relative_humidity = rh)
+        result = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
+        @test result.cape > 0 && result.lzb == 1
+        vapor_pressure =
+            @. p_full * result.reference_humidity /
+               (epsilon + (1.0 - epsilon) * result.reference_humidity)
+        diagnosed_rh = vapor_pressure ./ Saturation_Vapor_Pressure.(result.parcel_temperature)
+        @test diagnosed_rh ≈ fill(rh, 2) rtol = 1.0e-13
+        saturation_parcel = Saturation_Specific_Humidity.(result.parcel_temperature, p_full, epsilon)
+        @test all(0 .<= result.reference_humidity .<= saturation_parcel .+ 1.0e-15)
+        if rh == 1.0
+            @test result.reference_humidity ≈ saturation_parcel rtol = 1.0e-13
+        end
+    end
+
+    # In the dilute-vapor limit, the exact target tends to RH times q_sat.
+    state = Betts_Miller_State(2; relative_humidity = 0.8)
+    pressures = [100000.0, 120000.0]
+    interfaces = [90000.0, 110000.0, 130000.0]
+    temperature = [220.0, 260.0]
+    humidity = [1.0e-6, Saturation_Specific_Humidity(260.0, pressures[end], epsilon)]
+    dilute = Betts_Miller_Column(state, atmo, temperature, humidity, pressures, interfaces)
+    @test dilute.cape > 0
+    qs = Saturation_Specific_Humidity.(dilute.parcel_temperature, pressures, epsilon)
+    @test dilute.reference_humidity ≈ 0.8 .* qs rtol = 5.0e-4
+
+    # Reference humidity below the LCL uses saturation at the dry parcel's T,
+    # rather than the actual conserved humidity of that unsaturated parcel.
+    pressures = [80000.0, 100000.0]
+    interfaces = [70000.0, 90000.0, 110000.0]
+    temperature = [250.0, 300.0]
+    q0 = 0.5 * Saturation_Specific_Humidity(300.0, pressures[end], epsilon)
+    unsaturated = Betts_Miller_Column(state, atmo, temperature, [1.0e-4, q0], pressures, interfaces)
+    @test unsaturated.cape > 0 && unsaturated.lcl == 1
+    @test unsaturated.parcel_mixing_ratio[end] == q0 / (1 - q0)
+    qref = unsaturated.reference_humidity[end]
+    vapor_pressure = pressures[end] * qref / (epsilon + (1 - epsilon) * qref)
+    @test vapor_pressure / Saturation_Vapor_Pressure(300.0) ≈ 0.8 rtol = 1.0e-14
+    @test qref > q0
+
+    # Levels above the buoyancy limit retain the environmental reference,
+    # even though that humidity does not equal the configured reference RH.
+    atmo3 = bm_test_atmosphere(3; use_virtual_temperature = true)
+    stable_top = Betts_Miller_Column(
+        Betts_Miller_State(3), atmo3, [330.0, 294.0, 300.0],
+        [0.001, 0.0175, Saturation_Specific_Humidity(300.0, 95000.0, epsilon)],
+        [75000.0, 85000.0, 95000.0], [70000.0, 80000.0, 90000.0, 100000.0],
+    )
+    @test stable_top.lzb == 2
+    @test stable_top.reference_humidity[1] == 0.001
+    @test stable_top.reference_temperature[1] == 330.0
+    @test stable_top.temperature_tendency[1] == stable_top.humidity_tendency[1] == 0.0
+end
+
 @testset "Betts-Miller column physics" begin
     nd = 6
     atmo = bm_test_atmosphere(nd)

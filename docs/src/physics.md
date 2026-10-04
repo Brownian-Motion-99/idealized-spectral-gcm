@@ -187,14 +187,22 @@ retain their input values; saturation mixing ratio is zero at unvisited levels.
 ### Reference state and relaxation
 
 From the LZB through the surface, the parcel temperature is the reference
-temperature and the reference mixing ratio is a fixed fraction
-$\mathcal{H}_{BM}$ of parcel saturation:
+temperature. The reference humidity is constructed with exact relative
+humidity $\mathcal{H}_{BM}$ by scaling saturation vapor pressure:
 
 ```math
 T_{ref,k}=T_{p,k},\qquad
-r_{ref,k}=\mathcal{H}_{BM}r_{s,k},\qquad
-q_{ref,k}=\frac{r_{ref,k}}{1+r_{ref,k}}.
+e_{ref,k}=\mathcal{H}_{BM}e_s(T_{p,k}),\qquad
+q_{ref,k}=\frac{\epsilon e_{ref,k}}
+{p_k-(1-\epsilon)e_{ref,k}},\qquad \epsilon=\frac{R_d}{R_v}.
 ```
+
+This definition also applies below the LCL: reference humidity depends on
+saturation at the dry parcel temperature, while the actual parcel mixing
+ratio remains conserved. Multiplying saturation mixing ratio by
+$\mathcal{H}_{BM}$ would only approximate the requested relative humidity.
+Above the adjustment layer, reference temperature and humidity retain their
+environmental values.
 
 The unbalanced relaxation rates are
 

@@ -393,8 +393,14 @@ function _betts_miller_column!(
 
     for k = lzb:surface
         tref[k] = tp[k]
-        reference_mixing_ratio = state.relative_humidity * rs[k]
-        qref[k] = reference_mixing_ratio / (1.0 + reference_mixing_ratio)
+        # Relative humidity scales vapor pressure, not mixing ratio. Recover
+        # saturation vapor pressure from the separately stored saturation ratio.
+        pressure = Float64(p_full[k])
+        reference_vapor_pressure =
+            state.relative_humidity * pressure * rs[k] / (epsilon + rs[k])
+        qref[k] =
+            epsilon * reference_vapor_pressure /
+            (pressure - (1.0 - epsilon) * reference_vapor_pressure)
         tdot[k] = (tref[k] - Float64(temperature[k])) / state.tau
         qdot[k] = (qref[k] - max(Float64(humidity[k]), 0.0)) / state.tau
     end
