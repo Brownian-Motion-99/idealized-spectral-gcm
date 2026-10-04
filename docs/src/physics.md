@@ -157,19 +157,32 @@ parcel starts with the lowest-level $T$ and mixing ratio $r=q/(1-q)$.
 
 - A supersaturated starting parcel is adjusted to saturation at the surface.
 - An unsaturated parcel follows a dry adiabat to its lifting condensation
-  level (LCL), located by bisection in log pressure.
+  level (LCL), located by bisection in log pressure. Below the LCL its actual
+  mixing ratio remains equal to the starting value; the saturation mixing
+  ratio used for the reference profile is stored separately. The LCL may be
+  at the first full level. If the parcel remains unsaturated through the top
+  full level, it retains its dry-adiabatic profile and receives no moist
+  adjustment (`lcl = 0`).
 - Above the LCL, a saturated moist adiabat is integrated with a second-order
   Runge--Kutta step in log pressure. Saturation at the RK midpoint is evaluated
   at the arithmetic midpoint pressure.
-- Discrete buoyancy is integrated using $R_d(T_p-T)\,\Delta\ln p$ to diagnose
+- With `use_virtual_temperature = true`, parcel and environmental buoyancy
+  use $T_v=T[1+(R_v/R_d-1)q]$, consistent with the dynamics. With the flag
+  disabled, buoyancy uses actual temperature. The ascent and enthalpy
+  calculation always use actual temperature.
+- Discrete buoyancy is integrated using $R_d(T_{v,p}-T_v)\,\Delta\ln p$ to diagnose
   convective inhibition and CAPE. The first buoyant level is the level of free
   convection (LFC); the first stable level above a contiguous buoyant region
   terminates it. If buoyancy reaches the model top, the top full level is the
-  level of zero buoyancy (LZB).
+  level of zero buoyancy (LZB). Roundoff-scale differences are treated as
+  neutral, and neutral levels do not establish an LFC.
 
 A column is inactive if it has no positive contiguous CAPE, if the initially
 dry parcel has no water vapor, or if the parcel becomes colder than 173.16 K
-before reaching buoyancy.
+before reaching buoyancy. `Betts_Miller_Column` returns actual
+`parcel_mixing_ratio` and separate `parcel_saturation_mixing_ratio`
+diagnostics. Above the end of ascent, temperature and actual mixing ratio
+retain their input values; saturation mixing ratio is zero at unvisited levels.
 
 ### Reference state and relaxation
 

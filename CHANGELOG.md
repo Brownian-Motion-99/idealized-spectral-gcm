@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Betts--Miller buoyancy now respects `use_virtual_temperature` for CAPE,
+  CIN, LFC, and LZB. Actual parcel mixing ratio is conserved below the LCL
+  and stored separately from the saturation reference mixing ratio.
+- Betts--Miller supports an LCL at the first full level and coincident
+  full-level LCLs. Parcels that never condense in the represented domain
+  retain analytic dry ascent with no moist adjustment (`lcl = 0`).
+
 ## [0.3.1]
 
 ### Fixed

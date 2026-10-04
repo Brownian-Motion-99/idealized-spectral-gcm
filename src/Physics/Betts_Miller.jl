@@ -3,6 +3,7 @@ using Base.Threads
 mutable struct Betts_Miller_Work
     parcel_temperature::Vector{Float64}
     parcel_mixing_ratio::Vector{Float64}
+    parcel_saturation_mixing_ratio::Vector{Float64}
     reference_temperature::Vector{Float64}
     reference_humidity::Vector{Float64}
     temperature_tendency::Vector{Float64}
@@ -12,6 +13,7 @@ end
 function Betts_Miller_Work(nd::Int)
     nd > 1 || throw(ArgumentError("Betts-Miller requires at least two vertical levels"))
     return Betts_Miller_Work(
+        zeros(nd),
         zeros(nd),
         zeros(nd),
         zeros(nd),
@@ -98,6 +100,23 @@ end
     return log(p_half[k+1] / upper_pressure)
 end
 
+@inline function _bm_buoyancy(
+    parcel_temperature::Float64,
+    parcel_mixing_ratio::Float64,
+    temperature::Real,
+    humidity::Real,
+    virtual_coefficient::Float64,
+)
+    parcel_humidity = parcel_mixing_ratio / (1.0 + parcel_mixing_ratio)
+    parcel_virtual = parcel_temperature * (1.0 + virtual_coefficient * parcel_humidity)
+    environment_virtual =
+        Float64(temperature) * (1.0 + virtual_coefficient * max(Float64(humidity), 0.0))
+    buoyancy = parcel_virtual - environment_virtual
+    # A neutral parcel must not acquire an LFC from floating-point roundoff.
+    tolerance = 8 * eps(Float64) * max(abs(parcel_virtual), abs(environment_virtual))
+    return abs(buoyancy) <= tolerance ? 0.0 : buoyancy
+end
+
 function _bm_lcl(
     theta0::Float64,
     r0::Float64,
@@ -115,9 +134,13 @@ function _bm_lcl(
 
     lo = log(p_top)
     hi = log(p_surface)
-    if residual(lo) >= 0
-        pressure = p_top
-        return pressure, theta0 * (pressure / pstar)^kappa
+    temperature_top = theta0 * (p_top / pstar)^kappa
+    saturation_top = Saturation_Mixing_Ratio(temperature_top, p_top, epsilon)
+    tolerance = 32 * eps(Float64) * max(saturation_top, r0)
+    if r0 <= 0 || saturation_top - r0 > tolerance
+        return (; found = false, pressure = p_top, temperature = temperature_top)
+    elseif abs(saturation_top - r0) <= tolerance
+        return (; found = true, pressure = p_top, temperature = temperature_top)
     end
 
     for _ = 1:80
@@ -129,7 +152,7 @@ function _bm_lcl(
         end
     end
     pressure = exp(0.5 * (lo + hi))
-    return pressure, theta0 * (pressure / pstar)^kappa
+    return (; found = true, pressure, temperature = theta0 * (pressure / pstar)^kappa)
 end
 
 @inline function _bm_moist_derivative(
@@ -156,6 +179,8 @@ function _bm_moist_rk2(
     lv::Float64,
     rv::Float64,
 )
+    pressure_b <= pressure_a ||
+        throw(ArgumentError("moist parcel ascent requires nonincreasing pressure"))
     delta_log_pressure = log(pressure_b / pressure_a)
     derivative_a = _bm_moist_derivative(temperature_a, mixing_ratio_a, kappa, cp, lv, rv)
     temperature_mid = temperature_a + 0.5 * derivative_a * delta_log_pressure
@@ -181,6 +206,7 @@ function _betts_miller_column!(
     lv::Float64,
     grav::Float64,
     kappa::Float64,
+    use_virtual_temperature::Bool,
 )
     _validate_bm_column(temperature, humidity, p_full, p_half)
     nd = state.nd
@@ -188,6 +214,7 @@ function _betts_miller_column!(
 
     tp = work.parcel_temperature
     rp = work.parcel_mixing_ratio
+    rs = work.parcel_saturation_mixing_ratio
     tref = work.reference_temperature
     qref = work.reference_humidity
     tdot = work.temperature_tendency
@@ -197,11 +224,13 @@ function _betts_miller_column!(
     tp .= temperature
     @. qref = max(humidity, 0.0)
     @. rp = qref / (1.0 - qref)
+    fill!(rs, 0.0)
     tref .= temperature
     fill!(tdot, 0.0)
     fill!(qdot, 0.0)
 
     epsilon = rd / rv
+    virtual_coefficient = use_virtual_temperature ? rv / rd - 1.0 : 0.0
     pstar = 1.0e5
     surface = nd
     t0 = Float64(temperature[surface])
@@ -220,9 +249,10 @@ function _betts_miller_column!(
         tp[surface] = t0 + (r0 - rs0) / (cp / lv + lv * rs0 / (rv * t0^2))
         rp[surface] =
             Saturation_Mixing_Ratio(tp[surface], Float64(p_full[surface]), epsilon)
-    elseif r0 > 0
+        rs[surface] = rp[surface]
+    else
         theta0 = t0 * (pstar / Float64(p_full[surface]))^kappa
-        plcl, tlcl = _bm_lcl(
+        condensation = _bm_lcl(
             theta0,
             r0,
             Float64(p_full[1]),
@@ -230,20 +260,54 @@ function _betts_miller_column!(
             epsilon,
             kappa,
         )
+        if !condensation.found
+            # The parcel never condenses in the represented domain. Retain its
+            # dry ascent diagnostics without inventing a moist adjustment.
+            for k = surface:-1:1
+                tp[k] = t0 * (Float64(p_full[k]) / Float64(p_full[surface]))^kappa
+                rp[k] = r0
+                rs[k] = Saturation_Mixing_Ratio(tp[k], Float64(p_full[k]), epsilon)
+                buoyancy = _bm_buoyancy(
+                    tp[k], rp[k], temperature[k], humidity[k], virtual_coefficient,
+                )
+                cin +=
+                    rd * max(-buoyancy, 0.0) *
+                    _bm_layer_log_pressure(p_full, p_half, k)
+            end
+            return (;
+                active = false,
+                lcl = 0,
+                lfc = 0,
+                lzb = 0,
+                cape = 0.0,
+                cin,
+                precipitation = 0.0,
+            )
+        end
+        plcl, tlcl = condensation.pressure, condensation.temperature
 
         k = surface
-        while k >= 1 && p_full[k] > plcl
-            tp[k] = theta0 * (Float64(p_full[k]) / pstar)^kappa
-            rp[k] = Saturation_Mixing_Ratio(tp[k], Float64(p_full[k]), epsilon)
-            cin +=
-                rd *
-                (Float64(temperature[k]) - tp[k]) *
-                _bm_layer_log_pressure(p_full, p_half, k)
+        while k >= 1 && p_full[k] > plcl && !isapprox(p_full[k], plcl; rtol = 32 * eps(Float64))
+            tp[k] = t0 * (Float64(p_full[k]) / Float64(p_full[surface]))^kappa
+            rp[k] = r0
+            rs[k] = Saturation_Mixing_Ratio(tp[k], Float64(p_full[k]), epsilon)
+            buoyancy = _bm_buoyancy(
+                tp[k], rp[k], temperature[k], humidity[k], virtual_coefficient,
+            )
+            cin -= rd * buoyancy * _bm_layer_log_pressure(p_full, p_half, k)
             k -= 1
         end
-        lcl = max(k, 2)
-        tp[lcl], rp[lcl] =
-            _bm_moist_rk2(tlcl, r0, plcl, Float64(p_full[lcl]), epsilon, kappa, cp, lv, rv)
+        lcl = k
+        if isapprox(p_full[lcl], plcl; rtol = 32 * eps(Float64))
+            # Snap a condensation level coincident with a full level to that
+            # level, so bisection roundoff cannot move it into an adjacent cell.
+            tp[lcl] = t0 * (Float64(p_full[lcl]) / Float64(p_full[surface]))^kappa
+            rp[lcl] = Saturation_Mixing_Ratio(tp[lcl], Float64(p_full[lcl]), epsilon)
+        else
+            tp[lcl], rp[lcl] =
+                _bm_moist_rk2(tlcl, r0, plcl, Float64(p_full[lcl]), epsilon, kappa, cp, lv, rv)
+        end
+        rs[lcl] = rp[lcl]
         if tp[lcl] < BM_MIN_PARCEL_TEMPERATURE
             return (;
                 active = false,
@@ -257,23 +321,16 @@ function _betts_miller_column!(
         end
 
         layer_factor = _bm_layer_log_pressure(p_full, p_half, lcl)
-        if tp[lcl] < temperature[lcl]
-            cin += rd * (Float64(temperature[lcl]) - tp[lcl]) * layer_factor
-        else
-            cape += rd * (tp[lcl] - Float64(temperature[lcl])) * layer_factor
+        buoyancy = _bm_buoyancy(
+            tp[lcl], rp[lcl], temperature[lcl], humidity[lcl], virtual_coefficient,
+        )
+        if buoyancy < 0
+            cin -= rd * buoyancy * layer_factor
+        elseif buoyancy > 0
+            cape += rd * buoyancy * layer_factor
             first_buoyant = false
             lfc = lcl
         end
-    else
-        return (;
-            active = false,
-            lcl = 0,
-            lfc = 0,
-            lzb = 0,
-            cape = 0.0,
-            cin = 0.0,
-            precipitation = 0.0,
-        )
     end
 
     for k = lcl-1:-1:1
@@ -288,6 +345,7 @@ function _betts_miller_column!(
             lv,
             rv,
         )
+        rs[k] = rp[k]
         if tp[k] < BM_MIN_PARCEL_TEMPERATURE && first_buoyant
             return (;
                 active = false,
@@ -301,15 +359,16 @@ function _betts_miller_column!(
         end
 
         layer_factor = _bm_layer_log_pressure(p_full, p_half, k)
-        if tp[k] < temperature[k]
+        buoyancy = _bm_buoyancy(tp[k], rp[k], temperature[k], humidity[k], virtual_coefficient)
+        if buoyancy < 0
             if first_buoyant
-                cin += rd * (Float64(temperature[k]) - tp[k]) * layer_factor
+                cin -= rd * buoyancy * layer_factor
             else
                 lzb = k + 1
                 break
             end
-        else
-            cape += rd * (tp[k] - Float64(temperature[k])) * layer_factor
+        elseif buoyancy > 0
+            cape += rd * buoyancy * layer_factor
             if first_buoyant
                 first_buoyant = false
                 lfc = k
@@ -334,7 +393,7 @@ function _betts_miller_column!(
 
     for k = lzb:surface
         tref[k] = tp[k]
-        reference_mixing_ratio = state.relative_humidity * rp[k]
+        reference_mixing_ratio = state.relative_humidity * rs[k]
         qref[k] = reference_mixing_ratio / (1.0 + reference_mixing_ratio)
         tdot[k] = (tref[k] - Float64(temperature[k])) / state.tau
         qdot[k] = (qref[k] - max(Float64(humidity[k]), 0.0)) / state.tau
@@ -365,7 +424,15 @@ function _betts_miller_column!(
     return (; active = true, lcl, lfc, lzb, cape, cin, precipitation)
 end
 
-"""Run the Betts-Miller calculation for one top-to-bottom atmospheric column."""
+"""
+Run the Betts-Miller calculation for one top-to-bottom atmospheric column.
+
+`lcl = 0` indicates no condensation in the represented ascent domain.
+`parcel_mixing_ratio` is the actual parcel mixing ratio: it is conserved below
+the LCL and saturated above it. `parcel_saturation_mixing_ratio` stores the
+saturation mixing ratio used to construct reference humidity at visited levels.
+Levels above the end of ascent retain the input temperature and mixing ratio.
+"""
 function Betts_Miller_Column(
     state::Betts_Miller_State,
     atmo_data::Atmo_Data,
@@ -388,6 +455,7 @@ function Betts_Miller_Column(
         atmo_data.Lv,
         atmo_data.grav,
         atmo_data.kappa,
+        atmo_data.use_virtual_temperature,
     )
     return merge(
         diagnostics,
@@ -396,6 +464,7 @@ function Betts_Miller_Column(
             humidity_tendency = copy(work.humidity_tendency),
             parcel_temperature = copy(work.parcel_temperature),
             parcel_mixing_ratio = copy(work.parcel_mixing_ratio),
+            parcel_saturation_mixing_ratio = copy(work.parcel_saturation_mixing_ratio),
             reference_temperature = copy(work.reference_temperature),
             reference_humidity = copy(work.reference_humidity),
         ),
@@ -450,6 +519,7 @@ function Betts_Miller!(
                 atmo_data.Lv,
                 atmo_data.grav,
                 atmo_data.kappa,
+                atmo_data.use_virtual_temperature,
             )
             @views bm_temperature_tendency[i, j, :] .= work.temperature_tendency
             @views bm_humidity_tendency[i, j, :] .= work.humidity_tendency

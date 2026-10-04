@@ -1,6 +1,6 @@
 using JGCM
 
-function bm_test_atmosphere(nd)
+function bm_test_atmosphere(nd; use_virtual_temperature = false)
     return Atmo_Data(
         "bm_test",
         1,
@@ -9,10 +9,159 @@ function bm_test_atmosphere(nd)
         false,
         false,
         false,
-        false,
+        use_virtual_temperature,
         [0.0];
         radius = 6.371e6,
     )
+end
+
+@testset "Betts-Miller dry ascent and LCL boundaries" begin
+    nd = 6
+    atmo = bm_test_atmosphere(nd; use_virtual_temperature = true)
+    state = Betts_Miller_State(nd)
+    epsilon = atmo.rdgas / atmo.rvgas
+    p_half = [10000.0, 25000.0, 40000.0, 55000.0, 70000.0, 85000.0, 100000.0]
+    p_full = 0.5 .* (p_half[1:end-1] .+ p_half[2:end])
+    temperature = 300.0 .* (p_full ./ p_full[end]) .^ atmo.kappa
+
+    # No in-domain condensation: preserve analytic dry ascent, even for r0=0.
+    for q0 in (0.0, 1.0e-12), top_pressure in (0.0, 10000.0)
+        interfaces = copy(p_half)
+        interfaces[1] = top_pressure
+        pressures = 0.5 .* (interfaces[1:end-1] .+ interfaces[2:end])
+        dry_temperature = 300.0 .* (pressures ./ pressures[end]) .^ atmo.kappa
+        humidity = fill(q0, nd)
+        result = Betts_Miller_Column(state, atmo, dry_temperature, humidity, pressures, interfaces)
+        @test !result.active
+        @test result.lcl == result.lfc == result.lzb == 0
+        @test result.cape == result.precipitation == 0.0
+        @test abs(result.cin) < 1.0e-10
+        @test result.parcel_temperature ≈ dry_temperature atol = 1.0e-12 rtol = 0
+        @test all(==(q0 / (1 - q0)), result.parcel_mixing_ratio)
+        @test all(iszero, result.temperature_tendency)
+        @test all(iszero, result.humidity_tendency)
+    end
+
+    # This parcel condenses between levels 1 and 2 (pLCL ≈ 18540.835 Pa).
+    # All levels below the LCL must stay dry, including level 2.
+    q0 = 1.0e-6
+    humidity = min.(q0, Saturation_Specific_Humidity.(temperature, p_full, epsilon))
+    first_level = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
+    @test first_level.lcl == 1
+    @test first_level.parcel_temperature[2:end] ≈ temperature[2:end] atol = 1.0e-12 rtol = 0
+    @test all(==(q0 / (1 - q0)), first_level.parcel_mixing_ratio[2:end])
+
+    # Construct condensation exactly at a full level from dry-adiabatic
+    # thermodynamics, independently of the LCL bisection routine.
+    for k_lcl in (1, 3, nd)
+        r0 = Saturation_Mixing_Ratio(temperature[k_lcl], p_full[k_lcl], epsilon)
+        q0 = r0 / (1.0 + r0)
+        humidity = min.(q0, Saturation_Specific_Humidity.(temperature, p_full, epsilon))
+        humidity[end] = q0
+        result = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
+        @test result.lcl == k_lcl
+        @test result.parcel_temperature[k_lcl:end] ≈ temperature[k_lcl:end] atol = 1.0e-12 rtol = 0
+        @test result.parcel_mixing_ratio[k_lcl] ≈ r0 rtol = 1.0e-13
+        @test all(isfinite, result.parcel_temperature)
+        @test result.lfc == k_lcl - 1
+    end
+
+    # Below the LCL, equal environmental and parcel humidity makes this dry
+    # adiabat neutrally buoyant. Substituting saturation humidity would give
+    # spurious buoyancy and an incorrect signed contribution to CIN.
+    q0 = 0.006
+    humidity = min.(q0, Saturation_Specific_Humidity.(temperature, p_full, epsilon))
+    conserved = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
+    @test conserved.lcl == 4
+    @test all(==(q0 / (1 - q0)), conserved.parcel_mixing_ratio[5:6])
+    @test all(conserved.parcel_saturation_mixing_ratio[5:6] .> conserved.parcel_mixing_ratio[5:6])
+    @test abs(conserved.cin) < 1.0e-10
+
+    # A warm layer below the LCL gives an analytic CIN increment. Its virtual
+    # correction must use conserved humidity, rather than saturation humidity.
+    warm_layer = copy(temperature)
+    warm_layer[5] += 2.0
+    for virtual in (false, true)
+        atmosphere = bm_test_atmosphere(nd; use_virtual_temperature = virtual)
+        result = Betts_Miller_Column(state, atmosphere, warm_layer, humidity, p_full, p_half)
+        coefficient = virtual ? atmo.rvgas / atmo.rdgas - 1 : 0.0
+        expected_cin = atmo.rdgas * 2.0 * (1 + coefficient * q0) * log(p_half[6] / p_half[5])
+        @test result.cin ≈ expected_cin atol = 1.0e-10 rtol = 0
+    end
+
+    # Two levels are sufficient for a valid LCL at the top full level.
+    pressures = [70000.0, 95000.0]
+    interfaces = [60000.0, 80000.0, 100000.0]
+    dry_temperature = 300.0 .* (pressures ./ pressures[end]) .^ atmo.kappa
+    r0 = Saturation_Mixing_Ratio(dry_temperature[1], pressures[1], epsilon)
+    two_level = Betts_Miller_Column(
+        Betts_Miller_State(2), bm_test_atmosphere(2; use_virtual_temperature = true),
+        dry_temperature, fill(r0 / (1 + r0), 2), pressures, interfaces,
+    )
+    @test two_level.lcl == 1
+    @test two_level.parcel_temperature ≈ dry_temperature atol = 1.0e-12 rtol = 0
+    @test two_level.cape == 0.0
+end
+
+@testset "Betts-Miller virtual buoyancy and grid consistency" begin
+    fixture = joinpath(@__DIR__, "fixtures", "betts_miller_virtual_column.tsv")
+    rows = [parse.(Float64, split(line)) for line in readlines(fixture) if !startswith(line, "#")]
+    data = reduce(hcat, rows)
+    p_full, temperature, humidity = data[1, :], data[4, :], data[5, :]
+    p_half = vcat(data[2, :], data[3, end])
+    nd = length(p_full)
+    state = Betts_Miller_State(nd)
+    moist_atmo = bm_test_atmosphere(nd; use_virtual_temperature = true)
+    moist = Betts_Miller_Column(state, moist_atmo, temperature, humidity, p_full, p_half)
+    dry = Betts_Miller_Column(state, bm_test_atmosphere(nd), temperature, humidity, p_full, p_half)
+
+    # Independent reference: unmodified Isca qe_moist_convection.F90, using
+    # matched constants and double precision (details in fixtures/README.md).
+    @test moist.cape ≈ 454.23657013397872 atol = 1.0e-8 rtol = 0
+    @test moist.lcl == nd
+    @test moist.lfc == nd - 1
+    @test moist.lzb == 9
+    @test dry.cape == 0.0
+    # Positive CAPE alone does not satisfy the thermal/drying criteria.
+    @test !moist.active
+    @test moist.precipitation == 0.0
+
+    # Exercise the threaded public entry point with both flag settings on a
+    # column where virtual buoyancy changes the adjustment depth and rates.
+    nd = 3
+    state = Betts_Miller_State(nd)
+    pressures = [75000.0, 85000.0, 95000.0]
+    interfaces = [70000.0, 80000.0, 90000.0, 100000.0]
+    temperatures = [293.0, 294.0, 300.0]
+    humidities = [0.01, 0.0175, Saturation_Specific_Humidity(300.0, 95000.0, moist_atmo.rdgas / moist_atmo.rvgas)]
+    grid(field) = repeat(reshape(field, 1, 1, length(field)), 2, 3, 1)
+    results = []
+    for virtual in (false, true)
+        atmo = bm_test_atmosphere(nd; use_virtual_temperature = virtual)
+        column = Betts_Miller_Column(state, atmo, temperatures, humidities, pressures, interfaces)
+        @test column.active
+        push!(results, column)
+        dt, dq, rain = zeros(2, 3, nd), zeros(2, 3, nd), zeros(2, 3, 1)
+        Betts_Miller!(state, atmo, grid(temperatures), grid(humidities), grid(pressures), grid(interfaces), dt, dq, rain)
+        @test dt ≈ grid(column.temperature_tendency)
+        @test dq ≈ grid(column.humidity_tendency)
+        @test all(==(column.precipitation), rain)
+    end
+    @test results[1].lzb == 2
+    @test results[2].lzb == 1
+    @test results[1].cape != results[2].cape
+    @test !isapprox(results[1].temperature_tendency, results[2].temperature_tendency)
+
+    # A saturated parcel can remain buoyant all the way to a zero-pressure top.
+    atmo = bm_test_atmosphere(2; use_virtual_temperature = true)
+    epsilon = atmo.rdgas / atmo.rvgas
+    result = Betts_Miller_Column(
+        Betts_Miller_State(2), atmo, [260.0, 300.0],
+        [0.001, Saturation_Specific_Humidity(300.0, 95000.0, epsilon)],
+        [70000.0, 95000.0], [0.0, 80000.0, 100000.0],
+    )
+    @test result.lzb == result.lfc == 1
+    @test isfinite(result.cape) && result.cape > 0
 end
 
 @testset "Betts-Miller thermodynamics and validation" begin
