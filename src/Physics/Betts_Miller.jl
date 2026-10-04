@@ -8,6 +8,7 @@ mutable struct Betts_Miller_Work
     reference_humidity::Vector{Float64}
     temperature_tendency::Vector{Float64}
     humidity_tendency::Vector{Float64}
+    moisture_suffix::Vector{Float64}
 end
 
 function Betts_Miller_Work(nd::Int)
@@ -20,6 +21,7 @@ function Betts_Miller_Work(nd::Int)
         zeros(nd),
         zeros(nd),
         zeros(nd),
+        zeros(nd + 1),
     )
 end
 
@@ -94,15 +96,18 @@ function _bm_precipitation_integrals(tdot, qdot, p_half, top, surface, cp, lv, g
 end
 
 function _bm_conserve_enthalpy!(work, p_half, top, surface, cp, lv, grav, tau)
-    enthalpy = 0.0
+    thermal = 0.0
+    moisture = 0.0
     mass = 0.0
     for k = top:surface
         layer_mass = _bm_layer_mass(p_half, k, grav)
-        enthalpy +=
-            (cp * work.temperature_tendency[k] + lv * work.humidity_tendency[k]) * layer_mass
+        thermal += work.temperature_tendency[k] * layer_mass
+        moisture += work.humidity_tendency[k] * layer_mass
         mass += layer_mass
     end
-    correction = -enthalpy / (cp * mass)
+    # Sum thermal and moisture terms separately to retain accuracy when large
+    # opposing shallow moisture fluxes have a zero column integral.
+    correction = -(thermal + (lv / cp) * moisture) / mass
     for k = top:surface
         work.temperature_tendency[k] += correction
         work.reference_temperature[k] += tau * correction
@@ -122,6 +127,112 @@ function _bm_deep_convection!(work, state, p_half, top, surface, cp, lv, grav, i
         _bm_conserve_enthalpy!(work, p_half, top, surface, cp, lv, grav, state.tau)
     end
     return integrals.moisture
+end
+
+@inline function _bm_reference_humidity(saturation_mixing_ratio, pressure, rh, epsilon)
+    vapor_pressure = rh * pressure * saturation_mixing_ratio / (epsilon + saturation_mixing_ratio)
+    return epsilon * vapor_pressure / (pressure - (1.0 - epsilon) * vapor_pressure)
+end
+
+function _bm_reset_adjustment!(work, temperature, humidity, top, surface)
+    for k = top:surface
+        work.temperature_tendency[k] = 0.0
+        work.humidity_tendency[k] = 0.0
+        work.reference_temperature[k] = Float64(temperature[k])
+        work.reference_humidity[k] = max(Float64(humidity[k]), 0.0)
+    end
+    return nothing
+end
+
+function _bm_shallow_convection!(
+    work, state, temperature, humidity, p_half, lzb, surface, cp, lv, grav, integrals,
+)
+    top = lzb
+    fraction = 1.0
+    found = abs(integrals.moisture) <= integrals.moisture_tolerance
+    if !found
+        # Sum suffixes from the surface, so removing a large upper contribution
+        # cannot erase the small lower-column integral used to solve for f.
+        suffix = work.moisture_suffix
+        suffix[surface+1] = 0.0
+        for k = surface:-1:lzb
+            suffix[k] =
+                suffix[k+1] + work.humidity_tendency[k] * _bm_layer_mass(p_half, k, grav)
+        end
+        for k = lzb:surface
+            lower = suffix[k+1]
+            transition = work.humidity_tendency[k] * _bm_layer_mass(p_half, k, grav)
+            if transition > 0 && lower <= 0 && suffix[k] >= 0
+                fraction = clamp(-lower / transition, 0.0, 1.0)
+                top = k
+                if fraction == 0.0
+                    # A zero fraction is an exact interface crossing. Exclude
+                    # this cell from both the tendencies and correction mass.
+                    top += 1
+                    fraction = 1.0
+                end
+                found = true
+                break
+            end
+        end
+    end
+
+    # A single cell has no nontrivial transport that conserves both water and
+    # enthalpy. This also covers a root requiring a zero surface fraction.
+    if !found || top >= surface
+        _bm_reset_adjustment!(work, temperature, humidity, lzb, surface)
+        return (; active = false, adjustment_top = 0, top_fraction = 0.0)
+    end
+
+    _bm_reset_adjustment!(work, temperature, humidity, lzb, top - 1)
+    work.temperature_tendency[top] *= fraction
+    work.humidity_tendency[top] *= fraction
+    temperature_scale = 0.0
+    for k = top:surface
+        temperature_scale = max(temperature_scale, abs(work.temperature_tendency[k]))
+        # These effective references include fractional penetration once.
+        work.reference_temperature[k] =
+            Float64(temperature[k]) + state.tau * work.temperature_tendency[k]
+        work.reference_humidity[k] =
+            max(Float64(humidity[k]), 0.0) + state.tau * work.humidity_tendency[k]
+    end
+    # Use full cell masses after f has been applied to the cell rates, as in
+    # Isca's discrete closure. Do not apply f again to the correction mass.
+    correction = _bm_conserve_enthalpy!(work, p_half, top, surface, cp, lv, grav, state.tau)
+    temperature_tolerance =
+        8 * (surface - top + 1) * eps(Float64) * (temperature_scale + abs(correction))
+    active = any(k -> abs(work.temperature_tendency[k]) > temperature_tolerance, top:surface) ||
+             any(!iszero, work.humidity_tendency)
+    if !active
+        # A uniform preliminary warming with no moisture transport can cancel
+        # to roundoff. Do not report that numerical residue as convection.
+        _bm_reset_adjustment!(work, temperature, humidity, top, surface)
+        return (; active = false, adjustment_top = 0, top_fraction = 0.0)
+    end
+    return (; active, adjustment_top = top, top_fraction = fraction)
+end
+
+function _bm_close_adjustment!(work, state, temperature, humidity, p_half, top, surface, cp, lv, grav)
+    integrals = _bm_precipitation_integrals(
+        work.temperature_tendency, work.humidity_tendency, p_half, top, surface, cp, lv, grav,
+    )
+    if integrals.thermal <= integrals.thermal_tolerance
+        _bm_reset_adjustment!(work, temperature, humidity, top, surface)
+        return (;
+            active = false, regime = :none, adjustment_top = 0, top_fraction = 0.0,
+            precipitation = 0.0,
+        )
+    elseif integrals.moisture <= integrals.moisture_tolerance
+        shallow = _bm_shallow_convection!(
+            work, state, temperature, humidity, p_half, top, surface, cp, lv, grav, integrals,
+        )
+        return merge(shallow, (;
+            regime = shallow.active ? :shallow : :none, precipitation = 0.0,
+        ))
+    end
+    precipitation =
+        _bm_deep_convection!(work, state, p_half, top, surface, cp, lv, grav, integrals)
+    return (; active = true, regime = :deep, adjustment_top = top, top_fraction = 1.0, precipitation)
 end
 
 function _validate_bm_column(
@@ -349,6 +460,9 @@ function _betts_miller_column!(
             end
             return (;
                 active = false,
+                regime = :none,
+                adjustment_top = 0,
+                top_fraction = 0.0,
                 lcl = 0,
                 lfc = 0,
                 lzb = 0,
@@ -384,6 +498,9 @@ function _betts_miller_column!(
         if tp[lcl] < BM_MIN_PARCEL_TEMPERATURE
             return (;
                 active = false,
+                regime = :none,
+                adjustment_top = 0,
+                top_fraction = 0.0,
                 lcl,
                 lfc = 0,
                 lzb = 0,
@@ -422,6 +539,9 @@ function _betts_miller_column!(
         if tp[k] < BM_MIN_PARCEL_TEMPERATURE && first_buoyant
             return (;
                 active = false,
+                regime = :none,
+                adjustment_top = 0,
+                top_fraction = 0.0,
                 lcl,
                 lfc = 0,
                 lzb = 0,
@@ -454,6 +574,9 @@ function _betts_miller_column!(
         fill!(qdot, 0.0)
         return (;
             active = false,
+            regime = :none,
+            adjustment_top = 0,
+            top_fraction = 0.0,
             lcl,
             lfc = 0,
             lzb = 0,
@@ -468,28 +591,15 @@ function _betts_miller_column!(
         tref[k] = tp[k]
         # Relative humidity scales vapor pressure, not mixing ratio. Recover
         # saturation vapor pressure from the separately stored saturation ratio.
-        pressure = Float64(p_full[k])
-        reference_vapor_pressure =
-            state.relative_humidity * pressure * rs[k] / (epsilon + rs[k])
-        qref[k] =
-            epsilon * reference_vapor_pressure /
-            (pressure - (1.0 - epsilon) * reference_vapor_pressure)
+        qref[k] = _bm_reference_humidity(rs[k], Float64(p_full[k]), state.relative_humidity, epsilon)
         tdot[k] = (tref[k] - Float64(temperature[k])) / state.tau
         qdot[k] = (qref[k] - max(Float64(humidity[k]), 0.0)) / state.tau
     end
 
-    integrals = _bm_precipitation_integrals(tdot, qdot, p_half, lzb, surface, cp, lv, grav)
-
-    if integrals.moisture <= integrals.moisture_tolerance ||
-       integrals.thermal <= integrals.thermal_tolerance
-        fill!(tdot, 0.0)
-        fill!(qdot, 0.0)
-        return (; active = false, lcl, lfc, lzb, cape, cin, precipitation = 0.0)
-    end
-    precipitation =
-        _bm_deep_convection!(work, state, p_half, lzb, surface, cp, lv, grav, integrals)
-
-    return (; active = true, lcl, lfc, lzb, cape, cin, precipitation)
+    adjustment = _bm_close_adjustment!(
+        work, state, temperature, humidity, p_half, lzb, surface, cp, lv, grav,
+    )
+    return merge(adjustment, (; lcl, lfc, lzb, cape, cin))
 end
 
 """
@@ -500,6 +610,11 @@ Run the Betts-Miller calculation for one top-to-bottom atmospheric column.
 the LCL and saturated above it. `parcel_saturation_mixing_ratio` stores the
 saturation mixing ratio used to construct reference humidity at visited levels.
 Levels above the end of ascent retain the input temperature and mixing ratio.
+`regime` is `:none`, `:deep`, or `:shallow`; `active` includes zero-rain shallow
+transport. `adjustment_top` and `top_fraction` describe the accepted adjustment,
+while `lzb` retains the diagnosed buoyancy limit. Inactive columns use top 0
+and fraction 0. Shallow references are effective full-cell targets after
+fractional penetration and the temperature correction.
 """
 function Betts_Miller_Column(
     state::Betts_Miller_State,

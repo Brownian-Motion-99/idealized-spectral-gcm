@@ -186,8 +186,8 @@ retain their input values; saturation mixing ratio is zero at unvisited levels.
 
 ### Reference state and relaxation
 
-From the LZB through the surface, the parcel temperature is the reference
-temperature. The reference humidity is constructed with exact relative
+From the LZB through the surface, the parcel temperature is the preliminary
+reference temperature. The preliminary reference humidity uses exact relative
 humidity $\mathcal{H}_{BM}$ by scaling saturation vapor pressure:
 
 ```math
@@ -239,7 +239,47 @@ loss as precipitation, but can produce different heating profiles at the same
 rainfall. Scaled rates correspond to a longer effective relaxation time toward
 the original reference, rather than a new reference at the nominal time scale.
 
-At this stage, columns with nonpositive $P_q$ or $P_T$ receive no adjustment.
+### Conservative shallow convection
+
+Positive CAPE and $P_T>0$ with $P_q\le0$ can produce zero-rain shallow
+transport. Starting at the diagnosed LZB, upper layers are excluded until
+moistening in a transition cell can balance drying in the fully included
+lower cells. The included fraction is
+
+```math
+f Q_{top}+Q_{lower}=0,\qquad
+Q_{top}=\dot q_{top}m_{top},\qquad 0\le f\le1.
+```
+
+Both preliminary cell rates are multiplied by $f$ in the transition cell;
+rates above it are zero. A uniform temperature correction then conserves
+moist enthalpy over the remaining full grid cells. The fraction enters the
+rates once, and is not applied again to the correction mass. Consequently,
+shallow transport has zero integrated moisture and thermal tendency and
+exactly zero reported rain. Both deep energy-correction options use this
+same shallow closure.
+
+An exact or roundoff-scale zero $P_q$ keeps the full feasible adjustment
+region. Exact interface crossings exclude the zero-fraction cell. If there
+is no feasible depth, or only one cell remains, the column receives no
+adjustment. Nonpositive $P_T$ also produces no adjustment. The Isca closure
+approaches the zero-drying boundary continuously. The alternative timescale
+closure can change its heating profile abruptly there because its deep
+thermal rates approach zero, while shallow convection retains conservative
+heat redistribution.
+
+For shallow convection, `reference_temperature` and `reference_humidity`
+are effective cell targets satisfying $X_{ref}=X+\tau_{BM}\dot X$ after
+fractional penetration and correction. They can differ from the preliminary
+parcel/RH targets. Inactive columns retain environmental references.
+
+`Betts_Miller_Column` reports `regime` as `:none`, `:deep`, or `:shallow`.
+`active` includes nonzero zero-rain shallow adjustment. `lzb` remains the
+diagnosed buoyancy limit; `adjustment_top` is the first adjusted full level
+and `top_fraction` is its included preliminary fraction. For deep adjustment,
+these are the LZB and 1; for inactive columns, they are 0 and 0. The corrected
+temperature rate in a fractional cell includes the uniform correction as
+well as its fraction of the preliminary rate.
 
 Physics applies these rates explicitly for one $\Delta t_p$ substep. The driver
 therefore requires `config.Δt <= bm_tau`, preventing an individual relaxation

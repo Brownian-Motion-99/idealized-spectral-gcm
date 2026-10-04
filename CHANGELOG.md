@@ -23,6 +23,12 @@ All notable changes to this project are documented in this file.
   conversion to specific humidity, giving the exact requested RH instead
   of a mixing-ratio approximation. This also uses the saturation reference
   below the LCL, independently of conserved actual parcel humidity.
+- Betts--Miller now permits conservative zero-rain shallow convection,
+  including fractional top-cell penetration and exact zero-drying/interface
+  boundaries. Column diagnostics distinguish the buoyancy limit from the
+  adjustment top and report `regime`, `top_fraction`, and effective shallow
+  references. `active` includes nonzero shallow transport; infeasible depths
+  and surface-only adjustments return zero tendencies.
 
 ## [0.3.1]
 

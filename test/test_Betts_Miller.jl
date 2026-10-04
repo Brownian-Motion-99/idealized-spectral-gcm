@@ -271,15 +271,22 @@ end
         state = Betts_Miller_State(2; relative_humidity = rh)
         result = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
         @test result.cape > 0 && result.lzb == 1
+        # Shallow closure can fractionally reduce this preliminary target.
+        # Verify RH before that adjustment, using the same profile constructor
+        # as the column and an independent inverse vapor-pressure calculation.
+        qref = JGCM.Atmos_Param_Module._bm_reference_humidity.(
+            result.parcel_saturation_mixing_ratio, p_full, rh, epsilon,
+        )
         vapor_pressure =
-            @. p_full * result.reference_humidity /
-               (epsilon + (1.0 - epsilon) * result.reference_humidity)
+            @. p_full * qref / (epsilon + (1.0 - epsilon) * qref)
         diagnosed_rh = vapor_pressure ./ Saturation_Vapor_Pressure.(result.parcel_temperature)
         @test diagnosed_rh ≈ fill(rh, 2) rtol = 1.0e-13
         saturation_parcel = Saturation_Specific_Humidity.(result.parcel_temperature, p_full, epsilon)
-        @test all(0 .<= result.reference_humidity .<= saturation_parcel .+ 1.0e-15)
+        @test all(0 .<= qref .<= saturation_parcel .+ 1.0e-15)
         if rh == 1.0
-            @test result.reference_humidity ≈ saturation_parcel rtol = 1.0e-13
+            @test qref ≈ saturation_parcel rtol = 1.0e-13
+        elseif result.regime == :deep
+            @test result.reference_humidity ≈ qref rtol = 1.0e-13
         end
     end
 
@@ -292,7 +299,10 @@ end
     dilute = Betts_Miller_Column(state, atmo, temperature, humidity, pressures, interfaces)
     @test dilute.cape > 0
     qs = Saturation_Specific_Humidity.(dilute.parcel_temperature, pressures, epsilon)
-    @test dilute.reference_humidity ≈ 0.8 .* qs rtol = 5.0e-4
+    dilute_target = JGCM.Atmos_Param_Module._bm_reference_humidity.(
+        dilute.parcel_saturation_mixing_ratio, pressures, 0.8, epsilon,
+    )
+    @test dilute_target ≈ 0.8 .* qs rtol = 5.0e-4
 
     # Reference humidity below the LCL uses saturation at the dry parcel's T,
     # rather than the actual conserved humidity of that unsaturated parcel.
@@ -303,10 +313,27 @@ end
     unsaturated = Betts_Miller_Column(state, atmo, temperature, [1.0e-4, q0], pressures, interfaces)
     @test unsaturated.cape > 0 && unsaturated.lcl == 1
     @test unsaturated.parcel_mixing_ratio[end] == q0 / (1 - q0)
-    qref = unsaturated.reference_humidity[end]
+    qref = JGCM.Atmos_Param_Module._bm_reference_humidity(
+        unsaturated.parcel_saturation_mixing_ratio[end], pressures[end], 0.8, epsilon,
+    )
     vapor_pressure = pressures[end] * qref / (epsilon + (1 - epsilon) * qref)
     @test vapor_pressure / Saturation_Vapor_Pressure(300.0) ≈ 0.8 rtol = 1.0e-14
     @test qref > q0
+    @test !unsaturated.active && unsaturated.regime == :none
+    @test unsaturated.reference_humidity[end] == q0
+
+    # An accepted column also exposes the exact target below an in-domain LCL.
+    q0 = 0.95 * Saturation_Specific_Humidity(300.0, pressures[end], epsilon)
+    below_lcl = Betts_Miller_Column(
+        state, atmo, [287.0, 300.0],
+        [0.95 * Saturation_Specific_Humidity(287.0, pressures[1], epsilon), q0],
+        pressures, interfaces,
+    )
+    @test below_lcl.regime == :deep && below_lcl.lcl == 1
+    @test below_lcl.parcel_mixing_ratio[end] == q0 / (1 - q0)
+    qref = below_lcl.reference_humidity[end]
+    vapor_pressure = pressures[end] * qref / (epsilon + (1 - epsilon) * qref)
+    @test vapor_pressure / Saturation_Vapor_Pressure(300.0) ≈ 0.8 rtol = 1.0e-14
 
     # Levels above the buoyancy limit retain the environmental reference,
     # even though that humidity does not equal the configured reference RH.
@@ -406,6 +433,215 @@ end
         @test abs(sum(heat + latent)) <= 64eps(Float64) * sum(abs.(heat) + abs.(latent))
         @test -sum(result.humidity_tendency .* mass) ≈ result.precipitation rtol = 1.0e-14
     end
+end
+
+@testset "Betts-Miller shallow depth and budget boundaries" begin
+    bm = JGCM.Atmos_Param_Module
+    cp, lv, grav = 1000.0, 2.5e6, 10.0
+    interfaces = [0.0, 10000.0, 30000.0, 40000.0, 80000.0]
+    mass = diff(interfaces) ./ grav
+    temperature = [230.0, 250.0, 275.0, 300.0]
+    humidity = fill(0.01, 4)
+    original_tdot = [3.0e-4, 4.0e-4, -1.0e-4, 2.0e-4]
+
+    function close_rates(water_terms; mode = :isca, tdot = original_tdot, top = 1)
+        state = Betts_Miller_State(4; energy_correction = mode)
+        work = bm.Betts_Miller_Work(4)
+        work.temperature_tendency .= tdot
+        work.humidity_tendency .= water_terms ./ mass
+        work.reference_temperature .= temperature .+ state.tau .* tdot
+        work.reference_humidity .= humidity .+ state.tau .* work.humidity_tendency
+        diagnostics = bm._bm_close_adjustment!(
+            work, state, temperature, humidity, interfaces, top, 4, cp, lv, grav,
+        )
+        return merge(diagnostics, (;
+            temperature_tendency = copy(work.temperature_tendency),
+            humidity_tendency = copy(work.humidity_tendency),
+            reference_temperature = copy(work.reference_temperature),
+            reference_humidity = copy(work.reference_humidity),
+        ))
+    end
+
+    # Values are moisture mass tendencies, not rates: the expected fractional
+    # depth and uniform correction are independent of the implementation.
+    cases = (
+        ([5.0e-4, 4.0e-4, 0.0, -2.0e-4], 2, 0.5),
+        ([5.0e-4, 2.0e-4, 0.0, -2.0e-4], 2, 1.0),
+        ([5.0e-4, 0.0, 2.0e-4, -2.0e-4], 2, 1.0),
+        ([2.0e-4, 0.0, 0.0, -2.0e-4], 1, 1.0),
+        (zeros(4), 1, 1.0),
+    )
+    for mode in (:isca, :timescale), (water_terms, top, fraction) in cases
+        result = close_rates(water_terms; mode)
+        @test result.active && result.regime == :shallow
+        @test result.precipitation == 0.0
+        @test result.adjustment_top == top
+        @test result.top_fraction == fraction
+        expected_qdot = water_terms ./ mass
+        expected_qdot[1:top-1] .= 0.0
+        expected_qdot[top] *= fraction
+        expected_tdot = copy(original_tdot)
+        expected_tdot[1:top-1] .= 0.0
+        expected_tdot[top] *= fraction
+        correction = -sum(expected_tdot .* mass) / sum(mass[top:4])
+        expected_tdot[top:4] .+= correction
+        @test result.humidity_tendency ≈ expected_qdot atol = 1.0e-21
+        @test result.temperature_tendency ≈ expected_tdot atol = 1.0e-18
+        @test all(iszero, result.humidity_tendency[1:top-1])
+        @test all(iszero, result.temperature_tendency[1:top-1])
+        water = result.humidity_tendency .* mass
+        heat = cp .* result.temperature_tendency .* mass
+        latent = lv .* water
+        @test abs(sum(water)) <= 64eps(Float64) * sum(abs.(water))
+        @test abs(sum(heat)) <= 64eps(Float64) * sum(abs.(heat))
+        @test abs(sum(heat + latent)) <= 64eps(Float64) * sum(abs.(heat) + abs.(latent))
+        @test result.reference_humidity ≈ humidity .+ 7200.0 .* result.humidity_tendency
+        @test result.reference_temperature ≈ temperature .+ 7200.0 .* result.temperature_tendency
+        for timestep in (3600.0, 7200.0)
+            @test all(humidity .+ timestep .* result.humidity_tendency .>= 0)
+        end
+    end
+
+    # No dry lower layers, a surface-only root, and an explicitly surface-only
+    # region have no nontrivial conservative adjustment.
+    for (terms, top) in (([5.0e-4, 4.0e-4, 0.0, 2.0e-4], 1),
+                         ([5.0e-4, 4.0e-4, 3.0e-4, 0.0], 1),
+                         (zeros(4), 4))
+        input_tdot = copy(original_tdot)
+        input_tdot[1:top-1] .= 0.0
+        input_terms = copy(terms)
+        input_terms[1:top-1] .= 0.0
+        result = close_rates(input_terms; tdot = input_tdot, top)
+        @test !result.active && result.regime == :none
+        @test result.adjustment_top == 0 && result.top_fraction == 0.0
+        @test result.precipitation == 0.0
+        @test all(iszero, result.temperature_tendency)
+        @test all(iszero, result.humidity_tendency)
+        @test result.reference_temperature == temperature
+        @test result.reference_humidity == humidity
+    end
+
+    # Exact and roundoff-scale zero drying use the full adjustment region.
+    # Uniform heating alone cancels completely rather than creating transport.
+    for mode in (:isca, :timescale), uniform_rate in (2.0e-4, pi * 1.0e-4)
+        result = close_rates(zeros(4); mode, tdot = fill(uniform_rate, 4))
+        @test !result.active && result.regime == :none
+        @test result.adjustment_top == 0 && result.top_fraction == 0.0
+        @test all(iszero, result.temperature_tendency)
+        @test all(iszero, result.humidity_tendency)
+        @test result.reference_temperature == temperature
+        @test result.reference_humidity == humidity
+    end
+
+    # Exact and roundoff-scale zero drying use the full adjustment region.
+    # The Isca heating profile approaches this continuously from deep convection.
+    boundary = close_rates([2.0e-4, 0.0, 0.0, -2.0e-4])
+    for perturbation in (-1.0e-9, -8eps(Float64), 0.0, 8eps(Float64), 1.0e-9)
+        result = close_rates([2.0e-4 * (1 + perturbation), 0.0, 0.0, -2.0e-4])
+        @test result.active
+        @test result.regime == (perturbation < -1.0e-12 ? :deep : :shallow)
+        @test result.precipitation >= 0.0
+        if result.regime == :shallow
+            @test result.precipitation == 0.0
+        end
+        @test 0 < result.top_fraction <= 1
+        @test maximum(abs.(result.temperature_tendency - boundary.temperature_tendency)) < 1.0e-12
+        @test maximum(abs.(result.humidity_tendency - boundary.humidity_tendency)) < 1.0e-15
+        water = result.humidity_tendency .* mass
+        @test abs(result.precipitation + sum(water)) <= 64eps(Float64) * sum(abs.(water))
+    end
+
+    # A neutral or negative thermal integral cannot trigger either closure.
+    neutral_heating = [2.0e-4, 0.0, 0.0, -0.5e-4]
+    for tdot in (neutral_heating, -original_tdot)
+        for terms in ([2.0e-4, 0.0, 0.0, -2.0e-4], fill(-1.0e-4, 4))
+            result = close_rates(terms; tdot)
+            @test !result.active && result.regime == :none
+            @test all(iszero, result.temperature_tendency)
+            @test all(iszero, result.humidity_tendency)
+        end
+    end
+end
+
+@testset "Betts-Miller shallow reference column and grid" begin
+    fixture = joinpath(@__DIR__, "fixtures", "betts_miller_shallow_column.tsv")
+    data = permutedims(reduce(hcat, [parse.(Float64, split(line)) for line in readlines(fixture)]))
+    nd = size(data, 1)
+    p_full = data[:, 1]
+    p_half = vcat(data[:, 2], data[end, 3])
+    temperature = data[:, 4]
+    humidity = data[:, 5]
+    atmo = bm_test_atmosphere(nd; use_virtual_temperature = true)
+    mass = diff(p_half) ./ atmo.grav
+    results = []
+    for mode in (:isca, :timescale)
+        state = Betts_Miller_State(nd; energy_correction = mode)
+        result = Betts_Miller_Column(state, atmo, temperature, humidity, p_full, p_half)
+        push!(results, result)
+        @test result.active && result.regime == :shallow
+        @test result.precipitation == 0.0
+        @test result.lcl == 29 && result.lzb == 10
+        @test result.adjustment_top == 29
+        expected_fraction = data[29, 7] * state.tau / (data[29, 9] - humidity[29])
+        @test result.top_fraction ≈ expected_fraction atol = 2.0e-6 rtol = 0
+        @test all(isapprox.(result.temperature_tendency, data[:, 6]; atol = 1.0e-9, rtol = 0))
+        @test all(isapprox.(result.humidity_tendency, data[:, 7]; atol = 1.0e-18, rtol = 0))
+        @test any(result.humidity_tendency .> 0) && any(result.humidity_tendency .< 0)
+        @test all(iszero, result.temperature_tendency[1:result.adjustment_top-1])
+        @test all(iszero, result.humidity_tendency[1:result.adjustment_top-1])
+        water = result.humidity_tendency .* mass
+        heat = atmo.cp_air .* result.temperature_tendency .* mass
+        latent = atmo.Lv .* water
+        @test abs(sum(water)) <= 64eps(Float64) * sum(abs.(water))
+        @test abs(sum(heat)) <= 64eps(Float64) * sum(abs.(heat))
+        @test abs(sum(heat + latent)) <= 64eps(Float64) * sum(abs.(heat) + abs.(latent))
+        @test result.reference_temperature ≈ temperature .+ state.tau .* result.temperature_tendency
+        @test result.reference_humidity ≈ humidity .+ state.tau .* result.humidity_tendency
+        @test all(humidity .+ state.tau .* result.humidity_tendency .>= 0)
+        grid(v) = repeat(reshape(v, 1, 1, :), 2, 3, 1)
+        dt, dq, rain = zeros(2, 3, nd), zeros(2, 3, nd), zeros(2, 3, 1)
+        Betts_Miller!(state, atmo, grid(temperature), grid(humidity), grid(p_full), grid(p_half), dt, dq, rain)
+        @test dt ≈ grid(result.temperature_tendency)
+        @test dq ≈ grid(result.humidity_tendency)
+        @test all(iszero, rain)
+    end
+    @test results[1].temperature_tendency == results[2].temperature_tendency
+    @test results[1].humidity_tendency == results[2].humidity_tendency
+    @test results[1].top_fraction == results[2].top_fraction
+
+    # Exact zero drying in a full public column, with an independently
+    # diagnosed raw target. Altering upper environmental humidity does not
+    # alter this lifted parcel, and the positive buoyancy margin is ample.
+    atmo2 = bm_test_atmosphere(2; use_virtual_temperature = true)
+    epsilon = atmo2.rdgas / atmo2.rvgas
+    pressures = [80000.0, 100000.0]
+    interfaces = [70000.0, 90000.0, 110000.0]
+    q0 = 0.95 * Saturation_Specific_Humidity(300.0, pressures[end], epsilon)
+    seed = Betts_Miller_Column(
+        Betts_Miller_State(2), atmo2, [287.0, 300.0], [0.01, q0], pressures, interfaces,
+    )
+    target = JGCM.Atmos_Param_Module._bm_reference_humidity.(
+        seed.parcel_saturation_mixing_ratio, pressures, 0.8, epsilon,
+    )
+    balanced_q = [target[1] - (q0 - target[2]), q0]
+    zero_drying = Betts_Miller_Column(
+        Betts_Miller_State(2), atmo2, [287.0, 300.0], balanced_q, pressures, interfaces,
+    )
+    @test zero_drying.active && zero_drying.regime == :shallow
+    @test zero_drying.precipitation == 0.0
+    @test zero_drying.adjustment_top == 1 && zero_drying.top_fraction == 1.0
+    @test any(!iszero, zero_drying.humidity_tendency)
+    m = diff(interfaces) ./ atmo2.grav
+    water = zero_drying.humidity_tendency .* m
+    heat = atmo2.cp_air .* zero_drying.temperature_tendency .* m
+    @test abs(sum(water)) <= 64eps(Float64) * sum(abs.(water))
+    @test abs(sum(heat)) <= 64eps(Float64) * sum(abs.(heat))
+
+    stable = Betts_Miller_Column(
+        Betts_Miller_State(nd), atmo, fill(300.0, nd), fill(1.0e-5, nd), p_full, p_half,
+    )
+    @test !stable.active && stable.regime == :none
+    @test stable.adjustment_top == 0 && stable.top_fraction == 0.0
 end
 
 @testset "Betts-Miller column physics" begin
