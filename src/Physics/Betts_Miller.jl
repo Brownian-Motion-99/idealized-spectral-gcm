@@ -24,31 +24,104 @@ function Betts_Miller_Work(nd::Int)
 end
 
 """
-    Betts_Miller_State(nd; tau=7200.0, relative_humidity=0.8)
+    Betts_Miller_State(nd; tau=7200.0, relative_humidity=0.8, energy_correction=:isca)
 
 Time-independent configuration and per-thread work storage for the Betts-Miller
 convective adjustment. The scheme returns rates; the model time step is not part
-of the column calculation.
+of the column calculation. Deep-convection enthalpy closure uses the Isca
+reference-temperature correction by default; `:timescale` retains the previous
+scaling of the larger precipitation-equivalent adjustment.
 """
 struct Betts_Miller_State
     tau::Float64
     relative_humidity::Float64
+    energy_correction::Symbol
     nd::Int
     work::Vector{Betts_Miller_Work}
 end
 
-function Betts_Miller_State(nd::Int; tau::Real = 7200.0, relative_humidity::Real = 0.8)
+function Betts_Miller_State(
+    nd::Int;
+    tau::Real = 7200.0,
+    relative_humidity::Real = 0.8,
+    energy_correction = :isca,
+)
     tau = Float64(tau)
     relative_humidity = Float64(relative_humidity)
     isfinite(tau) && tau > 0 || throw(ArgumentError("bm_tau must be positive and finite"))
     isfinite(relative_humidity) && 0 < relative_humidity <= 1 ||
         throw(ArgumentError("bm_relative_humidity must lie in (0, 1]"))
+    (energy_correction isa Symbol || energy_correction isa AbstractString) ||
+        throw(ArgumentError("bm_energy_correction must be :isca or :timescale"))
+    energy_correction = Symbol(energy_correction)
+    energy_correction in (:isca, :timescale) ||
+        throw(ArgumentError("bm_energy_correction must be :isca or :timescale"))
     return Betts_Miller_State(
         tau,
         relative_humidity,
+        energy_correction,
         nd,
         [Betts_Miller_Work(nd) for _ = 1:Threads.nthreads()],
     )
+end
+
+@inline _bm_layer_mass(p_half, k, grav) =
+    (Float64(p_half[k+1]) - Float64(p_half[k])) / grav
+
+function _bm_precipitation_integrals(tdot, qdot, p_half, top, surface, cp, lv, grav)
+    moisture = 0.0
+    thermal = 0.0
+    moisture_scale = 0.0
+    thermal_scale = 0.0
+    for k = top:surface
+        mass = _bm_layer_mass(p_half, k, grav)
+        drying = -qdot[k] * mass
+        heating = (cp / lv) * tdot[k] * mass
+        moisture += drying
+        thermal += heating
+        moisture_scale += abs(drying)
+        thermal_scale += abs(heating)
+    end
+    # Bound summation roundoff using the actual term magnitudes, without a
+    # physical precipitation or CAPE threshold.
+    relative_tolerance = 8 * (surface - top + 1) * eps(Float64)
+    return (;
+        moisture,
+        thermal,
+        moisture_tolerance = relative_tolerance * moisture_scale,
+        thermal_tolerance = relative_tolerance * thermal_scale,
+    )
+end
+
+function _bm_conserve_enthalpy!(work, p_half, top, surface, cp, lv, grav, tau)
+    enthalpy = 0.0
+    mass = 0.0
+    for k = top:surface
+        layer_mass = _bm_layer_mass(p_half, k, grav)
+        enthalpy +=
+            (cp * work.temperature_tendency[k] + lv * work.humidity_tendency[k]) * layer_mass
+        mass += layer_mass
+    end
+    correction = -enthalpy / (cp * mass)
+    for k = top:surface
+        work.temperature_tendency[k] += correction
+        work.reference_temperature[k] += tau * correction
+    end
+    return correction
+end
+
+function _bm_deep_convection!(work, state, p_half, top, surface, cp, lv, grav, integrals)
+    if integrals.moisture > integrals.thermal
+        scale = integrals.thermal / integrals.moisture
+        @views work.humidity_tendency[top:surface] .*= scale
+        return integrals.thermal
+    elseif state.energy_correction == :timescale
+        scale = integrals.moisture / integrals.thermal
+        @views work.temperature_tendency[top:surface] .*= scale
+    else
+        _bm_conserve_enthalpy!(work, p_half, top, surface, cp, lv, grav, state.tau)
+    end
+    return integrals.moisture
 end
 
 function _validate_bm_column(
@@ -405,27 +478,16 @@ function _betts_miller_column!(
         qdot[k] = (qref[k] - max(Float64(humidity[k]), 0.0)) / state.tau
     end
 
-    moisture_precipitation = 0.0
-    thermal_precipitation = 0.0
-    for k = lzb:surface
-        layer_mass = (Float64(p_half[k+1]) - Float64(p_half[k])) / grav
-        moisture_precipitation -= qdot[k] * layer_mass
-        thermal_precipitation += (cp / lv) * tdot[k] * layer_mass
-    end
+    integrals = _bm_precipitation_integrals(tdot, qdot, p_half, lzb, surface, cp, lv, grav)
 
-    if moisture_precipitation <= 0 || thermal_precipitation <= 0
+    if integrals.moisture <= integrals.moisture_tolerance ||
+       integrals.thermal <= integrals.thermal_tolerance
         fill!(tdot, 0.0)
         fill!(qdot, 0.0)
         return (; active = false, lcl, lfc, lzb, cape, cin, precipitation = 0.0)
-    elseif moisture_precipitation > thermal_precipitation
-        scale = thermal_precipitation / moisture_precipitation
-        @views qdot[lzb:surface] .*= scale
-        precipitation = thermal_precipitation
-    else
-        scale = moisture_precipitation / thermal_precipitation
-        @views tdot[lzb:surface] .*= scale
-        precipitation = moisture_precipitation
     end
+    precipitation =
+        _bm_deep_convection!(work, state, p_half, lzb, surface, cp, lv, grav, integrals)
 
     return (; active = true, lcl, lfc, lzb, cape, cin, precipitation)
 end

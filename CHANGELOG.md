@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Betts--Miller deep-convection enthalpy closure now defaults to Isca's uniform
+  temperature-reference shift when heating exceeds drying. Set
+  `bm_energy_correction = :timescale` to retain the previous deep closure;
+  `:isca` and `:timescale` both conserve moist enthalpy.
+
 ### Fixed
 
 - Betts--Miller buoyancy now respects `use_virtual_temperature` for CAPE,

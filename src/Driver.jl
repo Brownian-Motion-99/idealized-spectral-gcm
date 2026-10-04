@@ -60,6 +60,24 @@ function run_metrics(start_time, current_time, completed_steps, elapsed_seconds,
     return (; simulated_days, seconds_per_step, simulated_days_per_wall_day)
 end
 
+function betts_miller_state(physics_params, nd, timestep, moisture_processes)
+    get(physics_params, "do_Betts_Miller", false) || return nothing
+    moisture_processes || throw(ArgumentError("Betts-Miller requires moisture_processes = true"))
+    state = Betts_Miller_State(
+        nd;
+        tau = get(physics_params, "bm_tau", 7200.0),
+        relative_humidity = get(physics_params, "bm_relative_humidity", 0.8),
+        energy_correction = get(physics_params, "bm_energy_correction", :isca),
+    )
+    timestep <= state.tau || throw(
+        ArgumentError(
+            "Betts-Miller requires Δt <= bm_tau for each physics substep; " *
+            "got Δt=$timestep s and bm_tau=$(state.tau) s",
+        ),
+    )
+    return state
+end
+
 function validate_config(config::Model_Config)
     config.model_type in (:Barotropic, :Shallow_Water, :PrimitiveEquation) || throw(
         ArgumentError("unsupported model_type: $(config.model_type)"),
@@ -210,24 +228,8 @@ function JGCM_Simulate(config::Model_Config)
     end
 
     # Construct Betts-Miller configuration and reusable column work arrays once.
-    if get(physics_params, "do_Betts_Miller", false)
-        config.moisture_processes ||
-            error("Betts-Miller requires moisture_processes = true")
-        bm_tau = Float64(get(physics_params, "bm_tau", 7200.0))
-        bm_relative_humidity =
-            Float64(get(physics_params, "bm_relative_humidity", 0.8))
-        config.Δt <= bm_tau || throw(
-            ArgumentError(
-                "Betts-Miller requires Δt <= bm_tau for each physics substep; " *
-                "got Δt=$(config.Δt) s and bm_tau=$bm_tau s",
-            ),
-        )
-        physics_params["BM_state"] = Betts_Miller_State(
-            config.nd;
-            tau=bm_tau,
-            relative_humidity=bm_relative_humidity,
-        )
-    end
+    bm_state = betts_miller_state(physics_params, config.nd, config.Δt, config.moisture_processes)
+    bm_state === nothing || (physics_params["BM_state"] = bm_state)
 
     # Semi-Implicit Solver (Only for 3D)
     semi_implicit = nothing

@@ -1,4 +1,4 @@
-# Betts–Miller reference column
+# Betts–Miller reference columns
 
 `betts_miller_virtual_column.tsv` is a fixed, constructed near-neutral column
 from the physical assessment. Its expected buoyancy diagnostics were evaluated
@@ -20,3 +20,19 @@ virtual CAPE alone does not meet the thermal/drying criteria.
 
 The fixture is read verbatim by tests. It is not regenerated from the parcel
 calculation under test, and normal tests do not require Isca or a Fortran compiler.
+
+`betts_miller_deep_column.tsv` stores a second fixed assessment column and the
+expected deep-convection outputs from the same unmodified Isca revision,
+constants, saturation evaluation, and options. Its columns are full pressure,
+upper/lower interface pressure (Pa), environmental temperature (K), specific
+humidity (kg/kg), followed by Isca temperature and humidity rates, temperature
+reference, and humidity reference. The harness timestep was 1 s, so its
+increments are numerically equal to rates per second.
+
+This origin is unsaturated: Isca uses a 501 by 301 point LCL lookup table, while
+Julia solves the LCL by bisection. The comparison allows this measured
+interpolation difference, rather than requiring identical ascent. Expected
+LCL is level 28 and LZB is level 9. Julia and Isca differ by approximately
+0.016 J/kg in CAPE and 0.0015 mm/day in rain for this column; the focused tests
+also check temperature and humidity profiles. The two deep closure modes can
+have different heating despite agreeing on precipitation.

@@ -146,7 +146,7 @@ provided.
 | Process | Master switch | Other keys |
 |:---|:---|:---|
 | Held--Suarez | `"do_HS_Forcing"` | `"σ_b"`, `"k_a"`, `"k_s"`, `"k_f"`, `"ΔT_y"`, `"Δθ_z"`; optional `"T_equator"`, `"T_stratosphere"` |
-| Betts--Miller | `"do_Betts_Miller"` | optional `"bm_tau"`, `"bm_relative_humidity"` |
+| Betts--Miller | `"do_Betts_Miller"` | optional `"bm_tau"`, `"bm_relative_humidity"`, `"bm_energy_correction"` (`:isca` or `:timescale`, default `:isca`; strings also accepted) |
 | large-scale condensation | `"do_Lscale_Cond"` | optional `"condensation_heating_fraction"` or legacy `"L"` |
 | sensible surface heat | `"do_Sensible_Heating"` | `"C_H"`; optional `"lower_boundary_temperature"` |
 | surface evaporation | `"do_Surface_Evaporation"` | `"C_E"`; optional `"lower_boundary_temperature"` |

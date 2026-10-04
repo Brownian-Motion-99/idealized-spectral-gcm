@@ -214,11 +214,32 @@ The unbalanced relaxation rates are
 =\frac{q_{ref,k}-q_k}{\tau_{BM}}.
 ```
 
-The column-integrated precipitation-equivalent rates inferred from drying and
-heating are compared. The larger adjustment is scaled down so that the two
-energy-equivalent precipitation rates agree. A column is rejected if either
-unbalanced integral is nonpositive. The accepted common value is reported as
-the convective precipitation flux.
+### Deep-convection enthalpy closure
+
+With layer mass $m_k=(p_{k+1/2}-p_{k-1/2})/g$, the preliminary rates give
+$P_q=-\sum_k\dot q_k m_k$ and $P_T=(c_p/L_v)\sum_k\dot T_k m_k$.
+Deep convection requires both integrals to be positive. Roundoff tolerances
+scale with the sum of the absolute terms; no physical CAPE cutoff is imposed.
+
+The default `bm_energy_correction = :isca` follows Isca's Simple Betts--Miller
+deep closure. If $P_q>P_T$, humidity rates are multiplied by $P_T/P_q$ and
+precipitation is $P_T$. Otherwise, precipitation is $P_q$ and a uniform
+temperature-rate correction is applied over the adjustment layer:
+
+```math
+C=-\frac{\sum_k(c_p\dot T_k+L_v\dot q_k)m_k}{c_p\sum_k m_k}.
+```
+
+The temperature reference receives the corresponding $\tau_{BM}C$ shift.
+Reference humidity continues to use the preliminary parcel temperature; it is
+not recomputed after the shift. Selecting `:timescale` retains the previous
+deep closure: scale whichever precipitation-equivalent adjustment is larger
+down to the smaller. Both choices conserve moist enthalpy and report moisture
+loss as precipitation, but can produce different heating profiles at the same
+rainfall. Scaled rates correspond to a longer effective relaxation time toward
+the original reference, rather than a new reference at the nominal time scale.
+
+At this stage, columns with nonpositive $P_q$ or $P_T$ receive no adjustment.
 
 Physics applies these rates explicitly for one $\Delta t_p$ substep. The driver
 therefore requires `config.Δt <= bm_tau`, preventing an individual relaxation
@@ -229,6 +250,7 @@ step from passing its reference profile.
 | `"do_Betts_Miller"` | `false` | enable convective adjustment |
 | `"bm_tau"` | `7200.0` | relaxation time $\tau_{BM}$, s |
 | `"bm_relative_humidity"` | `0.8` | reference relative humidity $\mathcal{H}_{BM}\in(0,1]$ |
+| `"bm_energy_correction"` | `:isca` | deep enthalpy closure: `:isca` or `:timescale`; strings accepted |
 
 The optional `"initial_humidity_floor"` belongs to the `:Moist_Spinup`
 initial condition, not to the convection calculation. It can suppress

@@ -322,6 +322,92 @@ end
     @test stable_top.temperature_tendency[1] == stable_top.humidity_tendency[1] == 0.0
 end
 
+@testset "Betts-Miller deep enthalpy closures" begin
+    bm = JGCM.Atmos_Param_Module
+    @test Betts_Miller_State(4).energy_correction == :isca
+    @test Betts_Miller_State(4; energy_correction = "timescale").energy_correction == :timescale
+    @test_throws ArgumentError Betts_Miller_State(4; energy_correction = :unknown)
+
+    # Analytic pressure-mass budgets with heating and cooling, moisture gain
+    # and loss, and an excluded layer. Equality holds term by term at ratio=1.
+    cp, lv, grav = 1000.0, 2.5e6, 10.0
+    interfaces = [0.0, 10000.0, 20000.0, 40000.0, 80000.0]
+    mass = diff(interfaces) ./ grav
+    original_tdot = [1.0e-4, -2.0e-4, 3.0e-4, 1.0e-4]
+    for mode in (:isca, :timescale), ratio in (2.0, 0.5, 1.0)
+        state = Betts_Miller_State(4; energy_correction = mode)
+        work = bm.Betts_Miller_Work(4)
+        original_qdot = -ratio .* (cp / lv) .* original_tdot
+        original_tref = [230.0, 250.0, 275.0, 300.0] .+ state.tau .* original_tdot
+        work.temperature_tendency .= original_tdot
+        work.humidity_tendency .= original_qdot
+        work.reference_temperature .= original_tref
+        integrals = bm._bm_precipitation_integrals(
+            work.temperature_tendency, work.humidity_tendency, interfaces, 2, 4, cp, lv, grav,
+        )
+        thermal = (cp / lv) * sum(original_tdot[2:4] .* mass[2:4])
+        moisture = ratio * thermal
+        @test integrals.thermal ≈ thermal rtol = 1.0e-14
+        @test integrals.moisture ≈ moisture rtol = 1.0e-14
+        rain = bm._bm_deep_convection!(work, state, interfaces, 2, 4, cp, lv, grav, integrals)
+        @test rain ≈ min(moisture, thermal) rtol = 1.0e-14
+        expected_tdot = copy(original_tdot)
+        expected_qdot = copy(original_qdot)
+        correction = 0.0
+        if ratio > 1
+            expected_qdot[2:4] ./= ratio
+        elseif mode == :timescale
+            expected_tdot[2:4] .*= ratio
+        else
+            correction = -(1 - ratio) * sum(original_tdot[2:4] .* mass[2:4]) / sum(mass[2:4])
+            expected_tdot[2:4] .+= correction
+        end
+        @test work.temperature_tendency ≈ expected_tdot atol = 1.0e-18
+        @test work.humidity_tendency ≈ expected_qdot atol = 1.0e-21
+        expected_tref = copy(original_tref)
+        expected_tref[2:4] .+= state.tau * correction
+        @test work.reference_temperature ≈ expected_tref atol = 1.0e-12
+        @test work.temperature_tendency[1] == original_tdot[1]
+        @test work.humidity_tendency[1] == original_qdot[1]
+        heat = cp .* work.temperature_tendency[2:4] .* mass[2:4]
+        latent = lv .* work.humidity_tendency[2:4] .* mass[2:4]
+        @test abs(sum(heat + latent)) <= 64eps(Float64) * sum(abs.(heat) + abs.(latent))
+        @test -sum(work.humidity_tendency[2:4] .* mass[2:4]) ≈ rain rtol = 1.0e-14
+    end
+
+    # Fixed input and expected rates from the independent double-precision
+    # Isca harness. The unsaturated origin exposes LCL-table interpolation.
+    fixture = joinpath(@__DIR__, "fixtures", "betts_miller_deep_column.tsv")
+    data = permutedims(reduce(hcat, [parse.(Float64, split(line)) for line in readlines(fixture)]))
+    nd = size(data, 1)
+    atmo = bm_test_atmosphere(nd; use_virtual_temperature = true)
+    modern = Betts_Miller_Column(
+        Betts_Miller_State(nd), atmo, data[:, 4], data[:, 5], data[:, 1],
+        vcat(data[:, 2], data[end, 3]),
+    )
+    alternative = Betts_Miller_Column(
+        Betts_Miller_State(nd; energy_correction = :timescale), atmo,
+        data[:, 4], data[:, 5], data[:, 1], vcat(data[:, 2], data[end, 3]),
+    )
+    @test modern.active && alternative.active
+    @test modern.lcl == 28 && modern.lzb == 9
+    @test all(isapprox.(modern.temperature_tendency, data[:, 6]; atol = 2.0e-8, rtol = 0))
+    @test all(isapprox.(modern.humidity_tendency, data[:, 7]; atol = 5.0e-12, rtol = 0))
+    @test all(isapprox.(modern.reference_temperature, data[:, 8]; atol = 1.5e-4, rtol = 0))
+    @test all(isapprox.(modern.reference_humidity, data[:, 9]; atol = 3.0e-8, rtol = 0))
+    @test modern.precipitation ≈ alternative.precipitation rtol = 1.0e-14
+    @test !isapprox(modern.temperature_tendency, alternative.temperature_tendency)
+    @test modern.humidity_tendency == alternative.humidity_tendency
+    mass = (data[:, 3] .- data[:, 2]) ./ atmo.grav
+    @test modern.precipitation ≈ -sum(data[:, 7] .* mass) atol = 2.0e-8 rtol = 0
+    for result in (modern, alternative)
+        heat = atmo.cp_air .* result.temperature_tendency .* mass
+        latent = atmo.Lv .* result.humidity_tendency .* mass
+        @test abs(sum(heat + latent)) <= 64eps(Float64) * sum(abs.(heat) + abs.(latent))
+        @test -sum(result.humidity_tendency .* mass) ≈ result.precipitation rtol = 1.0e-14
+    end
+end
+
 @testset "Betts-Miller column physics" begin
     nd = 6
     atmo = bm_test_atmosphere(nd)
