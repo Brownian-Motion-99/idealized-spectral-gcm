@@ -311,9 +311,11 @@ function _bm_lcl(
 )
     pstar = 1.0e5
     residual(logp) = begin
-        pressure = exp(logp)
-        parcel_temperature = theta0 * (pressure / pstar)^kappa
-        Saturation_Mixing_Ratio(parcel_temperature, pressure, epsilon) - r0
+        # Keep this binding distinct from the final `pressure` below. Sharing
+        # it across scopes boxes every bisection iterate and defeats inference.
+        trial_pressure = exp(logp)
+        parcel_temperature = theta0 * (trial_pressure / pstar)^kappa
+        Saturation_Mixing_Ratio(parcel_temperature, trial_pressure, epsilon) - r0
     end
 
     lo = log(p_top)

@@ -23,6 +23,7 @@ end
     include("test_Lower_Boundary_Temperature.jl")
     include("test_LRF.jl")
     include("test_Betts_Miller.jl")
+    include("test_Betts_Miller_Validation.jl")
     include("test_Lscale_Cond.jl")
     include("test_HS_Forcing.jl")
     include("test_PBL.jl")
@@ -33,4 +34,5 @@ end
 
 @testset "Dynamics-physics integration" begin
     include("test_Coupling.jl")
+    include("test_Betts_Miller_Coupling.jl")
 end
