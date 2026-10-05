@@ -157,6 +157,33 @@ See [Physical parameterizations](@ref) for equations, units, validation, and
 process order. A robust explicit dictionary includes every master switch, even
 when false, so experiment intent is visible in the script.
 
+For the Isca BM closure with subsequent saturation adjustment:
+
+```julia
+"do_Betts_Miller" => true,
+"bm_tau" => 7200.0,
+"bm_relative_humidity" => 0.8,
+"bm_energy_correction" => :isca,
+"do_Lscale_Cond" => true,
+"condensation_heating_fraction" => 1.0,
+```
+
+These entries belong in `physics_params`. Set `moisture_processes = true` on
+`Model_Config` and `"use_virtual_temperature" => true` in the dictionary.
+Keep `Δt <= bm_tau`; startup uses one
+physics substep and leapfrog uses two bounded substeps. Condensation receives
+the state after convection, and the two rain rates add. Full condensation
+heating is required for the fixed-mass moist-enthalpy conservation study;
+fractions below one impose an energy sink relative to that budget.
+
+`bm_tau` must be finite and positive, reference RH must lie in `(0,1]`, and the
+deep closure accepts only `:isca` or `:timescale` (or their strings). Both modes
+use the same shallow closure. Returning to `:timescale` does not undo the
+corrected ascent, buoyancy, RH, or shallow transport. The dedicated
+`exp/BettsMiller_Validation/validate.jl` experiment prescribes its SST explicitly
+and compares 600 s with 300 s; see
+[Betts--Miller validation](betts-miller-validation.md).
+
 ## Shallow-water forcing keys
 
 The shallow-water driver reads its idealized forcing and initialization values

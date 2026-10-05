@@ -30,6 +30,7 @@ makedocs(;
         "Reference" => [
             "Notation" => "notation.md",
         ],
+        "Validation" => "betts-miller-validation.md",
     ],
 )
 

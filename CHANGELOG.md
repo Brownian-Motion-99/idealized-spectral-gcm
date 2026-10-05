@@ -10,9 +10,24 @@ All notable changes to this project are documented in this file.
   temperature-reference shift when heating exceeds drying. Set
   `bm_energy_correction = :timescale` to retain the previous deep closure;
   `:isca` and `:timescale` both conserve moist enthalpy.
+- The BM example now combines convection with large-scale condensation and
+  uses full condensation heating. Corrected ascent, buoyancy, RH, and shallow
+  transport require rerunning earlier experiments; selecting the previous deep
+  closure does not reproduce the previous scheme's complete behavior.
+
+### Added
+
+- Independent Isca validation for 87 columns, fixed-seed conservation checks,
+  scalar/grid and one/four-thread comparisons, and startup/leapfrog coupling
+  checks. A static audit records the diagnostic and domain limitations.
+- A prescribed T21L20 moist validation experiment with a process budget,
+  600/300 s timestep comparison, and documentation of column versus full-model
+  conservation. Generated model fields remain outside version control.
 
 ### Fixed
 
+- Removed a boxed pressure binding in LCL bisection, reducing warmed
+  30-level shallow-column allocation from 17,840 to 928 bytes.
 - Betts--Miller buoyancy now respects `use_virtual_temperature` for CAPE,
   CIN, LFC, and LZB. Actual parcel mixing ratio is conserved below the LCL
   and stored separately from the saturation reference mixing ratio.

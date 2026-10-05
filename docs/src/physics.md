@@ -148,7 +148,11 @@ ASCII aliases such as `"sigma_b"` are not read by the forcing routine.
 
 The Betts--Miller implementation diagnoses a lifted surface parcel, identifies
 a contiguous buoyant layer, constructs reference profiles, and returns
-temperature and humidity relaxation rates.
+temperature and humidity relaxation rates. The reference is Frierson's
+Simple Betts--Miller formulation (2007), with the O'Gorman and Schneider (2008)
+modifications implemented in Isca's `qe_moist_convection.F90`: consistent
+virtual-temperature buoyancy and exact vapor-pressure/specific-humidity
+conversion. It uses Isca's shallower shallow-convection option.
 
 ### Parcel ascent and triggering
 
@@ -183,6 +187,12 @@ before reaching buoyancy. `Betts_Miller_Column` returns actual
 `parcel_mixing_ratio` and separate `parcel_saturation_mixing_ratio`
 diagnostics. Above the end of ascent, temperature and actual mixing ratio
 retain their input values; saturation mixing ratio is zero at unvisited levels.
+
+The returned `cin` follows Isca's signed integration below an in-domain LCL;
+buoyant dry layers can reduce it. No-CAPE and pre-buoyancy cold-cutoff paths
+reset CIN to zero, while a parcel with no represented LCL retains the positive-only dry
+inhibition diagnostic. CIN is not an adjustment threshold and should not be
+interpreted as a universal positive-only column integral.
 
 ### Reference state and relaxation
 
@@ -282,8 +292,10 @@ temperature rate in a fractional cell includes the uniform correction as
 well as its fraction of the preliminary rate.
 
 Physics applies these rates explicitly for one $\Delta t_p$ substep. The driver
-therefore requires `config.Δt <= bm_tau`, preventing an individual relaxation
-step from passing its reference profile.
+therefore requires `config.Δt <= bm_tau`, bounding the explicit relaxation
+fraction by one. This bound does not by itself establish positive temperature
+or stability on arbitrary vertical grids. The ascent follows Isca's RK2
+discretization; unusually coarse pressure grids require an accuracy check.
 
 | Key | Default | Meaning |
 |:---|:---|:---|
@@ -294,7 +306,37 @@ step from passing its reference profile.
 
 The optional `"initial_humidity_floor"` belongs to the `:Moist_Spinup`
 initial condition, not to the convection calculation. It can suppress
-roundoff-scale dry points in a spectrally truncated analytic initialization.
+very dry represented points. The current initial humidity is a grid tracer
+and is not spectrally projected.
+
+Physical column inputs have positive temperature, increasing full/interface
+pressures with each full level inside its interfaces, and `0 <= q < 1`.
+Standalone column calls retain legacy handling of finite negative humidity:
+they calculate relative to `max(q,0)` without mutating the input. Conservation
+identities then refer to that cleaned humidity. Material negative vapor mass
+is not a physically valid input; coupled physics validates its updated state.
+
+### Validation and migration
+
+The implementation conserves pressure-mass-weighted $c_pT+L_vq$ during BM
+adjustment and accounts for water loss as precipitation. These are fixed-mass
+column identities. A model budget also includes surface exchange, Newtonian
+relaxation, pressure adjustment, PBL mixing, dynamics, and spectral/numerical
+corrections; it cannot be inferred from the BM identity alone.
+
+Independent fixtures and an optional Fortran harness cover 87 Isca columns,
+including both deep branches and shallow transport. Comparing with a control
+that changes only Isca's LCL lookup to bisection gives temperature-rate
+agreement within `2e-17 K/s`. Differences from the original lookup and its
+boundary behavior are recorded explicitly. See
+[Betts--Miller validation](betts-miller-validation.md) for the static audit,
+five-day T21 timestep comparison, budget scope, and reproduction commands.
+
+Corrected virtual buoyancy, exact reference RH, and shallow transport change
+the model's results. Existing experiments need rerunning. Selecting
+`:timescale` retains the previous deep closure, but does not recover the old
+scheme's complete behavior. Short integration checks establish stability for
+their prescribed case; they do not establish a climatology or tune RH/tau.
 
 ## Large-scale condensation
 

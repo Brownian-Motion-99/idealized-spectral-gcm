@@ -12,11 +12,12 @@ physics_params = Dict{String,Any}(
     "do_Betts_Miller" => true,
     "bm_tau" => 7200.0,
     "bm_relative_humidity" => 0.8,
-    # Keeps the spectrally truncated analytic initialization nonnegative.
+    "bm_energy_correction" => :isca,
+    # Optional floor for very dry represented points in the initial grid tracer.
     "initial_humidity_floor" => 5.0e-5,
-    # Phase one deliberately forbids using this direct-state scheme with BM.
-    "do_Lscale_Cond" => false,
-    "L" => 0.2,
+    # Condensation receives the state after convection within each substep.
+    "do_Lscale_Cond" => true,
+    "condensation_heating_fraction" => 1.0,
     "do_LRF" => false,
     "do_Sensible_Heating" => true,
     "C_H" => 0.0044,
@@ -54,7 +55,7 @@ config = Model_Config(
     omega = 7.292e-5,
     grav = 9.80,
     Δt = 600,
-    end_time = 86400,
+    end_time = 5 * 86400,
     day_to_sec = 86400,
     damping_order = 4,
     damping_coef = 1.15741e-4,
@@ -66,7 +67,7 @@ config = Model_Config(
     output_filename = joinpath(output_path, "output.nc"),
     logger = joinpath(output_path, "logger.log"),
     do_plev_output = true,
-    vars_to_output = [:u, :v, :q, :t, :ps, :precip, :bm_dt, :bm_dq, :bm_precip],
+    vars_to_output = [:u, :v, :q, :t, :ps, :precip, :bm_dt, :bm_dq, :bm_precip, :lhflx, :shflx],
     output_interval = 3600,
     saving_frequency = 0,
     physics_params = physics_params,

@@ -1,0 +1,5 @@
+name	active	cape_J_kg	rain_mm_day	surface_Tdot_K_s	max_abs_qdot_s	lcl	lzb	max_parcel_error_K
+deep	true	1243.6573959841076	48.169684335470464	-0.00014782205160775451	6.16726587200789e-07	28	9	0
+shallow	true	988.82922806077681	0	9.98278933710108e-06	4.7858909995206092e-07	29	10	0
+virtual	false	454.23657013397872	0	0	0	30	9	0
+dry_neutral	false	0	0	0	0	0	0	0

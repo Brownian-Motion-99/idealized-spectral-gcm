@@ -1,0 +1,191 @@
+energy_scope = "The ledger measures cp*T+Lv*q+K and records all observed changes. It is not a full moist-energy theorem; dynamics/fixers are grouped, and pressure/PBL terms are measured separately."
+identical_initial_states = true
+ledger_method = "Previous-level leapfrog recurrence; process changes observed by replay matching production physics each step."
+ledger_quantities = ["water_kg_m2", "cpT_plus_Lvq_plus_K_J_m2", "dry_mass_kg_m2"]
+matched_source_files = true
+passed = true
+
+[coarse]
+accumulated_bm_rain_mm = 7.963705729862375
+accumulated_evaporation_mm = 10.803024975909848
+accumulated_lscale_rain_mm = 1.3223568115082218
+bounds = [168.47428268911747, 305.2004090232319, 0.0, 0.020079011427320714]
+days = 5.0
+dt = 600
+elapsed_seconds = 41.272345035
+final_ledger = [29.931371042965807, 2.6130841839487047e9, 10175.667224044459]
+initial_ledger = [28.414408608425365, 2.6157212421138744e9, 10175.667224045323]
+initial_state_sha256 = "e766c9264353a663f8960c270990644aa7b0ddd5efad4471c5668d1c52dfde35"
+julia_version = "1.8.5"
+passed = true
+steps = 720
+threads = 8
+
+    [coarse.cumulative_process_changes]
+    betts_miller = [-7.963705729861584, 0.0003399848937988281, 7.963705729243884]
+    dynamics_with_corrections = [-6.892264536872972e-13, -0.0005674362182617188, 2.9722286853939295e-9]
+    humidity_cleanup = [0.0, 0.0, 0.0]
+    large_scale_condensation = [-1.3223568115088824, 1.430511474609375e-6, 1.322356811944701]
+    newtonian_relaxation = [0.0, -3.2925862618012905e7, 0.0]
+    pbl_mixing = [-5.751843445978011e-12, 252015.97894477844, -2.459273673593998e-9]
+    pressure_adjustment = [6.714628852932947e-13, 376964.9796643257, 1.516962434459856]
+    rayleigh_with_heating = [0.0, -5.245208740234375e-6, 0.0]
+    sensible_heat = [0.0, 2.652261055234909e6, 0.0]
+    spectral_synchronization = [-2.7711166694643907e-13, -0.0005092620849609375, 1.0459189070388675e-9]
+    surface_evaporation = [10.803024975911992, 2.700756243952179e7, -10.80302497681987]
+
+    [coarse.source_sha256]
+    "exp/BettsMiller_Validation/validate.jl" = "f8850fee82ff9ef034c4558528b3093717c9c00e14bc31c5cd67bd6e5c57046d"
+    "src/Core/Atmo_Data.jl" = "89209e9019077302b839203e02a8f1cda7bc11d240972a84f5e8888030947eeb"
+    "src/Core/Dyn_Data.jl" = "45846d06711df7ebd69cd85754fa5e40afa9a396ee445428f4283224fe06f752"
+    "src/Core/Experiment_Configuration.jl" = "188f3c68d4c040e31c18048a151636458464646a14b0b05fcaaacbef1a037e8d"
+    "src/Core/Gauss_And_Legendre.jl" = "2566332dcd46219600e9e03468715a1c0503c0cf913c8b6430d2a152bd11609f"
+    "src/Core/Spectral_Spherical_Mesh.jl" = "6c00254926158fc8d5d7d07179b1fd85524f7ea4491e4daa57d155ee45b452b3"
+    "src/Core/Variable_Mappings.jl" = "d8b11a80782e263a471d08f172aca847006f783ebebfc65012dab27667108d3f"
+    "src/Core/Vert_Coordinate.jl" = "561e1b0cb4b319fe36729f4ebea10f35bf0843e59aca79c40552f79f93b14a45"
+    "src/Driver.jl" = "756b2951cc2c586c2d78d1eef90156cbb72cbaa1033f419848fbcd8e454e454b"
+    "src/Dynamics/Barotropic_Dynamics.jl" = "34f9bdd87924741753a2c4de107a9ef0be50547feacb4a3949211b1f8225c80a"
+    "src/Dynamics/Grid_Tracer_Transport.jl" = "8fec2f2a2140f3812934fc98c1ee6510381cd49d3ae082eef1f5fc9865b0a682"
+    "src/Dynamics/Press_And_Geopot.jl" = "462fd3e24dff4988c9ed7316c5d901f775f8a1df6c0b55e20204b48a6e2c6287"
+    "src/Dynamics/Semi_Implicit.jl" = "0f588328eb59626c0264635a6c246b410436e4e03594117ab9411da2ad99a9a5"
+    "src/Dynamics/Shallow_Water_Dynamics.jl" = "be934f2975d6aa780aa3081c92170205118eae1c300bc108c53b1130f27c0feb"
+    "src/Dynamics/Spectral_Dynamics.jl" = "399ed4527c703e53affe8ceeabecc45cbb561d34b3e68e1e3659a90aa5a09f17"
+    "src/Dynamics/Time_Integrator.jl" = "6ad818e21e08e74cc1d8597aeeb199a2f4ec111fe896d80f56ef01b29f43dad6"
+    "src/Initialization/Initial_Conditions.jl" = "2855c71561313c60f88ba51bb5b61320dc58e0d9b9304a193cd6d08a72d06a18"
+    "src/JGCM.jl" = "b38c8dd456fc09a0cb9b4715a587637cd534bee3ba542517db7458f33e7ac9b7"
+    "src/Output/Output_Manager.jl" = "94b969d4ef1d083f01172739353d97cd3c419168114cc5707abdebfc826f3d93"
+    "src/Output/Output_Mappings.jl" = "4fea8b376fdebe203d0cb985e9cfcf8f7c218f2cffdb735a7a99f190b93cc1d3"
+    "src/Output/Restart_Manager.jl" = "21e3ad32d349427c5d554c8cb2d891b55359d4b171d74b36fb97c9ef5af794ae"
+    "src/Output/Vertical_Interpolation.jl" = "d3ae1d97e9528e42dca7f7b9ff953a2f712becb9870c8972ded1492f335e30ed"
+    "src/Physics/Atmos_Param.jl" = "9679c11f0225844a7b9b8ccffc6f8bfd7e2b783601c330e7527fbf553460dfd8"
+    "src/Physics/Betts_Miller.jl" = "0489707f001027fef281e67525d98957cf5800077d74871f3c07ae11567f9ebc"
+    "src/Physics/Dry_Air_Adjustment.jl" = "9ff13dff67470546451877d72cc8bebb8807abd340ebdfaccc506886607a8209"
+    "src/Physics/HS_Forcing.jl" = "5b4dd8e202b0ca696de1d7a27538fcab23650dc77124598c929fd5bc93ca9ffe"
+    "src/Physics/LRF.jl" = "7843c188e3bbb9b5b4131a772f6e3b26742023706e43b2ffd3e43a40f085ac44"
+    "src/Physics/Lower_Boundary_Temperature.jl" = "deccf010b302c89c3fbcdceb5fbbe5a1d17a88bfae4229fd5aef968c4490aafb"
+    "src/Physics/Lscale_Cond.jl" = "45b8348be01e003f0386fba505dc093a3f26a8adc2a7403d0c924b43bf8436ba"
+    "src/Physics/Moist_Physics.jl" = "20bc51c7096d19acfae993b3b0017bcac69ec6716db248c8c90b9cccb09203b0"
+    "src/Physics/Moist_Thermodynamics.jl" = "288aa789e19c150533a49f682af903dc5669e217bda1dc24218d09ac9440b4e8"
+    "src/Physics/PBL.jl" = "0daaec61fe5e0567b8604cc3fe11a01b7e7d4c5aaa093fc54f1b9ec7204adcb4"
+    "src/Physics/Spectral_Physics_Interface.jl" = "554ac07b40a790fccff45d021ce6b335478046dd9a5f63decfc0a282f46a0eac"
+
+    [coarse.statistics]
+    deep_samples = 1.320704e6
+    max_bm_energy_residual = 4.38690185546875e-5
+    max_bm_humidity_increment = 0.00029195837022355747
+    max_bm_temperature_increment = 0.5560021505997407
+    max_bm_water_residual = 3.2357872891547457e-13
+    max_evaporation_water_residual = 2.701146598060866e-13
+    max_ledger_energy_residual = 0.0003676414489746094
+    max_ledger_water_residual = 5.3859139370615594e-12
+    max_lscale_energy_residual = 9.5367431640625e-7
+    max_lscale_water_residual = 1.3336879343961439e-13
+    max_pressure_dry_mass_residual = 3.092281986027956e-10
+    max_pressure_water_residual = 2.842170943040401e-14
+    max_replay_error = 0.0
+    max_sensible_energy_residual = 2.9427452318486758e-5
+    max_transition_humidity_increment = 0.00029195837022355747
+    max_transition_temperature_increment = 0.46233412471299457
+    none_samples = 1.082276e6
+    regime_changes = 67464.0
+    shallow_samples = 544092.0
+
+[comparison]
+bm_rain_relative_difference = 0.008535346743314657
+evaporation_relative_difference = -0.0015890741175173836
+lscale_rain_relative_difference = -0.04558373668918352
+ps_area_weighted_rms = 33.48653498297364
+ps_max_absolute_difference = 179.69556393753737
+q_mass_weighted_rms = 0.00014714007899227624
+q_max_absolute_difference = 0.0027743091211617664
+t_mass_weighted_rms = 0.25633350772183366
+t_max_absolute_difference = 2.697686811262855
+u_mass_weighted_rms = 0.6690203147042454
+u_max_absolute_difference = 9.233936113891819
+v_mass_weighted_rms = 0.5457318952529485
+v_max_absolute_difference = 8.585280593496378
+
+[fine]
+accumulated_bm_rain_mm = 7.896308003064211
+accumulated_evaporation_mm = 10.820219106037118
+accumulated_lscale_rain_mm = 1.3855137033405531
+bounds = [168.45955699577843, 305.2004090232319, 0.0, 0.020097824016579547]
+days = 5.0
+dt = 300
+elapsed_seconds = 86.358620482
+final_ledger = [29.95280600805915, 2.613204094900698e9, 10175.667224044435]
+initial_ledger = [28.414408608425365, 2.6157212421138744e9, 10175.667224045323]
+initial_state_sha256 = "e766c9264353a663f8960c270990644aa7b0ddd5efad4471c5668d1c52dfde35"
+julia_version = "1.8.5"
+passed = true
+steps = 1440
+threads = 8
+
+    [fine.cumulative_process_changes]
+    betts_miller = [-7.8963080030623445, 0.0003495216369628906, 7.8963080041885405]
+    dynamics_with_corrections = [-1.8047785488306545e-12, 0.00014019012451171875, 1.7025740817189217e-9]
+    humidity_cleanup = [0.0, 0.0, 0.0]
+    large_scale_condensation = [-1.3855137033390719, -2.384185791015625e-6, 1.3855137035716325]
+    newtonian_relaxation = [0.0, -3.2919825371615887e7, 0.0]
+    pbl_mixing = [8.881784197001252e-14, 251457.0828385353, -3.663444658741355e-9]
+    pressure_adjustment = [5.719869022868806e-13, 382434.7675457001, 1.538397401356633]
+    rayleigh_with_heating = [0.0, 4.76837158203125e-7, 0.0]
+    sensible_heat = [0.0, 2.718238542837143e6, 0.0]
+    spectral_synchronization = [3.268496584496461e-13, -9.107589721679688e-5, 1.3005774235352874e-9]
+    surface_evaporation = [10.820219106036426, 2.7050547765454292e7, -10.82021910594267]
+
+    [fine.source_sha256]
+    "exp/BettsMiller_Validation/validate.jl" = "f8850fee82ff9ef034c4558528b3093717c9c00e14bc31c5cd67bd6e5c57046d"
+    "src/Core/Atmo_Data.jl" = "89209e9019077302b839203e02a8f1cda7bc11d240972a84f5e8888030947eeb"
+    "src/Core/Dyn_Data.jl" = "45846d06711df7ebd69cd85754fa5e40afa9a396ee445428f4283224fe06f752"
+    "src/Core/Experiment_Configuration.jl" = "188f3c68d4c040e31c18048a151636458464646a14b0b05fcaaacbef1a037e8d"
+    "src/Core/Gauss_And_Legendre.jl" = "2566332dcd46219600e9e03468715a1c0503c0cf913c8b6430d2a152bd11609f"
+    "src/Core/Spectral_Spherical_Mesh.jl" = "6c00254926158fc8d5d7d07179b1fd85524f7ea4491e4daa57d155ee45b452b3"
+    "src/Core/Variable_Mappings.jl" = "d8b11a80782e263a471d08f172aca847006f783ebebfc65012dab27667108d3f"
+    "src/Core/Vert_Coordinate.jl" = "561e1b0cb4b319fe36729f4ebea10f35bf0843e59aca79c40552f79f93b14a45"
+    "src/Driver.jl" = "756b2951cc2c586c2d78d1eef90156cbb72cbaa1033f419848fbcd8e454e454b"
+    "src/Dynamics/Barotropic_Dynamics.jl" = "34f9bdd87924741753a2c4de107a9ef0be50547feacb4a3949211b1f8225c80a"
+    "src/Dynamics/Grid_Tracer_Transport.jl" = "8fec2f2a2140f3812934fc98c1ee6510381cd49d3ae082eef1f5fc9865b0a682"
+    "src/Dynamics/Press_And_Geopot.jl" = "462fd3e24dff4988c9ed7316c5d901f775f8a1df6c0b55e20204b48a6e2c6287"
+    "src/Dynamics/Semi_Implicit.jl" = "0f588328eb59626c0264635a6c246b410436e4e03594117ab9411da2ad99a9a5"
+    "src/Dynamics/Shallow_Water_Dynamics.jl" = "be934f2975d6aa780aa3081c92170205118eae1c300bc108c53b1130f27c0feb"
+    "src/Dynamics/Spectral_Dynamics.jl" = "399ed4527c703e53affe8ceeabecc45cbb561d34b3e68e1e3659a90aa5a09f17"
+    "src/Dynamics/Time_Integrator.jl" = "6ad818e21e08e74cc1d8597aeeb199a2f4ec111fe896d80f56ef01b29f43dad6"
+    "src/Initialization/Initial_Conditions.jl" = "2855c71561313c60f88ba51bb5b61320dc58e0d9b9304a193cd6d08a72d06a18"
+    "src/JGCM.jl" = "b38c8dd456fc09a0cb9b4715a587637cd534bee3ba542517db7458f33e7ac9b7"
+    "src/Output/Output_Manager.jl" = "94b969d4ef1d083f01172739353d97cd3c419168114cc5707abdebfc826f3d93"
+    "src/Output/Output_Mappings.jl" = "4fea8b376fdebe203d0cb985e9cfcf8f7c218f2cffdb735a7a99f190b93cc1d3"
+    "src/Output/Restart_Manager.jl" = "21e3ad32d349427c5d554c8cb2d891b55359d4b171d74b36fb97c9ef5af794ae"
+    "src/Output/Vertical_Interpolation.jl" = "d3ae1d97e9528e42dca7f7b9ff953a2f712becb9870c8972ded1492f335e30ed"
+    "src/Physics/Atmos_Param.jl" = "9679c11f0225844a7b9b8ccffc6f8bfd7e2b783601c330e7527fbf553460dfd8"
+    "src/Physics/Betts_Miller.jl" = "0489707f001027fef281e67525d98957cf5800077d74871f3c07ae11567f9ebc"
+    "src/Physics/Dry_Air_Adjustment.jl" = "9ff13dff67470546451877d72cc8bebb8807abd340ebdfaccc506886607a8209"
+    "src/Physics/HS_Forcing.jl" = "5b4dd8e202b0ca696de1d7a27538fcab23650dc77124598c929fd5bc93ca9ffe"
+    "src/Physics/LRF.jl" = "7843c188e3bbb9b5b4131a772f6e3b26742023706e43b2ffd3e43a40f085ac44"
+    "src/Physics/Lower_Boundary_Temperature.jl" = "deccf010b302c89c3fbcdceb5fbbe5a1d17a88bfae4229fd5aef968c4490aafb"
+    "src/Physics/Lscale_Cond.jl" = "45b8348be01e003f0386fba505dc093a3f26a8adc2a7403d0c924b43bf8436ba"
+    "src/Physics/Moist_Physics.jl" = "20bc51c7096d19acfae993b3b0017bcac69ec6716db248c8c90b9cccb09203b0"
+    "src/Physics/Moist_Thermodynamics.jl" = "288aa789e19c150533a49f682af903dc5669e217bda1dc24218d09ac9440b4e8"
+    "src/Physics/PBL.jl" = "0daaec61fe5e0567b8604cc3fe11a01b7e7d4c5aaa093fc54f1b9ec7204adcb4"
+    "src/Physics/Spectral_Physics_Interface.jl" = "554ac07b40a790fccff45d021ce6b335478046dd9a5f63decfc0a282f46a0eac"
+
+    [fine.statistics]
+    deep_samples = 2.637093e6
+    max_bm_energy_residual = 4.76837158203125e-5
+    max_bm_humidity_increment = 0.000142061652186833
+    max_bm_temperature_increment = 0.2792018053596708
+    max_bm_water_residual = 3.6675523729101656e-13
+    max_evaporation_water_residual = 3.218211287736583e-13
+    max_ledger_energy_residual = 0.0008959770202636719
+    max_ledger_water_residual = 3.2720492981752614e-12
+    max_lscale_energy_residual = 4.76837158203125e-7
+    max_lscale_water_residual = 1.606297560241554e-13
+    max_pressure_dry_mass_residual = 3.128661774098873e-10
+    max_pressure_water_residual = 3.197442310920451e-14
+    max_replay_error = 0.0
+    max_sensible_energy_residual = 3.1150895438258885e-5
+    max_transition_humidity_increment = 0.000142061652186833
+    max_transition_temperature_increment = 0.2367355958105907
+    none_samples = 2.166223e6
+    regime_changes = 100775.0
+    shallow_samples = 1.092876e6

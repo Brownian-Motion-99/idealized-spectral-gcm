@@ -104,7 +104,11 @@ state confirms that process ordering affects the tested outcome.
 
 These establish the intended idealized column physics and its coupling.
 They do not establish whole-GCM energy conservation or climate fidelity.
-Step 6's multi-day model experiments remain deferred.
+Step 6's five-day model comparison is now recorded in
+[model_results_20261005.toml](model_results_20261005.toml) and
+[the model validation documentation](../../docs/src/betts-miller-validation.md).
+The completed [static audit](static_audit_20261005.md) records the control-flow,
+diagnostic, and domain checks performed before those runs.
 
 The focused BM suite passes 15,024 assertions with one and four Julia threads.
 The complete suite passes 15,626 assertions in a disposable copy retaining
