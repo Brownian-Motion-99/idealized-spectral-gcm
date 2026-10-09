@@ -84,6 +84,8 @@ using JGCM
         vert, atmo, integrator, 1.0e5, fill(300.0, nd), mesh.wave_numbers,
     )
 
+    vor_from_spectral = similar(dyn.grid_vor)
+    div_from_spectral = similar(dyn.grid_div)
     for step in 1:30
         JGCM.Driver.Step_Dynamics!(
             config, mesh, atmo, dyn, integrator, semi, vert, physics_params,
@@ -99,6 +101,12 @@ using JGCM
         @test all(isfinite, dyn.grid_q_c)
         @test minimum(dyn.grid_t_c) > 0.0
         @test minimum(dyn.grid_q_c) >= -1.0e-14
+        Trans_Spherical_To_Grid!(mesh, dyn.spe_vor_c, vor_from_spectral)
+        Trans_Spherical_To_Grid!(mesh, dyn.spe_div_c, div_from_spectral)
+        @test maximum(abs, dyn.grid_vor - vor_from_spectral) <=
+              1.0e-18 + 5.0e-13 * maximum(abs, vor_from_spectral)
+        @test maximum(abs, dyn.grid_div - div_from_spectral) <=
+              1.0e-18 + 5.0e-13 * maximum(abs, div_from_spectral)
     end
 
     @test !hasproperty(dyn, :spe_q_c)

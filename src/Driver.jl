@@ -223,8 +223,13 @@ function JGCM_Simulate(config::Model_Config)
         lrf_file = get(physics_params, "LRF_file", nothing)
         lrf_file isa AbstractString ||
             error("LRF requires physics_params[\"LRF_file\"]")
-        physics_params["LRF_state"] =
-            Load_LRF_State(lrf_file, nλ, config.nθ, config.nd)
+        physics_params["LRF_state"] = Load_LRF_State(
+            lrf_file,
+            nλ,
+            config.nθ,
+            config.nd;
+            latitude = rad2deg.(mesh.θc),
+        )
     end
 
     # Construct Betts-Miller configuration and reusable column work arrays once.
@@ -264,7 +269,7 @@ function JGCM_Simulate(config::Model_Config)
         end
 
         # Load data AND get the time we left off
-        saved_time = Load_Restart_File!(dyn_data, config.restart_file)
+        saved_time = Initial_Conditions._load_restart_state!(mesh, dyn_data, config)
 
         start_time = saved_time
         init_step  = false  # We are resuming, so we don't need the Euler start

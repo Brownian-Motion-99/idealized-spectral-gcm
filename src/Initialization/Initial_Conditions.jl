@@ -7,10 +7,24 @@ using ..Experiment_Configuration
 using ..Variable_Mappings_Module
 using ..Vert_Coordinate_Module
 using ..Press_And_Geopot_Module: Pressure_Variables!
-using ..Spectral_Dynamics_Module: Get_Topography!
+using ..Spectral_Dynamics_Module: Get_Topography!, _refresh_grid_vor_div!
 using ..Restart_Manager_Module
 
 export Initialize_Atmos_State!
+
+"""Load prognostics and reconstruct derived fields needed by resumed dynamics."""
+function _load_restart_state!(mesh, dyn_data, config)
+    saved_time = Load_Restart_File!(dyn_data, config.restart_file)
+    if config.model_type == :PrimitiveEquation
+        # Pre-fix checkpoints may contain pre-physics grid diagnostics. Current
+        # spectra are authoritative; preserve all loaded time-level prognostics.
+        _refresh_grid_vor_div!(
+            mesh, dyn_data.spe_vor_c, dyn_data.spe_div_c,
+            dyn_data.grid_vor, dyn_data.grid_div,
+        )
+    end
+    return saved_time
+end
 
 
 
@@ -33,7 +47,7 @@ function Initialize_Atmos_State!(
     # --- Restart --- #
     if config.is_restart
         if isfile(config.restart_file)
-            Load_Restart_File!(dyn_data, config.restart_file)
+            _load_restart_state!(mesh, dyn_data, config)
             @info "Initialization complete: Loaded warm start from $(config.restart_file)"
             return # <--- Crucial: Stop here!
         else

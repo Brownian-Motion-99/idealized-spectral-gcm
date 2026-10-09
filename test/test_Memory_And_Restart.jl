@@ -11,16 +11,60 @@ end
     mktempdir() do dir
         manager = Restart_Manager(dir, 600)
         source = Dyn_Data("source", 1, 2, 4, 2, 2)
-        source.spe_vor_p[1] = 3 + 4im
-        source.grid_u_c[1] = 12.5
-        source.grid_q_c .= 0.007
+        array_fields = filter(name -> getfield(source, name) isa Array, fieldnames(Dyn_Data))
+        # Populate every element, including diagnostics and all three time levels.
+        # Distinct field/element values expose omissions and swapped buffers.
+        for (field_index, name) in enumerate(array_fields)
+            array = getfield(source, name)
+            for i in eachindex(array)
+                array[i] = eltype(array) <: Complex ?
+                    complex(field_index + i / 128, -field_index - i / 256) :
+                    field_index + i / 128
+            end
+        end
         Write_Restart_File(manager, source, 600)
 
         restored = Dyn_Data("restored", 1, 2, 4, 2, 2)
-        @test Load_Restart_File!(restored, joinpath(dir, "restart_t600.jld2")) == 600
-        @test restored.spe_vor_p == source.spe_vor_p
-        @test restored.grid_u_c == source.grid_u_c
-        @test restored.grid_q_c == source.grid_q_c
+        buffers = Dict(name => getfield(restored, name) for name in array_fields)
+        for array in values(buffers)
+            fill!(array, NaN)
+        end
+        checkpoint = joinpath(dir, "restart_t600.jld2")
+        @test Load_Restart_File!(restored, checkpoint) === Int64(600)
+        jldopen(checkpoint, "r") do file
+            @test file["restart_format_version"] == 3
+            @test file["saved_time"] === Int64(600)
+            @test file["dimensions"] == (1, 2, 4, 2, 2)
+            @test Set(keys(file["state"])) == Set(string.(array_fields))
+            for name in array_fields
+                @testset "$name" begin
+                    expected, actual = getfield(source, name), getfield(restored, name)
+                    saved = file["state/$name"]
+                    @test size(saved) == size(expected) == size(actual)
+                    @test typeof(saved) == typeof(expected) == typeof(actual)
+                    @test reinterpret(UInt8, vec(saved)) == reinterpret(UInt8, vec(expected))
+                    @test reinterpret(UInt8, vec(actual)) == reinterpret(UInt8, vec(expected))
+                    @test actual === buffers[name]
+                end
+            end
+        end
+        @test restored.name == "restored"
+        @test !isfile(checkpoint * ".tmp")
+
+        @testset "Reject incompatible dimensions and array shapes" begin
+            wrong_resolution = Dyn_Data("wrong", 2, 3, 4, 2, 2)
+            @test_throws ErrorException Load_Restart_File!(wrong_resolution, checkpoint)
+            for shape in ((5, 2, 2), (4, 3, 2), (4, 2, 3))
+                invalid = joinpath(dir, "wrong_shape_$(join(shape, '_')).jld2")
+                jldopen(invalid, "w") do file
+                    file["restart_format_version"] = 3
+                    file["saved_time"] = 600
+                    file["dimensions"] = (1, 2, 4, 2, 2)
+                    file["state/grid_q_c"] = zeros(Float64, shape)
+                end
+                @test_throws ErrorException Load_Restart_File!(restored, invalid)
+            end
+        end
 
         # Version-2 restarts may contain obsolete spectral humidity arrays;
         # the version-3 grid-only state loads the common grid fields and

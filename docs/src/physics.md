@@ -487,8 +487,17 @@ solve and converted back afterward.
 
 ## Moisture linear response function
 
-The optional LRF represents a prescribed longwave temperature response to
-humidity anomalies. For each latitude and longitude,
+The optional LRF adds a prescribed longwave temperature response to humidity
+anomalies. It changes temperature only and uses fixed coefficients and
+reference humidity throughout a run. Three artifact schemes are supported.
+Each is evaluated independently in every model column, with matrix rows
+representing temperature response levels and columns representing humidity
+perturbation levels. There is no horizontal convolution or online zonal
+averaging.
+
+### Legacy linear humidity response
+
+The `linear_q_v1` scheme uses `LRF_State`. For each latitude and longitude,
 
 ```math
 \left.\frac{\partial T_{k_o}}{\partial t}\right|_{LRF}
@@ -498,18 +507,140 @@ L_{k_o k_i}(\phi)
 \left[q_{k_i}-q_{ref,k_i}(\lambda,\phi)\right].
 ```
 
-The response matrix values are interpreted as K day$^{-1}$ per unit specific
-humidity and converted using `day_to_sec`. The scheme changes temperature only.
-
-Enable it with `"do_LRF" => true` and set `"LRF_file"` to a JLD2 file that
-contains:
+The matrix values have units K day$^{-1}$ per unit specific humidity in kg/kg.
+A legacy JLD2 file contains:
 
 - `LRF_LW_q` with size `(nd, nd, nθ)`;
 - `ref_q` with size `(nλ, nθ, nd)`.
 
-The file is loaded and dimension-checked once before integration. LRF requires
-`moisture_processes = true`; the resulting temperature rate is output with
-`:lrf_dt`.
+A file with no `scheme` key is interpreted as `linear_q_v1`, preserving
+compatibility with existing artifacts.
+
+### Regularized logarithmic response
+
+Both modified schemes define a natural-log humidity anomaly
+
+```math
+\delta\chi_k(\lambda,\phi)
+=\ln\left[q_k(\lambda,\phi)+q_0\right]-\chi_{ref,k}(\phi).
+```
+
+Here $q$ and $q_0$ are numerical values of specific humidity in kg/kg. The
+positive $q_0$ makes the logarithm finite at zero humidity. It does not alter
+the prognostic humidity or limit heating. Negative and nonfinite humidity
+inputs are rejected. The response is linear in $\delta\chi$, while its local
+derivative with respect to $q$ scales as $1/(q+q_0)$.
+
+The shared-matrix scheme, `regularized_log_tapered_v1`, uses
+`Regularized_LRF_State` and computes
+
+```math
+\left.\frac{\partial T_{k_o}}{\partial t}\right|_{LRF}
+=\frac{\alpha\,w(\phi)}{t_{day}}
+\sum_{k_i=1}^{N} B^*_{k_o k_i}\,\delta\chi_{k_i}(\lambda,\phi).
+```
+
+The stored `taper` supplies $w(\phi)$ in $[0,1]$; a zero weight gives exactly
+zero heating at that latitude. The runtime does not generate a taper from
+latitude or assume a particular tropical transition.
+
+The latitude-specific scheme, `regularized_log_latitude_v1`, uses
+`Latitude_LRF_State` and computes
+
+```math
+\left.\frac{\partial T_{k_o}}{\partial t}\right|_{LRF}
+=\frac{\alpha}{t_{day}}
+\sum_{k_i=1}^{N} B_{k_o k_i}(\phi)\,\delta\chi_{k_i}(\lambda,\phi).
+```
+
+Every latitude has a separate vertical matrix, shared by all its longitudes.
+This scheme has no separate taper. Both logarithmic matrices have units
+K day$^{-1}$ per unit log-humidity anomaly; all schemes divide by
+`config.day_to_sec` to return K s$^{-1}$.
+
+The logarithmic JLD2 artifact layouts are:
+
+| Key | `regularized_log_tapered_v1` | `regularized_log_latitude_v1` |
+|:---|:---|:---|
+| `scheme` | `"regularized_log_tapered_v1"` | `"regularized_log_latitude_v1"` |
+| Response matrix | `B_star(nd, nd)` | `B_by_lat(nd, nd, nθ)` |
+| `chi_reference` | `(nd, nθ)` | `(nd, nθ)` |
+| `taper` | vector of length `nθ`, in `[0, 1]` | unused |
+| `q0_kg_kg` | positive finite scalar | positive finite scalar |
+| `alpha` | nonnegative finite scalar | nonnegative finite scalar |
+| `latitude` | vector of length `nθ`, in degrees | vector of length `nθ`, in degrees |
+
+Matrices and references must be finite. `alpha` and `q0_kg_kg` come from the
+artifact; the driver has no strength override or activation ramp. Model
+indices, including vertical ordering, must match the artifact: the loader
+does no regridding. On the driver path, stored latitude values and ordering
+must match `rad2deg.(mesh.θc)` within `1e-10` degrees. Direct calls to
+`Load_LRF_State(...; latitude=nothing)` skip this coordinate check. Legacy
+artifacts are dimension-checked but do not undergo the logarithmic schemes'
+finite-value or latitude-coordinate checks. Stored pressure coordinates and
+provenance metadata are not validated by the runtime loader.
+
+For a reference centered on a calibration climate, use
+$\chi_{ref}=\langle\ln(q+q_0)\rangle$ over the chosen time and longitude
+sample. This generally differs from $\ln(\langle q\rangle+q_0)$.
+With fixed matrices, the former makes mean added heating vanish over that
+sample at each level and latitude. A different climate or reference policy
+can have nonzero mean heating. If $L$ is an offline humidity Jacobian, the
+transformed matrix can be formed as
+$B_{k_o k_i}=L_{k_o k_i}(q_{cal,k_i}+q_0)$; the model consumes the resulting
+matrix and does not run a radiation model online.
+
+### Configuration and coupling
+
+Enable LRF in `Model_Config` with `moisture_processes = true` and
+
+```julia
+physics_params = Dict{String,Any}(
+    "do_LRF" => true,
+    "LRF_file" => "/path/to/latitude_lrf.jld2",
+)
+```
+
+The driver loads and validates the file once before integration. A minimal
+latitude-specific artifact can be written from matching model-grid arrays:
+
+```julia
+using JLD2
+
+JLD2.jldsave("latitude_lrf.jld2";
+    scheme = "regularized_log_latitude_v1",
+    B_by_lat = B_by_lat,
+    chi_reference = chi_reference,
+    q0_kg_kg = 1.0e-8,
+    alpha = 1.0,
+    latitude = rad2deg.(mesh.θc),
+)
+```
+
+LRF sees humidity after convection, condensation, surface exchange, and PBL
+mixing in each physics substep. After Held--Suarez forcing it adds the
+explicit increment `T += physics_dt * lrf_tendency`, before physical-state
+validation and dry-air adjustment. The later spectral synchronization uses
+the post-physics energy target, retaining this physical heating. The output
+symbol `:lrf_dt` writes `lrf_dta_dt` in K s$^{-1}$: the physics-interval mean
+of the substep rates, subsequently averaged over the output interval. Its
+buffer is zero when LRF is disabled.
+
+Coefficients are reloaded from the configured external artifact on a restart;
+they are not stored in checkpoints. Keep the artifact and its provenance
+with the experiment. These prescribed humidity responses do not include an
+online cloud, shortwave, or temperature-radiation calculation, and finite
+zero-humidity heating does not establish stability or accuracy far from the
+calibration climate.
+
+`post_processing/Build_Experiment_LRF.py` prepares separately centered
+T42L20 artifacts for `ctrl_BM`, `sst1.0_BM`, and `sst2.5_BM` from native
+archives. It requires a climlab/RRTMG environment and the external utilities
+selected by `--utilities`; those utilities are not bundled with JGCM.
+`post_processing/Write_Experiment_LRF.jl STAGING_DIRECTORY` exports its binary
+staging inputs to JLD2 and checks the actual model grid, Python/Julia heating
+agreement, and reference/zero-humidity behavior. Offline HDF5 calibration
+files must be exported to JLD2 before using them as `LRF_file`.
 
 ## Parameterization diagnostics
 

@@ -156,6 +156,14 @@ function _filter_grid_humidity!(
     return nothing
 end
 
+"""Reconstruct relative vorticity/divergence in the shared diagnostic buffers."""
+function _refresh_grid_vor_div!(mesh, spe_vor, spe_div, grid_vor, grid_div)
+    # Both transforms use the mesh's scratch storage and must run sequentially.
+    Trans_Spherical_To_Grid!(mesh, spe_vor, grid_vor)
+    Trans_Spherical_To_Grid!(mesh, spe_div, grid_div)
+    return nothing
+end
+
 """Make a gridpoint-adjusted next state authoritative in spectral space."""
 function _synchronize_physics_next!(
     mesh::Spectral_Spherical_Mesh,
@@ -198,6 +206,12 @@ function _synchronize_physics_next!(
         dyn_data.spe_div_n,
         dyn_data.grid_u_n,
         dyn_data.grid_v_n,
+    )
+    # Physics can change winds after the provisional dynamics reconstruction.
+    # These uncycled diagnostics describe n here, and c after Time_Advance!.
+    _refresh_grid_vor_div!(
+        mesh, dyn_data.spe_vor_n, dyn_data.spe_div_n,
+        dyn_data.grid_vor, dyn_data.grid_div,
     )
     Trans_Grid_To_Spherical!(mesh, dyn_data.grid_t_n, dyn_data.spe_t_n)
     Trans_Spherical_To_Grid!(mesh, dyn_data.spe_t_n, dyn_data.grid_t_n)
@@ -842,8 +856,7 @@ function Spectral_Dynamics!(
     Filtered_Leapfrog!(integrator, spe_δlnps, spe_lnps_p, spe_lnps_c, spe_lnps_n)
     Filtered_Leapfrog!(integrator, spe_δt, spe_t_p, spe_t_c, spe_t_n)
 
-    Trans_Spherical_To_Grid!(mesh, spe_vor_n, grid_vor)
-    Trans_Spherical_To_Grid!(mesh, spe_div_n, grid_div)
+    _refresh_grid_vor_div!(mesh, spe_vor_n, spe_div_n, grid_vor, grid_div)
     UV_Grid_From_Vor_Div!(mesh, spe_vor_n, spe_div_n, grid_u_n, grid_v_n)
     Trans_Spherical_To_Grid!(mesh, spe_lnps_n, grid_lnps)
     grid_ps_n .= exp.(grid_lnps)

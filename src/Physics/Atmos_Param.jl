@@ -18,7 +18,8 @@ include("Dry_Air_Adjustment.jl")
 include("Spectral_Physics_Interface.jl")
 
 export Dry_Air_Adjustment!, Spectral_Physics!, Physics_Workspace
-export LRF_State, Load_LRF_State, LRF!
+export Abstract_LRF_State, LRF_State, Regularized_LRF_State, Latitude_LRF_State
+export Load_LRF_State, LRF!
 export Betts_Miller_State, Betts_Miller_Column, Betts_Miller!
 export Saturation_Vapor_Pressure, Saturation_Mixing_Ratio, Saturation_Specific_Humidity
 export PBL_Workspace

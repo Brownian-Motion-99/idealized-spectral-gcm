@@ -1,8 +1,14 @@
 using JGCM
 
 # Moist-physics switches
-do_betts_miller = false
+do_betts_miller = true
 do_lscale_condensation = true
+
+# Prescribed SST perturbation for this experiment, in kelvin.
+sst_amplitude = 5.0
+surface_temperature(longitude, latitude) =
+    Default_Lower_Boundary_Temperature(longitude, latitude) +
+    sst_amplitude * exp(-latitude^2 / (2.0 * deg2rad(15.0)^2)) * sin(longitude)
 
 # LRF requires a resolution-matched JLD2 file. It is enabled when the file is
 # supplied, for example:
@@ -24,7 +30,7 @@ physics_params = Dict{String,Any}(
     # Betts-Miller convection
     "do_Betts_Miller" => do_betts_miller,
     "bm_tau" => 7200.0,
-    "bm_relative_humidity" => 0.8,
+    "bm_relative_humidity" => 0.7,
     # Optional physical background humidity.
     "initial_humidity_floor" => 0.0,
 
@@ -37,6 +43,7 @@ physics_params = Dict{String,Any}(
     "LRF_file" => lrf_file,
 
     # PBL fluxes
+    "lower_boundary_temperature" => surface_temperature,
     "do_Sensible_Heating" => true,
     "C_H" => 0.0044,
     "do_Surface_Evaporation" => true,
@@ -65,7 +72,7 @@ physics_params = Dict{String,Any}(
 )
 
 # 2. Define Output Paths *Before* Configuration
-experiment_name = "ctrl"
+experiment_name = "sst$(sst_amplitude)_BM" * (do_lrf ? "_LRF" : "")
 output_path_base = joinpath("/data92/garywu/undergrad_proposal", experiment_name)
 mkpath(output_path_base)
 

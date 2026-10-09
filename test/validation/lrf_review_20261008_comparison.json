@@ -1,0 +1,49 @@
+{
+  "control": "/tmp/lrf_review_20261008_online_v2/control_bm_on_1day/output_t315360000.nc",
+  "treatment": "/tmp/lrf_review_20261008_online_v2/latitude_bm_on_1day/output_t315360000.nc",
+  "times_day": [
+    3650.25,
+    3650.5,
+    3650.75,
+    3651.0
+  ],
+  "lrf_grid_rms_K_day": [
+    0.5123266478948504,
+    0.5075702204840944,
+    0.5033636265322292,
+    0.4972664406678699
+  ],
+  "nominal_global_column_heating_W_m2": [
+    5.248437360364826,
+    5.214477354030178,
+    5.182984736721293,
+    5.126190666116721
+  ],
+  "one_day_time_zonal_mean_profile_rms_K_day": 0.408305992564295,
+  "last_interval_mean_differences": {
+    "ta": {
+      "maximum_absolute": 2.5837576668652105,
+      "rms": 0.22947367317350173
+    },
+    "hus": {
+      "maximum_absolute": 0.001970494489791806,
+      "rms": 8.409126553689609e-05
+    },
+    "ua": {
+      "maximum_absolute": 11.918285091946473,
+      "rms": 0.383019201043286
+    },
+    "va": {
+      "maximum_absolute": 8.06553944608395,
+      "rms": 0.4474889325637996
+    },
+    "ps": {
+      "maximum_absolute": 87.52677792112809,
+      "rms": 9.48228688913822
+    }
+  },
+  "specific_heat_J_kg_K": 1004.6400000000001,
+  "gravity_m_s2": 9.8,
+  "weighting": "Gaussian horizontal area; nominal pressure layer mass",
+  "scope": "saved interval means; first day only; not equilibrium climate validation"
+}

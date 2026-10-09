@@ -1,0 +1,49 @@
+julia = "1.8.5"
+threads = 4
+mode = "contracts"
+
+[results]
+legacy_reversed_latitude_accepted = true
+legacy_nonfinite_coefficients_accepted = true
+
+    [results."regularized_tapered_lrf.jld2"]
+    q0 = 1.0e-8
+    nominal_phalf_max_error_hPa = 0.0
+    reversed_pressure_metadata_accepted = true
+    source_sha256 = "4270c30d4ed2ad6b147e3a67b4cc7fe2b8f13270ad618bd21964368b879a43ad"
+    reference_max_tendency_K_s = 0.0
+    path = "/home/garywu/undergrad_proposal/LRF/data/regularized_tapered_lrf.jld2"
+    sha256 = "d2bfd07cbc3c83819dc294f28c83369d24920fda5fcd99ffd56ac9aca6e4a91a"
+    all_zero_humidity_tendency_range_K_day = [-11.04761786575419, 22.993188821868006]
+    scheme = "regularized_log_tapered_v1"
+    alpha = 1.0
+    startup_and_leapfrog_temperature_increment_verified = true
+    cold_start_tendency_range_K_day = [-1.489329716575186, 1.7651368529445917]
+    postphysics_energy_target_preserved = true
+    cross_language_max_error_K_s = 2.768738946337494e-20
+    nominal_pfull_max_error_hPa = 1.1368683772161603e-13
+
+    [results."latitude_lrf.jld2"]
+    q0 = 1.0e-8
+    nominal_phalf_max_error_hPa = 0.0
+    reversed_pressure_metadata_accepted = true
+    source_sha256 = "58ffe161480d10a1ff39b97ce143b87f0288c08f3520f9e2d1709e64d9f94e15"
+    reference_max_tendency_K_s = 0.0
+    path = "/home/garywu/undergrad_proposal/LRF/data/latitude_lrf.jld2"
+    sha256 = "a079ffde909f6a0224b9b2a8eaaf0136e37138d7bbcd2a3c1a10e453225a580c"
+    all_zero_humidity_tendency_range_K_day = [-17.45198622874996, 27.036072626312624]
+    scheme = "regularized_log_latitude_v1"
+    alpha = 1.0
+    startup_and_leapfrog_temperature_increment_verified = true
+    cold_start_tendency_range_K_day = [-1.092514702985488, 3.579791899650721]
+    postphysics_energy_target_preserved = true
+    cross_language_max_error_K_s = 2.752857078576476e-20
+    nominal_pfull_max_error_hPa = 1.1368683772161603e-13
+
+[sources]
+"src/Dynamics/Spectral_Dynamics.jl" = "04f4508f490f2aae75bfb81c50fd452c566fc5d7d10d1485aa73fcf4cc6239e3"
+"src/Physics/LRF.jl" = "7843c188e3bbb9b5b4131a772f6e3b26742023706e43b2ffd3e43a40f085ac44"
+"src/Driver.jl" = "ff3caec8e2bb620520ae1df601e19b3d1dab0d5ff8c8eac99f36034bd827188d"
+"exp/HSt42/LRF_latitude_smoke.jl" = "f5378fcfccd953a5223b9de90fab71e9d78b6f76bccb28c748e4d2140a533f35"
+"src/Physics/Spectral_Physics_Interface.jl" = "554ac07b40a790fccff45d021ce6b335478046dd9a5f63decfc0a282f46a0eac"
+"exp/HSt42/HS.jl" = "c36f45c9f0a2fd5de07a039859461a48370e8b2b9c813170585f10d7a9080ea1"

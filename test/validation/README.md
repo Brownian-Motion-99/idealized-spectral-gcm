@@ -133,3 +133,36 @@ To intentionally regenerate the independent fixture, append
 `--write-fixture test/fixtures/betts_miller_isca_ensemble.tsv` to the comparison
 command. Review the report and source hashes before committing fixture updates.
 Fixture generation writes only after all reference checks pass.
+
+## State synchronization and logarithmic LRF, 2026-10-09
+
+The post-physics diagnostic and restart correction is documented in
+[the F1 validation](f1_repair_20261006.md). The
+[LRF review](lrf_review_20261008.md) and
+[warm-start review](warmstart_review_20261008.md) retain the historical
+experiment results and source provenance. The current
+[physics documentation](../../docs/src/physics.md#moisture-linear-response-function)
+describes the legacy and both regularized logarithmic artifact schemes.
+
+Verification of the cleaned working tree with Julia 1.8.5:
+
+| Check | Result |
+|:---|:---|
+| Complete suite, one thread | 17,028 assertions passed |
+| LRF and post-physics tests, four threads | 1,016 assertions passed |
+| Actual LRF artifact contracts, four threads | 36 assertions passed |
+| Generated-checkpoint warm-start comparisons, including T42L20 | 5,203 assertions passed |
+| Three experiment artifact re-exports | Maximum Python/Julia heating error below `2.7e-20 K/s` |
+| Documentation build and doctests | Passed; deployment excluded |
+
+The Python builder also passed synthetic archive selection, logarithmic
+reference centering, calibration residual, and invalid-input checks. Existing
+three-experiment RRTMG build manifests matched its exact source hash and HDF5
+artifact hashes; the costly radiation builds were not repeated. The HSt42
+5 K surface perturbation is now an explicit experiment callback, preserving
+the shared zonally symmetric default and its existing regression checks.
+
+Redundant console logs, per-step dumps, the patch copy, the completed workplan,
+and the obsolete baseline failure-demonstration script have been removed.
+Reusable harnesses generate detailed output in their specified temporary
+directories; aggregate historical results remain linked from the reports.

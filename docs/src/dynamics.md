@@ -32,6 +32,21 @@ mass flux $M$ are diagnosed. This distinction matters when reading the source:
 `spe_vor_*` stores **relative**, not absolute, vorticity, and `grid_w_full`
 stores $\omega=Dp/Dt$ in Pa s$^{-1}$ rather than geometric vertical velocity.
 
+After physics adjusts the provisional next-state winds, the coupling projects
+those winds back to spectral vorticity/divergence, reconstructs the winds, and
+refreshes `grid_vor` and `grid_div` from the same spectra. These shared grid
+diagnostics describe `spe_vor_n`/`spe_div_n` before `Time_Advance!` and
+`spe_vor_c`/`spe_div_c` afterward. This consistency is required by the next
+step's mass-continuity and vector-invariant momentum calculations.
+
+Primitive-equation warm starts also reconstruct these grid diagnostics from
+the loaded current spectra before advancing dynamics. This handles stale
+diagnostics in earlier checkpoints while preserving loaded prognostics and
+leapfrog history. It does not remove errors accumulated before the restart.
+
+The regression suite checks this contract through drag, moist physics, and
+restart continuation, including reconstruction of stale checkpoint diagnostics.
+
 For moist simulations the equation-of-state temperature is
 
 ```math

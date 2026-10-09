@@ -20,6 +20,7 @@ function Interpolate_File(
         :w,
         :q,
         :t,
+        :z,
         :ps,
         :shflx,
         :lhflx,

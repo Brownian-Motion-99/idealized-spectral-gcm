@@ -1,0 +1,86 @@
+julia = "1.8.5"
+threads = 1
+mode = "online"
+
+[results.latitude_bm_off_5day]
+ps_range = [95454.76901146091, 103663.99600811437]
+path = "/tmp/lrf_review_20261008_online/latitude_bm_off_5day/output_t315360000.nc"
+lrf_record_max_abs_K_day = [3.770924672821457, 3.5272603876095805, 3.2131785030361626, 4.000788068336321, 3.557194608592289]
+ua_range = [-33.039963936192265, 105.53703627233341]
+lrf_record_rms_K_day = [0.3885052265163774, 0.3679168727725448, 0.3801849392750015, 0.39427538568868986, 0.3697157009053922]
+times_day = [3651.0, 3652.0, 3653.0, 3654.0, 3655.0]
+lrf_dta_dt_range = [-4.422505522392538e-5, 4.630541745759631e-5]
+hus_range = [7.070311182330593e-8, 0.022094796372041463]
+ta_range = [168.84795943978492, 300.4180963106585]
+va_range = [-61.134641574056815, 60.83211252887591]
+
+    [results.latitude_bm_off_5day.global_attributes]
+    history = "Created 2026-10-08 10:59:57"
+    gravity_units = "m s-2"
+    references = "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+    experiment = "latitude_LRF_smoke"
+    Conventions = "CF-1.11"
+    dry_air_gas_constant = "287.04"
+    source = "idealized-spectral-gcm"
+    gravity = "9.8"
+    dry_air_gas_constant_units = "J kg-1 K-1"
+    title = "Output of idealized-spectral-gcm"
+    institution = "Group of Chaos and Predictability, Department of Atmospheric Sciences, National Taiwan University"
+
+[results.control_bm_on_1day]
+ps_range = [96541.29223991244, 103358.36751000064]
+path = "/tmp/lrf_review_20261008_online_v2/control_bm_on_1day/output_t315360000.nc"
+lrf_record_max_abs_K_day = [0.0, 0.0, 0.0, 0.0]
+ua_range = [-36.73121478509399, 102.18826864937]
+lrf_record_rms_K_day = [0.0, 0.0, 0.0, 0.0]
+times_day = [3650.25, 3650.5, 3650.75, 3651.0]
+lrf_dta_dt_range = [0.0, 0.0]
+hus_range = [9.056708646186902e-7, 0.020396067104412656]
+ta_range = [183.8606905079774, 299.83307502540976]
+va_range = [-45.07597180001815, 49.87428415676251]
+
+    [results.control_bm_on_1day.global_attributes]
+    history = "Created 2026-10-08 11:03:43"
+    gravity_units = "m s-2"
+    references = "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+    experiment = "F1_bm_on"
+    Conventions = "CF-1.11"
+    dry_air_gas_constant = "287.04"
+    source = "idealized-spectral-gcm"
+    gravity = "9.8"
+    dry_air_gas_constant_units = "J kg-1 K-1"
+    title = "Output of idealized-spectral-gcm"
+    institution = "Unknown Institution"
+
+[results.latitude_bm_on_1day]
+ps_range = [96542.34293520027, 103362.87316361202]
+path = "/tmp/lrf_review_20261008_online_v2/latitude_bm_on_1day/output_t315360000.nc"
+lrf_record_max_abs_K_day = [3.742162169146212, 4.057260334437297, 4.00079475487996, 3.700608773631284]
+ua_range = [-36.157085118782476, 101.81889260568451]
+lrf_record_rms_K_day = [0.5123266478948504, 0.5075702204840944, 0.5033636265322292, 0.4972664406678699]
+times_day = [3650.25, 3650.5, 3650.75, 3651.0]
+lrf_dta_dt_range = [-4.695903164857982e-5, 4.301717114840453e-5]
+hus_range = [1.0010174238754416e-6, 0.02048637760732553]
+ta_range = [184.39333485656954, 299.7579257925239]
+va_range = [-45.02374529598768, 49.82134489201937]
+
+    [results.latitude_bm_on_1day.global_attributes]
+    history = "Created 2026-10-08 11:04:51"
+    gravity_units = "m s-2"
+    references = "https://github.com/Brownian-Motion-99/idealized-spectral-gcm.git"
+    experiment = "F1_bm_on"
+    Conventions = "CF-1.11"
+    dry_air_gas_constant = "287.04"
+    source = "idealized-spectral-gcm"
+    gravity = "9.8"
+    dry_air_gas_constant_units = "J kg-1 K-1"
+    title = "Output of idealized-spectral-gcm"
+    institution = "Unknown Institution"
+
+[sources]
+"src/Dynamics/Spectral_Dynamics.jl" = "04f4508f490f2aae75bfb81c50fd452c566fc5d7d10d1485aa73fcf4cc6239e3"
+"src/Physics/LRF.jl" = "7843c188e3bbb9b5b4131a772f6e3b26742023706e43b2ffd3e43a40f085ac44"
+"src/Driver.jl" = "ff3caec8e2bb620520ae1df601e19b3d1dab0d5ff8c8eac99f36034bd827188d"
+"exp/HSt42/LRF_latitude_smoke.jl" = "f5378fcfccd953a5223b9de90fab71e9d78b6f76bccb28c748e4d2140a533f35"
+"src/Physics/Spectral_Physics_Interface.jl" = "554ac07b40a790fccff45d021ce6b335478046dd9a5f63decfc0a282f46a0eac"
+"exp/HSt42/HS.jl" = "c36f45c9f0a2fd5de07a039859461a48370e8b2b9c813170585f10d7a9080ea1"

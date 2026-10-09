@@ -262,7 +262,7 @@ function Spectral_Physics!(
 
         if do_lrf
             LRF!(
-                physics_params["LRF_state"]::LRF_State,
+                physics_params["LRF_state"]::Abstract_LRF_State,
                 work_q, workspace.grid_lrf_tendency, config.day_to_sec,
             )
             @. work_t += physics_dt * workspace.grid_lrf_tendency
